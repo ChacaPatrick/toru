@@ -14,6 +14,10 @@ Left open by the review cap. Fix these in section 10.1.
 - Text being typed doesn't count as an edit, so a capture can replace the editor and lose it.
 - Pasted CRLF leaves `\r` in the text.
 
+## Editor save
+- A crop that was dragged but not applied is ignored by Save, Copy, Save as and Back, so the file is uncropped.
+- Quitting with the editor open loses unsaved edits.
+
 ## Dialogs and shortcuts
 - The toast saying a capture went to the gallery is replaced at once by "Copied to clipboard".
 - `show_editor` takes focus even when a dialog is open, so Esc and Tab miss the dialog.
@@ -26,6 +30,7 @@ Left open by the review cap. Fix these in section 10.1.
 - Should Clear unsaved ask first? It deletes permanently.
 - Should "Also delete files" use the Recycle Bin?
 - Installer tool for 10.3: Inno Setup is proposed.
+- The original of an edited capture stays in app data, unblurred, until the capture is deleted; saved captures' originals never expire.
 
 ## Needs a person
 Real keyboard and mouse use has not been tested: overlay dragging and Esc, tray clicks, arrow keys and Tab, wheel scrolling, drawing on the canvas, recording a shortcut. PrtScn with Windows' setting off (1.1) and a Narrator listening test (1.5) are also open.
