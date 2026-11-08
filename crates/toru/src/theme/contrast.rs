@@ -38,7 +38,7 @@ pub fn ratio(a: Hsla, b: Hsla) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::{Fill, Theme, css::hex};
+    use crate::theme::{Fill, Theme, css::hex, hover_tint};
     use crate::ui::SUB_OPACITY;
     use toru_core::settings::{BUILT_IN_PALETTES, Look};
 
@@ -100,6 +100,12 @@ mod tests {
             ..c.button_text
         };
         text("button sub", over(sub, c.button_bg), c.button_bg);
+        // Hovered, a split sub shows the full text colour over a tint of it.
+        text(
+            "hovered button sub",
+            c.button_text,
+            over(hover_tint(c.button_text), c.button_bg),
+        );
         text("primary button", c.accent_text, c.accent_bg);
         text("chosen segment", c.on_text, c.on_bg);
         for (name, bg) in &surfaces[1..5] {
@@ -126,6 +132,11 @@ mod tests {
         text("bulk main button", c.bulk_main_text, c.bulk_main_bg);
         text("title bar", c.title_text, c.title_bg);
         text("window controls", c.controls, c.title_bg);
+        text(
+            "hovered window control",
+            c.title_text,
+            over(hover_tint(c.title_text), c.title_bg),
+        );
         for (index, thumb) in std::iter::once(&c.thumb).chain(&c.thumb_alt).enumerate() {
             for (stop, color) in stops(thumb).into_iter().enumerate() {
                 text(

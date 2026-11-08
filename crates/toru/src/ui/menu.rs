@@ -1,15 +1,20 @@
-//! A popup menu under a button, such as a card's `⋯` or the Delayed seconds. The mockups show no
+//! A popup menu under a button, such as a card's `⋯` or the toolbar's Delayed. The mockups show no
 //! open menu, so it borrows the editor pill's surface, border and shadow, and the corner buttons'
 //! item size. The arrow keys and Tab move between items, Enter or Space picks one, Esc closes.
+//!
+//! Besides plain items, which close the menu when picked, a menu can hold choices: one of a group
+//! that stays open when picked, so several can be set in one visit, with a check mark on the
+//! chosen one so the choice is told apart by more than colour. Headers name the groups.
 
 use std::{cell::Cell, rc::Rc, sync::Arc};
 
 use gpui::{
-    AccessibleAction, Anchor, App, Bounds, ElementId, Entity, FocusHandle, KeyDownEvent, Pixels,
-    Role, SharedString, Window, actions, anchored, deferred, div, point, prelude::*, px,
+    AccessibleAction, Anchor, AnyElement, App, Bounds, ElementId, Entity, FocusHandle,
+    KeyDownEvent, Pixels, Role, SharedString, Toggled, Window, actions, anchored, deferred, div,
+    point, prelude::*, px,
 };
 
-use super::{Button, Handler, focus_ring, keyboard_focus, keyed_focus};
+use super::{Button, Handler, Icon, button::MenuTrigger, focus_ring, keyboard_focus, keyed_focus};
 use crate::theme::{ActiveTheme, ThemedText};
 
 actions!(menu, [NextItem, PreviousItem]);
@@ -18,36 +23,85 @@ actions!(menu, [NextItem, PreviousItem]);
 pub const KEY_CONTEXT: &str = "Menu";
 
 const ITEM_HEIGHT: f32 = 32.;
+const HEADER_HEIGHT: f32 = 26.;
+const DIVIDER_MARGIN: f32 = 4.;
 const PANEL_PADDING: f32 = 4.;
+/// The check mark's column, in front of every item of a menu that has choices.
+const CHECK_SLOT: f32 = 20.;
+/// The group an item and its check mark share, so the mark recolours with the hovered item.
+const HOVER_GROUP: &str = "menu-item";
+
+enum Row {
+    Item {
+        label: SharedString,
+        /// `Some` for a choice, with whether it is the chosen one.
+        selected: Option<bool>,
+        handler: Handler,
+    },
+    Header(SharedString),
+    Divider,
+}
 
 #[derive(IntoElement)]
 pub struct Menu {
     id: ElementId,
     label: SharedString,
     trigger: Button,
-    items: Vec<(SharedString, Handler)>,
+    rows: Vec<Row>,
     /// Line the panel up with the trigger's right edge, for buttons near the window's right side.
     align_right: bool,
 }
 
 impl Menu {
-    /// `label` names the menu for screen readers; `trigger` opens it and its click is replaced.
+    /// `label` names the menu for screen readers; `trigger` opens it and its click is replaced,
+    /// unless it is a split button, whose sub opens the menu instead (`Button::split`).
     pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>, trigger: Button) -> Menu {
         Menu {
             id: id.into(),
             label: label.into(),
             trigger,
-            items: Vec::new(),
+            rows: Vec::new(),
             align_right: false,
         }
     }
 
+    /// An action; picking it closes the menu.
     pub fn item(
         mut self,
         label: impl Into<SharedString>,
         handler: impl Fn(&mut Window, &mut App) + 'static,
     ) -> Menu {
-        self.items.push((label.into(), Rc::new(handler)));
+        self.rows.push(Row::Item {
+            label: label.into(),
+            selected: None,
+            handler: Rc::new(handler),
+        });
+        self
+    }
+
+    /// One of a group of choices; picking it leaves the menu open.
+    pub fn choice(
+        mut self,
+        label: impl Into<SharedString>,
+        selected: bool,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Menu {
+        self.rows.push(Row::Item {
+            label: label.into(),
+            selected: Some(selected),
+            handler: Rc::new(handler),
+        });
+        self
+    }
+
+    /// Names the group of rows that follows.
+    pub fn header(mut self, label: impl Into<SharedString>) -> Menu {
+        self.rows.push(Row::Header(label.into()));
+        self
+    }
+
+    pub fn divider(mut self) -> Menu {
+        self.rows.push(Row::Divider);
         self
     }
 
@@ -78,9 +132,23 @@ impl RenderOnce for Menu {
         let open: Entity<bool> = window.use_keyed_state(child_id("open"), cx, |_, _| false);
         let is_open = *open.read(cx);
         let trigger_focus = keyed_focus(window, cx, &self.id);
-        let item_focus: Vec<FocusHandle> = (0..self.items.len())
+        let item_count = self
+            .rows
+            .iter()
+            .filter(|row| matches!(row, Row::Item { .. }))
+            .count();
+        let item_focus: Vec<FocusHandle> = (0..item_count)
             .map(|index| keyed_focus(window, cx, &child_id(&format!("item {index}"))))
             .collect();
+        let has_choices = self.rows.iter().any(|row| {
+            matches!(
+                row,
+                Row::Item {
+                    selected: Some(_),
+                    ..
+                }
+            )
+        });
         // Where the trigger was drawn, so a press on it is left to its own click handler.
         let trigger_bounds: Rc<Cell<Bounds<Pixels>>> = Rc::default();
         let theme = cx.theme();
@@ -101,25 +169,26 @@ impl RenderOnce for Menu {
             }
         });
 
-        let trigger = self
-            .trigger
-            .track_focus(&trigger_focus)
-            .expanded(is_open)
-            .on_click({
-                let close = close.clone();
-                let set_open = set_open.clone();
-                let first = item_focus.first().cloned();
-                move |window, cx| {
-                    if is_open {
-                        close(window, cx);
-                    } else {
-                        set_open(true, cx);
-                        if let Some(first) = &first {
-                            first.focus(window, cx);
-                        }
+        let toggle: Handler = Rc::new({
+            let close = close.clone();
+            let set_open = set_open.clone();
+            let first = item_focus.first().cloned();
+            move |window, cx| {
+                if is_open {
+                    close(window, cx);
+                } else {
+                    set_open(true, cx);
+                    if let Some(first) = &first {
+                        first.focus(window, cx);
                     }
                 }
-            });
+            }
+        });
+        let trigger = self.trigger.menu_trigger(MenuTrigger {
+            focus: trigger_focus.clone(),
+            open: is_open,
+            toggle,
+        });
 
         let on_key_down = {
             let close = close.clone();
@@ -145,57 +214,126 @@ impl RenderOnce for Menu {
         };
 
         let font = theme.type_scale.corner;
-        let items = self
-            .items
-            .into_iter()
-            .zip(&item_focus)
-            .map(|((label, handler), focus)| {
-                // Close first, so focus the handler sets (such as on a name field) is kept.
-                let pick = {
-                    let close = close.clone();
-                    move |window: &mut Window, cx: &mut App| {
-                        close(window, cx);
-                        handler(window, cx);
-                    }
-                };
-                let pick_a11y = pick.clone();
-                div()
-                    .id(child_id(&label))
-                    .role(Role::MenuItem)
-                    .aria_label(label.clone())
-                    .track_focus(focus)
-                    .h(px(ITEM_HEIGHT))
-                    .px_2()
-                    .flex()
-                    .items_center()
-                    .rounded(theme.radii.sm)
-                    .text_color(c.text)
-                    .type_style(theme, font)
-                    .whitespace_nowrap()
-                    .cursor_pointer()
-                    .hover(|style| style.bg(c.on_bg).text_color(c.on_text))
-                    .on_click(move |_, window, cx| pick(window, cx))
-                    .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
-                        pick_a11y(window, cx)
-                    })
-                    .child(font.case.apply(&label))
-            })
-            .collect::<Vec<_>>();
-
-        // The ring is drawn by the panel, after every item, so no neighbour paints over it. The
+        let header_font = theme.type_scale.label;
+        let hair = theme.borders.hair;
+        // The ring is drawn by the panel, after every row, so no neighbour paints over it. The
         // trigger button draws the watcher that turns it off at a mouse press.
-        let ring = focused_item(&item_focus, window)
-            .filter(|_| keyboard_focus(window, cx))
-            .map(|index| {
-                let top = PANEL_PADDING + index as f32 * ITEM_HEIGHT;
-                div()
-                    .absolute()
-                    .top(px(top))
-                    .left(px(PANEL_PADDING))
-                    .right(px(PANEL_PADDING))
-                    .h(px(ITEM_HEIGHT))
-                    .children(focus_ring(theme, theme.radii.sm, px(0.)))
-            });
+        let focused = focused_item(&item_focus, window).filter(|_| keyboard_focus(window, cx));
+        let mut ring_top = None;
+        let mut top = PANEL_PADDING;
+        let mut item_index = 0;
+        let mut item_focus_iter = item_focus.iter();
+        let rows = self
+            .rows
+            .into_iter()
+            .map(|row| match row {
+                Row::Header(label) => {
+                    top += HEADER_HEIGHT;
+                    div()
+                        .h(px(HEADER_HEIGHT))
+                        .px_2()
+                        .flex()
+                        .items_end()
+                        .pb(px(4.))
+                        .text_color(c.label)
+                        .type_style(theme, header_font)
+                        .whitespace_nowrap()
+                        .child(header_font.case.apply(&label))
+                        .into_any_element()
+                }
+                Row::Divider => {
+                    top += DIVIDER_MARGIN * 2. + f32::from(hair.width);
+                    div()
+                        .my(px(DIVIDER_MARGIN))
+                        .h(hair.width)
+                        .bg(hair.color)
+                        .into_any_element()
+                }
+                Row::Item {
+                    label,
+                    selected,
+                    handler,
+                } => {
+                    if focused == Some(item_index) {
+                        ring_top = Some(top);
+                    }
+                    top += ITEM_HEIGHT;
+                    item_index += 1;
+                    let focus = item_focus_iter.next().expect("one handle per item");
+                    // A plain item closes first, so focus the handler sets (such as on a name
+                    // field) is kept. A choice stays open for the next choice.
+                    let pick = {
+                        let close = close.clone();
+                        move |window: &mut Window, cx: &mut App| {
+                            if selected.is_none() {
+                                close(window, cx);
+                            }
+                            handler(window, cx);
+                        }
+                    };
+                    let pick_a11y = pick.clone();
+                    let (role, toggled) = match selected {
+                        Some(on) => (
+                            Role::MenuItemRadio,
+                            Some(if on { Toggled::True } else { Toggled::False }),
+                        ),
+                        None => (Role::MenuItem, None),
+                    };
+                    div()
+                        .id(child_id(&label))
+                        .role(role)
+                        .aria_label(label.clone())
+                        .when_some(toggled, |this, toggled| this.aria_toggled(toggled))
+                        .track_focus(focus)
+                        .h(px(ITEM_HEIGHT))
+                        .px_2()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .rounded(theme.radii.sm)
+                        .text_color(c.text)
+                        .type_style(theme, font)
+                        .whitespace_nowrap()
+                        .cursor_pointer()
+                        // Not `surface_sel`: it is `surface` itself in some palettes.
+                        .group(HOVER_GROUP)
+                        .hover(|style| style.bg(c.on_bg).text_color(c.on_text))
+                        .on_click(move |_, window, cx| pick(window, cx))
+                        .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
+                            pick_a11y(window, cx)
+                        })
+                        .when(has_choices, |this| {
+                            this.child(
+                                div()
+                                    .flex_none()
+                                    .w(px(CHECK_SLOT))
+                                    .flex()
+                                    .justify_center()
+                                    .children((selected == Some(true)).then(|| {
+                                        // The icon's colour is its own, so it follows the hover.
+                                        Icon::Check
+                                            .render(theme, c.text)
+                                            .group_hover(HOVER_GROUP, |style| {
+                                                style.text_color(c.on_text)
+                                            })
+                                    })),
+                            )
+                        })
+                        .child(font.case.apply(&label))
+                        .into_any_element()
+                }
+            })
+            .collect::<Vec<AnyElement>>();
+
+        let ring = ring_top.map(|top| {
+            div()
+                .absolute()
+                .top(px(top))
+                .left(px(PANEL_PADDING))
+                .right(px(PANEL_PADDING))
+                .h(px(ITEM_HEIGHT))
+                .children(focus_ring(theme, theme.radii.sm, px(0.)))
+        });
 
         let pop = theme.borders.pop;
         let panel = div()
@@ -234,7 +372,7 @@ impl RenderOnce for Menu {
             .border_color(pop.color)
             .rounded(theme.radii.lg)
             .shadow(theme.shadows.pop.clone())
-            .children(items)
+            .children(rows)
             .children(ring);
 
         let corner = if self.align_right {

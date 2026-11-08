@@ -69,6 +69,20 @@ impl Theme {
     }
 }
 
+/// How strongly a hovered control's background is tinted with its text colour. A hovered control
+/// also shows its text at full strength (a muted glyph or a translucent sub goes to the plain text
+/// colour), so the hover reads as stronger, never weaker; `contrast`'s test checks the hovered
+/// pairs in every palette.
+pub const HOVER_TINT: f32 = 0.12;
+
+/// The translucent fill a control hovered with text colour `text` lays over its background.
+pub fn hover_tint(text: Hsla) -> Hsla {
+    Hsla {
+        a: HOVER_TINT,
+        ..text
+    }
+}
+
 /// Makes `theme` the active one and redraws every window with it.
 pub fn set_theme(theme: Theme, cx: &mut App) {
     kit::sync_kit_theme(&theme, cx);
@@ -258,6 +272,8 @@ pub struct Borders {
     pub load: Border,
     pub earlier_rule: Border,
     pub thumb: Border,
+    /// Between the window controls: the hair rule, except where a look pins it.
+    pub title_divider: Border,
 }
 
 pub struct Radii {
@@ -284,6 +300,8 @@ pub struct Shadows {
 pub struct Sizes {
     /// The horizontal padding of `.btn.sm`.
     pub button_sm_padding: Pixels,
+    /// A look that draws each window control as a filled square of this size instead of a glyph.
+    pub window_control_square: Option<Pixels>,
 }
 
 /// Line icons and the title bar dot.

@@ -78,6 +78,7 @@ pub fn theme(palette: usize) -> Theme {
         }
         _ => {}
     }
+    theme.borders.title_divider = theme.borders.hair;
     theme
 }
 
@@ -179,6 +180,7 @@ fn base() -> Theme {
             load: Border::dashed(1., hex(0xcdc3b1)),
             earlier_rule: Border::solid(1., hex(0xd8cfbf)),
             thumb: Border::none(),
+            title_divider: Border::solid(1., hex(0xd8cfbf)),
         },
         radii: Radii {
             frame: px(10.),
@@ -202,6 +204,7 @@ fn base() -> Theme {
         },
         sizes: Sizes {
             button_sm_padding: px(12.),
+            window_control_square: None,
         },
         fonts: Fonts {
             display: "Noto Serif JP".into(),

@@ -29,14 +29,13 @@ use crate::theme::Theme;
 pub use button::Button;
 #[cfg(test)]
 pub use button::SUB_OPACITY;
-pub use chip::Chip;
-pub use flash::Flash;
 pub use icons::Icon;
-pub use input::TextField;
 pub use menu::Menu;
-pub use segmented::Segmented;
-pub use toast::Toast;
-pub use toggle::Toggle;
+// The card, settings column and bottom bar controls, used from section 4.2 on.
+#[allow(unused_imports)]
+pub use {
+    chip::Chip, flash::Flash, input::TextField, segmented::Segmented, toast::Toast, toggle::Toggle,
+};
 
 /// What a control does when pressed.
 pub type Handler = Rc<dyn Fn(&mut Window, &mut App)>;

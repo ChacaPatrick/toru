@@ -1,19 +1,32 @@
 //! `.btn` and its variants: `.primary`, `.sm`, `.icon`, the `.sub` secondary label, and the Copy
 //! button's check mark, which is laid over the hidden label so the button keeps its width.
+//!
+//! A button with a sub can be split: it keeps the look of one button, but the sub is a second
+//! control, so pressing the label does the button's own work and pressing the sub opens a `Menu`.
 
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use gpui::{
-    AccessibleAction, App, ElementId, FocusHandle, Role, SharedString, StyleRefinement, Window,
-    div, prelude::*, px,
+    AccessibleAction, App, ElementId, FocusHandle, Hsla, Role, SharedString, StyleRefinement,
+    Window, div, prelude::*, px,
 };
 
 use super::{Handler, Icon, focus_marks, keyed_focus, refined, shadowed};
-use crate::theme::{ActiveTheme, ThemedText};
+use crate::theme::{ActiveTheme, ThemedText, contrast, hover_tint};
 
 /// How much of the button's text colour the `.sub` label keeps. The mockups' CSS says .75, which
 /// leaves Game Boy green's sub at 4.4:1; .8 is 4.8:1 there and reads the same (DESIGN.md §7).
+/// It is blended into the button's background rather than drawn translucent, so a split sub can
+/// go to the full text colour when hovered.
 pub const SUB_OPACITY: f32 = 0.8;
+
+/// What a `Menu` hangs on its trigger: the trigger's focus, whether the menu is open, and the
+/// press that opens or closes it.
+pub(super) struct MenuTrigger {
+    pub focus: FocusHandle,
+    pub open: bool,
+    pub toggle: Handler,
+}
 
 #[derive(IntoElement)]
 pub struct Button {
@@ -30,6 +43,10 @@ pub struct Button {
     expanded: Option<bool>,
     focus: Option<FocusHandle>,
     on_click: Option<Handler>,
+    /// `Some` for a split button: what the sub is called for assistive technology.
+    sub_name: Option<SharedString>,
+    /// The menu a split button's sub opens.
+    sub_menu: Option<MenuTrigger>,
     style: StyleRefinement,
 }
 
@@ -48,6 +65,8 @@ impl Button {
             expanded: None,
             focus: None,
             on_click: None,
+            sub_name: None,
+            sub_menu: None,
             style: StyleRefinement::default(),
         }
     }
@@ -111,6 +130,38 @@ impl Button {
         self
     }
 
+    /// Splits the button: the sub becomes its own control, called `name` for assistive
+    /// technology, and opens the `Menu` the button is the trigger of, while `on_click` stays the
+    /// button's own.
+    pub fn split(mut self, name: impl Into<SharedString>) -> Button {
+        self.sub_name = Some(name.into());
+        self
+    }
+
+    /// Makes the button a `Menu`'s trigger. A split button puts the menu on its sub, and pressing
+    /// its label while the menu is open closes the menu too; any other button's click is
+    /// replaced by the menu's.
+    pub(super) fn menu_trigger(mut self, menu: MenuTrigger) -> Button {
+        if self.sub_name.is_none() {
+            let toggle = menu.toggle;
+            return self
+                .track_focus(&menu.focus)
+                .expanded(menu.open)
+                .on_click(move |window, cx| toggle(window, cx));
+        }
+        if menu.open
+            && let Some(own) = self.on_click.take()
+        {
+            let toggle = menu.toggle.clone();
+            self.on_click = Some(Rc::new(move |window, cx| {
+                toggle(window, cx);
+                own(window, cx);
+            }));
+        }
+        self.sub_menu = Some(menu);
+        self
+    }
+
     /// Use `focus` instead of the button's own handle, to focus it from elsewhere.
     pub fn track_focus(mut self, focus: &FocusHandle) -> Button {
         self.focus = Some(focus.clone());
@@ -164,35 +215,89 @@ impl RenderOnce for Button {
             (px(40.), px(16.))
         };
         let square = self.square;
-        // The sub is part of the name, as a `<button>`'s text would be: "Delayed 5 s".
+        let split = self.sub_name.is_some();
+        // The sub is part of the name, as a `<button>`'s text would be: "Delayed 5 s". A split
+        // button's sub has its own name.
         let aria_label: SharedString = if self.check_mark {
             "Copied".into()
         } else {
             let name = self.aria_label.or(self.label.clone()).unwrap_or_default();
             match &self.sub {
-                Some(sub) => format!("{name} {}", sub.trim_end_matches(" ▾")).into(),
-                None => name,
+                Some(sub) if !split => format!("{name} {}", sub.trim_end_matches(" ▾")).into(),
+                _ => name,
             }
         };
         let radius = theme.radii.md;
         let sub_font = theme.type_scale.button_sub;
+        let sub_id = ElementId::NamedChild(Arc::new(self.id.clone()), "sub".into());
+
+        let sub = self.sub.map(|sub| {
+            let sub_text = contrast::over(
+                Hsla {
+                    a: SUB_OPACITY,
+                    ..text
+                },
+                bg,
+            );
+            let sub = div()
+                .pl_2()
+                .border_l_1()
+                .border_color(sub_text)
+                .type_style(theme, sub_font)
+                .child(sub_font.case.apply(&sub));
+            let Some((name, menu)) = self.sub_name.zip(self.sub_menu) else {
+                return sub.text_color(sub_text).into_any_element();
+            };
+            // The split sub: a button of its own, as tall as the whole one, with the button's
+            // right padding, so its ring lines up with the button's and its tint reaches the edge,
+            // rounded like the inside of the button's border so it stays within the outline.
+            // Hovered, it shows as its own target: its text at full strength over a tint of it.
+            let toggle = menu.toggle;
+            let toggle_a11y = toggle.clone();
+            div()
+                .id(sub_id)
+                .role(Role::Button)
+                .aria_label(name)
+                .aria_expanded(menu.open)
+                .track_focus(&menu.focus)
+                .relative()
+                .h_full()
+                .flex()
+                .items_center()
+                .pr(padding)
+                .rounded_r(radius - border.width)
+                .text_color(sub_text)
+                .cursor_pointer()
+                .hover(|style| style.bg(hover_tint(text)).text_color(text))
+                .on_click(move |_, window, cx| {
+                    // The press is the sub's alone, not the button's.
+                    cx.stop_propagation();
+                    toggle(window, cx)
+                })
+                .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
+                    toggle_a11y(window, cx)
+                })
+                .child(sub)
+                .children(focus_marks(
+                    menu.focus.is_focused(window),
+                    theme,
+                    radius,
+                    border.width,
+                    window,
+                    cx,
+                ))
+                .into_any_element()
+        });
 
         let content = div()
+            .h_full()
             .flex()
             .items_center()
             .gap_2()
             .when(self.check_mark, |this| this.invisible())
             .children(self.icon.map(|icon| icon.render(theme, text)))
             .children(self.label.map(|label| font.case.apply(&label)))
-            .children(self.sub.map(|sub| {
-                div()
-                    .pl_2()
-                    .border_l_1()
-                    .border_color(text)
-                    .opacity(SUB_OPACITY)
-                    .type_style(theme, sub_font)
-                    .child(sub_font.case.apply(&sub))
-            }));
+            .children(sub);
 
         let button = div().id(self.id);
         let button = shadowed(button, shadow, radius)
@@ -207,7 +312,8 @@ impl RenderOnce for Button {
             .justify_center()
             .h(height)
             .when(square, |this| this.w(height))
-            .when(!square, |this| this.px(padding))
+            .when(!square, |this| this.pl(padding))
+            .when(!square && !split, |this| this.pr(padding))
             .bg(bg)
             .text_color(text)
             .border(border.width)

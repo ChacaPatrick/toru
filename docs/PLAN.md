@@ -30,7 +30,7 @@ Results go in `docs/spikes.md`.
 - [x] 3.3 PixelArt and NeoBrutalism with their palettes, plus an automated contrast test
 
 ## Phase 4: Main window with mock data [Fable]
-- [ ] 4.1 Title bar and toolbar, with the display picker and expanded Delayed menu
+- [x] 4.1 Title bar and toolbar, with the display picker and expanded Delayed menu
 - [ ] 4.2 Gallery grid, cards and day groups with Collapse
 - [ ] 4.3 Settings column with collapse
 - [ ] 4.4 Bottom bar, toast, top-centre return pill, search, keyboard navigation

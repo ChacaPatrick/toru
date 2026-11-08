@@ -113,6 +113,7 @@ pub fn theme(palette: usize) -> Theme {
         }
         _ => {}
     }
+    theme.borders.title_divider = theme.borders.hair;
     theme
 }
 
@@ -200,6 +201,7 @@ fn base() -> Theme {
             load: Border::dashed(3., hex(0x4a4a7a)),
             earlier_rule: Border::dashed(3., hex(0x4a4a7a)),
             thumb: Border::none(),
+            title_divider: Border::solid(3., ink),
         },
         radii: Radii {
             frame: gpui::px(0.),
@@ -231,6 +233,8 @@ fn base() -> Theme {
         },
         sizes: Sizes {
             button_sm_padding: gpui::px(12.),
+            // `.titlebar .win span::before{width:10px;height:10px;background:currentColor}`
+            window_control_square: Some(gpui::px(10.)),
         },
         fonts: Fonts {
             display: "Press Start 2P".into(),
@@ -394,6 +398,13 @@ mod tests {
             assert_eq!(css_hex(c.focus), "#4fe3a3");
             assert_eq!(css_hex(c.bulk_focus), "#4fe3a3");
             assert_eq!(css_hex(c.controls), "#ffd23f");
+            // `.titlebar .win span{border-left:var(--hair)}`, and the squares in place of glyphs.
+            let theme = theme(index);
+            assert_eq!(
+                css_border(theme.borders.title_divider),
+                css_border(theme.borders.hair)
+            );
+            assert_eq!(theme.sizes.window_control_square, Some(px(10.)));
         }
         // The palettes override neither, so the base values carry through.
         let base = entry.base();

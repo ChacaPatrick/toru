@@ -211,6 +211,8 @@ fn base() -> Theme {
             load: Border::dashed(3., black),
             earlier_rule: Border::solid(3., black),
             thumb: Border::solid(3., black),
+            // `.titlebar .win span{border-left:3px solid #000}` is pinned for the look.
+            title_divider: Border::solid(3., black),
         },
         radii: Radii {
             frame: gpui::px(0.),
@@ -234,6 +236,7 @@ fn base() -> Theme {
         },
         sizes: Sizes {
             button_sm_padding: gpui::px(9.),
+            window_control_square: None,
         },
         fonts: Fonts {
             display: "Archivo Black".into(),
@@ -343,6 +346,7 @@ mod tests {
         assert!(tokens.contains(".seg button.on{background:#000;color:#fff}"));
         assert!(tokens.contains(".bulk button.main{background:#ffde59}"));
         assert!(tokens.contains(".titlebar .dot{width:16px;height:16px;background:#000}"));
+        assert!(tokens.contains(".titlebar .win span{font-weight:900;border-left:3px solid #000}"));
         assert!(tokens.contains(".card:nth-child(3n+2) .thumb{background:#ffde59}"));
         assert!(tokens.contains(".thumb{border:3px solid #000}"));
         for index in 0..3 {
@@ -354,6 +358,7 @@ mod tests {
             assert_eq!(css_hex(c.bulk_main_bg), "#ffde59");
             assert_eq!(css_hex(c.dot), "#000000");
             assert_eq!(theme.icons.dot, px(16.));
+            assert_eq!(css_border(theme.borders.title_divider), "3px solid #000000");
             assert_eq!(c.thumb_alt.len(), 2);
             assert_eq!(css_hex(c.focus), "#4d7cff");
             assert_eq!(css_hex(c.bulk_focus), "#4d7cff");

@@ -44,42 +44,6 @@ pub enum Icon {
 }
 
 impl Icon {
-    pub const ALL: [Icon; 33] = [
-        Icon::Region,
-        Icon::Window,
-        Icon::Screen,
-        Icon::Clock,
-        Icon::Plus,
-        Icon::Gear,
-        Icon::Check,
-        Icon::Copy,
-        Icon::Back,
-        Icon::Undo,
-        Icon::Redo,
-        Icon::Paths,
-        Icon::Save,
-        Icon::Merge,
-        Icon::Trash,
-        Icon::ArrowUp,
-        Icon::Spinner,
-        Icon::ChevronDown,
-        Icon::ChevronUp,
-        Icon::Select,
-        Icon::Pan,
-        Icon::Crop,
-        Icon::Block,
-        Icon::Arrow,
-        Icon::Line,
-        Icon::Rectangle,
-        Icon::Ellipse,
-        Icon::Draw,
-        Icon::Highlighter,
-        Icon::Text,
-        Icon::Number,
-        Icon::Stickers,
-        Icon::Eraser,
-    ];
-
     /// The size the mockups draw it at.
     pub fn size(self) -> Pixels {
         match self {
