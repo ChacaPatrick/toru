@@ -16,7 +16,7 @@ Results go in `docs/spikes.md`.
 - [ ] 1.1 Tray and global hotkeys alongside GPUI, and PrtScn with Snipping Tool's binding on and off
 - [x] 1.2 Capture overlay: a borderless topmost window per monitor showing a frozen image
 - [x] 1.3 Name fields with real text editing, and smooth scrolling with 200 real thumbnails
-- [ ] 1.4 Copy image and copy as files
+- [x] 1.4 Copy image and copy as files
 - [ ] 1.5 Narrator check
 
 ## Phase 2: Core logic, no UI

@@ -514,3 +514,168 @@ the unticked ones need a person.
 - [ ] With a Japanese or other IME installed, composing text in a field: the preedit is underlined in the field, the
   candidate window sits at the caret, and committing inserts the text once.
 - [ ] Right-click a field: the Cut/Copy/Paste menu appears and works.
+
+## 1.4 Copy image and copy as files
+
+**Answer:** yes to both when the clipboard is free. `clipboard-rs` 0.3.5 puts an image on the clipboard that reads back
+pixel for pixel from another process and pastes correctly into Paint, and it puts a file list on the clipboard that
+Explorer pasted with identical contents, including a file with a space and Japanese characters in its name. **One defect
+matters:** if another window has the clipboard open, `set_files` still returns `Ok`, doesn't clear the clipboard, and
+adds the file list beside whatever was already there. `set_image` returns an error in that case. The file list holds
+only paths, so listed files must still exist when the paste happens: with one of three missing, Explorer pasted nothing,
+in both trials.
+
+Tested 2026-11-08 on Windows 11 build 26200, Rust 1.98.1, `gpui-pre` 0.3.11, `clipboard-rs` 0.3.5, release build. Code:
+`crates/toru/examples/spike_clipboard.rs`. No window is needed.
+
+### Dependencies
+
+`clipboard-rs` is a dev-dependency of `crates/toru`. `Cargo.lock` gained 8 packages, including `clipboard-win` and
+another version of `windows` (0.59). Its `image` dependency resolves to the same copy `xcap` re-exports, so a
+`DynamicImage` passes straight between them.
+
+### Results
+
+**Image.** The test image has opaque known colours, a band of one colour at alpha 128, 64, 1 and 0, and a gradient. A
+separate process, a throwaway C# tool using raw Win32 calls and its own copy of the pattern, read the clipboard after the
+example had exited:
+
+| Size | Pixels exact (RGBA) in each of `PNG`, `CF_BITMAP`, `CF_DIB`, `CF_DIBV5` | Red and blue swapped |
+|---|---|---|
+| 1440x900 | 1,296,000 of 1,296,000 | 0 |
+| 2560x1440 | 3,686,400 of 3,686,400 | 0 |
+| 3840x2160 | 8,294,400 of 8,294,400 | 0 |
+
+Formats on the clipboard after an image copy. From the code, `clipboard-rs` writes only `PNG` and `CF_BITMAP`, so the two
+DIBs are Windows' own conversions:
+
+| Format | Details at 1440x900 |
+|---|---|
+| `PNG` (registered format) | 1,140,974 bytes, straight alpha |
+| `CF_BITMAP` | 32 bits per pixel |
+| `CF_DIB` | 40-byte header, `BI_BITFIELDS`, 5,184,052 bytes |
+| `CF_DIBV5` | 124-byte header, `BI_BITFIELDS`, alpha mask **0**, 5,184,136 bytes |
+
+**Partly-transparent pixels.** `PNG` keeps them exactly. The other three carry the same four bytes, not premultiplied,
+but neither DIB header declares an alpha channel, so a reader going by those headers has no reason to use the fourth
+byte. Paint did apply the alpha: the band showed as (227,177,152), (241,216,204), (255,254,254) and white, which is the
+colour blended over a white canvas. Which format Paint read wasn't determined. Section 1.2 found no non-opaque pixels in full-monitor captures, so for those and
+for regions cropped from them this only matters for content that adds transparency.
+
+**Timing**, 3 runs per size, on the main thread. `set_image` includes both encodes, which it does with the clipboard
+already open, so apps opening it with a real window can't use the clipboard for about that long:
+
+| Size | Generate | PNG encode alone | BMP encode alone | `set_image` |
+|---|---|---|---|---|
+| 1440x900 | 2.3 ms | 4.9–5.1 ms | 4.0–4.1 ms | 11.6–14.6 ms |
+| 2560x1440 | 6.2–6.3 ms | 15.2–16.2 ms | 9.9–10.2 ms | 34.7–35.9 ms |
+| 3840x2160 | 13.9–14.1 ms | 40.3–41.2 ms | 20.5–21.1 ms | 81.0–82.7 ms |
+
+These are synthetic images, and PNG encoding time depends on content. One run on GPUI's background executor took
+19.2 ms at 1440x900.
+
+**Files.** After a files copy, the only format on the clipboard is `CF_HDROP` (`fWide` 1, every path listed correctly),
+with no `Preferred DropEffect`. Writing 3 PNGs at 1440x900 took 22–23 ms, and 50 took 354 ms. `set_files` took 0.2–1.6 ms
+for 3 paths and 0.2 ms for 50.
+
+Real pastes went into a new Explorer window on an empty folder, with Ctrl+V sent only after confirming that window was
+in the foreground. The writing process had already exited each time:
+
+| Sources at paste time | Files arrived | Notes |
+|---|---|---|
+| All 3 present (2 trials) | 3 of 3, SHA-256 identical | Sources stayed, so it was a copy, not a move |
+| All 3 deleted (1 trial) | 0 | No extra top-level window was open about 9.5 s after Ctrl+V |
+| 1 of 3 deleted (2 trials) | 0 | Same; the 2 remaining files were not copied either |
+
+After one good paste, deleting the sources left all 3 pasted files in place.
+
+**Clipboard held by another process**, for 2–2.5 s while the example ran:
+
+| Holder | Call | Result |
+|---|---|---|
+| Opened with `OpenClipboard(NULL)` | `set_image` | Succeeded in 11.6 ms and replaced the contents (1 trial) |
+| Opened with a real window | `set_image` | Error 1418, "Thread does not have a clipboard open", contents unchanged (1 trial) |
+| Opened with a real window | `set_files` | Returned `Ok` after 147–155 ms. The image formats stayed and `CF_HDROP` was added beside them (3 trials; the full format list was read in 2, and the clipboard sequence number rose by 1 in all 3) |
+
+From the code, `set_files` discards the result of opening the clipboard and `clipboard-win` ignores the failed
+`EmptyClipboard`. So a successful return from `set_files` doesn't show that the clipboard holds only the file list.
+
+### The approach that worked
+
+- **Image:** `ClipboardContext::new()`, then `RustImageData::from_dynamic_image(DynamicImage::ImageRgba8(image))`, then
+  `set_image`. `RustImage` and `RustImageData` are in `clipboard_rs::common`.
+- **Files:** write the PNGs to a temp folder, then call `set_files` with their absolute paths as strings.
+- **Thread:** nothing tested requires a particular thread. Both copies worked on the main thread with no window or
+  message pump, and in one run each on a GPUI background executor thread (`ThreadId(3)`, with the GPUI main thread
+  `ThreadId(1)` running and no windows open), verified from another process. Given 35–82 ms at 2560x1440 and 4K, plus
+  about 150 ms more when another app holds the clipboard, the copy belongs off the main thread. Clipboard writes must run
+  one at a time, for example on a single queue: `clipboard-rs` opens the clipboard with a NULL owner, which didn't block
+  another NULL-owner opener in the table above, so overlapping copies could mix formats from two captures.
+- **After the writer exits:** the image and the file list both stayed readable and pasteable once the writing process had
+  exited.
+
+### How long the temp files must live
+
+A listed file has to exist from the copy until the paste has read it. Nothing in this API tells the app when a paste
+happens, or whether one ever will. The tests don't set a retention rule, but they do rule out deleting on a short timer:
+one missing file lost the whole paste, and no new window reported it. Keeping the files for as long as Toru runs is the
+obvious starting point, and a paste after Toru deletes them on exit would then be lost the same way. That is a
+recommendation, not something measured.
+
+### Limits
+
+- `set_image` keeps the clipboard open during both encodes, as in the timings above.
+- `set_files` can report success without having cleared the clipboard, as above. An untested option, from reading the
+  source, is `set(vec![ClipboardContent::Files(paths)])`: it clears the clipboard first and returns an error if that fails,
+  so a held clipboard should fail cleanly. It swallows errors from individual writes, so `Ok` doesn't prove the list was
+  written. A check after `set_files` can only detect the damage, and `has(ContentFormat::Files)` is true in this failure.
+- `clipboard-rs` already retries opening the clipboard, 11 attempts with 5 ms sleeps between them, for both `set_image`
+  and `set_files`. That matches the 147–155 ms in the table, so a shorter hold may be absorbed, though no shorter hold was
+  tested. A hold of 2–2.5 s outlasted it and `set_image` returned an error. Toru needs a failure message, and its own
+  retry only for longer holds; each failed call blocks for about 150 ms.
+- Pastes here were copies. No drop effect was set and none was tested.
+
+### Hands-on checks
+
+Run 2026-11-08 by an agent on the owner's desktop, with no person watching. Ctrl+V was synthesized with `SendInput`, only
+into windows the test had opened, and only after confirming each was in the foreground. Each Explorer window was closed
+through its own handle, and Paint through "Don't save"; no file in Pictures or Documents, to two levels down, had changed
+in the 30 minutes before that check. The paste into Paint (maximized, 100% zoom) showed a 1440x900 selection with the
+expected bands and gradient, checked from a crop of the window that was viewed and deleted, and the four opaque colours
+sampled from the screen were exact. The owner's clipboard was backed up first. Its text formats were restored byte for
+byte, and two OLE bookkeeping formats were left out because they only refer to the source app's object.
+
+### Not verified
+
+- Alpha in window captures. `xcap` uses `PrintWindow` for those, a different path from the full-monitor captures measured
+  in 1.2, so section 5.3 must check whether its frames are opaque.
+- Pasting the image into anything other than Paint: browsers, chat apps, Word, other image editors.
+- Which clipboard format Paint or any other app reads.
+- Real screenshots, whose PNG encoding time will differ.
+- Whether a person sees any message when a paste fails. Only new top-level windows were checked, so a message inside the
+  Explorer window could be missed.
+- Deleting source files while a paste is in progress, and pasting long lists (50 were copied but not pasted).
+- Paths over 260 characters, network folders, and pasting into other file managers or apps that accept files.
+- Clipboard use alongside GPUI's own clipboard calls, or with GPUI windows open.
+- Whether the test images entered Windows clipboard history. `EnableClipboardHistory` is not set in the registry here,
+  and the history itself wasn't inspected.
+- What should happen to the temp files when Toru exits.
+
+### Owner's manual checklist
+
+Run from PowerShell, with `%USERPROFILE%\.cargo\bin` on `PATH`. Both commands replace what's on your clipboard. Ticked
+items passed in the checks above with synthesized input; the unticked ones need a person.
+
+`cargo run --release -p toru --example spike_clipboard -- image`
+
+- [x] Paste into Paint: the image appears at 1440x900 with correct colours.
+- [ ] Paste into a browser or chat app, and into Word: the image appears with correct colours. Note how the second band
+  from the top looks, since it is partly transparent.
+
+`cargo run --release -p toru --example spike_clipboard -- files`
+
+- [x] Ctrl+V in an empty Explorer folder: 3 PNGs arrive, and the sources stay.
+- [ ] Paste with right-click > Paste, and into a chat app or browser upload that accepts files.
+- [ ] Run it again, delete one file from `%TEMP%\toru_spike_clipboard`, and paste: note whether Explorer shows anything.
+  The test saw no new window and no files arrive.
+- [ ] Afterwards, delete `%TEMP%\toru_spike_clipboard`.
