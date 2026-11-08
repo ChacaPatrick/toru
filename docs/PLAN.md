@@ -51,7 +51,7 @@ The local date and time come from `GetLocalTime` in `crates/toru/src/platform.rs
 
 ## Phase 7: History
 - [x] 7.1 Load a day at a time, plus the midnight reset
-- [ ] 7.2 "Delete unsaved after" setting and cleanup
+- [x] 7.2 "Delete unsaved after" setting and cleanup
 
 ## Phase 8: Editor [Fable]
 Drawn with `tiny-skia`, so the screen matches the saved file exactly.

@@ -32,7 +32,7 @@ pub struct RadioGroup {
     label: SharedString,
     options: Vec<SharedString>,
     selected: usize,
-    details: Vec<AnyElement>,
+    details: Vec<Option<AnyElement>>,
     on_change: Option<ChangeHandler>,
 }
 
@@ -56,7 +56,16 @@ impl RadioGroup {
 
     /// One element per option, drawn under its label and aligned with it.
     pub fn details(mut self, details: impl IntoIterator<Item = AnyElement>) -> RadioGroup {
-        self.details = details.into_iter().collect();
+        self.details = details.into_iter().map(Some).collect();
+        self
+    }
+
+    /// A detail under one option's label alone.
+    pub fn detail(mut self, option: usize, detail: AnyElement) -> RadioGroup {
+        if self.details.len() <= option {
+            self.details.resize_with(option + 1, || None);
+        }
+        self.details[option] = Some(detail);
         self
     }
 
@@ -96,6 +105,10 @@ impl RenderOnce for RadioGroup {
             let on_change = on_change.clone();
             let focus = focus.clone();
             move |event: &KeyDownEvent, window: &mut Window, cx: &mut App| {
+                // A control inside a detail, such as a text field, keeps its own arrow keys.
+                if !focus.iter().any(|row| row.is_focused(window)) {
+                    return;
+                }
                 let Some(next) = arrow_target(&event.keystroke.key, selected, count) else {
                     return;
                 };
@@ -115,7 +128,7 @@ impl RenderOnce for RadioGroup {
             .enumerate()
             .map(|(index, (option, focus))| {
                 let on = index == selected;
-                let detail = details.next();
+                let detail = details.next().flatten();
                 let choose = on_change.clone();
                 let choose_a11y = on_change.clone();
                 let mark = div()

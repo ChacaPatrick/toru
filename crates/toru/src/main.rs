@@ -113,6 +113,7 @@ fn main() {
             |window, cx| {
                 cx.new(|cx| {
                     let mut main = MainWindow::new(store, session, settings, window, cx);
+                    main.clean_up_history(cx);
                     if open_editor {
                         main.open_newest_in_editor(cx);
                     }

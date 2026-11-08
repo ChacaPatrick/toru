@@ -1,7 +1,8 @@
 //! The settings column (DESIGN.md §2 with CLAUDE.md's overrides): Session, Capture, Shortcuts,
 //! Save to, Name pattern, Format and On close, each group a label over its controls, as the
-//! mockups' `.settings` lays them out, then Look and Palette (§8), which have no mockup and
-//! follow the Palettes boards. Every control shows what is in `Settings` and every change
+//! mockups' `.settings` lays them out, then Delete unsaved after (`retention`), which has no
+//! mockup and follows On close since both are about unsaved captures, then Look and Palette
+//! (§8), which have no mockup and follow the Palettes boards. Every control shows what is in `Settings` and every change
 //! goes through `MainWindow::change_settings`. The column scrolls on its own when the window is
 //! short, and follows keyboard focus so a focused control always shows with its ring. While the
 //! bulk bar (§4) floats over the column's foot, the column ends with room for it, so the last
@@ -19,7 +20,7 @@ use toru_core::{
     settings::{Look, OnClose, PaletteChoice, SaveFormat, Settings},
 };
 
-use super::{HINT_LEADING, MainWindow, act};
+use super::{HINT_LEADING, MainWindow, act, retention};
 use crate::theme::{ActiveTheme, Theme, ThemedText, set_theme};
 use crate::ui::{
     BUTTON_SMALL_HEIGHT, Button, Icon, MIN_TARGET, RadioGroup, Segmented, TextField, Toggle,
@@ -31,7 +32,7 @@ const GROUP_GAP: f32 = 22.;
 const GAP: f32 = 11.;
 const ROW_GAP: f32 = 10.;
 const FIELD_HEIGHT: f32 = 36.;
-const PATTERN_HEIGHT: f32 = 34.;
+pub(super) const PATTERN_HEIGHT: f32 = 34.;
 /// A label row is at least this tall. The hide button, centred on the first one, overhangs it
 /// equally above and below, so the label stays where the mockups have it and the ring above the
 /// button clears the column's top edge.
@@ -225,6 +226,7 @@ pub fn settings_column(
                 })),
             ),
         )
+        .child(retention::retention_group(this, cx))
         .child(
             group(theme, "Look").child(
                 RadioGroup::new(
@@ -324,7 +326,7 @@ fn swatches(theme: &Theme, colors: &[Hsla; 4]) -> Div {
 }
 
 /// A handler that takes the control's value, such as the chosen index, along to the view.
-fn act_with<T: 'static>(
+pub(super) fn act_with<T: 'static>(
     cx: &Context<MainWindow>,
     f: impl Fn(&mut MainWindow, &mut Context<MainWindow>, T) + 'static,
 ) -> impl Fn(T, &mut Window, &mut App) + 'static {
@@ -333,7 +335,7 @@ fn act_with<T: 'static>(
 }
 
 /// `.group`: its label over its controls.
-fn group(theme: &Theme, label: &'static str) -> Div {
+pub(super) fn group(theme: &Theme, label: &'static str) -> Div {
     div()
         .flex()
         .flex_col()
@@ -433,7 +435,7 @@ fn row(theme: &Theme) -> Div {
 }
 
 /// `.hint`, wrapping as the mockups' Session hint does.
-fn hint(theme: &Theme, text: impl Into<SharedString>) -> Div {
+pub(super) fn hint(theme: &Theme, text: impl Into<SharedString>) -> Div {
     let style = theme.type_scale.hint;
     div()
         .type_style(theme, style)

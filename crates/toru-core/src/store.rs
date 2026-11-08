@@ -338,6 +338,7 @@ impl Store {
     /// Deletes the record and temp files. A file the user saved stays where it is.
     pub fn delete(&self, id: CaptureId) -> Result<()> {
         self.delete_rows("DELETE FROM captures WHERE id = ?1 RETURNING id", id.0)
+            .map(drop)
     }
 
     /// Deletes the session's unsaved captures and their files.
@@ -346,10 +347,39 @@ impl Store {
             "DELETE FROM captures WHERE session = ?1 AND saved_path IS NULL RETURNING id",
             session.0,
         )
+        .map(drop)
+    }
+
+    /// The unsaved captures `delete_unsaved_older_than` would delete right now, so that a change
+    /// confirmed later can delete exactly these with `delete_unsaved`.
+    pub fn unsaved_older_than(&self, days: u32, today: LocalDate) -> Result<Vec<CaptureId>> {
+        let db = self.db();
+        let mut statement =
+            db.prepare("SELECT id FROM captures WHERE taken_date < ?1 AND saved_path IS NULL")?;
+        let ids = statement
+            .query_map([date_number(today.minus_days(days))], |row| {
+                row.get(0).map(CaptureId)
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(ids)
+    }
+
+    /// Deletes those of `ids` that are still unsaved, and their files. Returns the ids of the
+    /// captures that went.
+    pub fn delete_unsaved(&self, ids: &[CaptureId]) -> Result<Vec<CaptureId>> {
+        let mut deleted = Vec::with_capacity(ids.len());
+        for &id in ids {
+            deleted.extend(self.delete_rows(
+                "DELETE FROM captures WHERE id = ?1 AND saved_path IS NULL RETURNING id",
+                id.0,
+            )?);
+        }
+        Ok(deleted)
     }
 
     /// Deletes unsaved captures taken more than `days` days before `today`, and their files.
-    pub fn delete_unsaved_older_than(&self, days: u32, today: LocalDate) -> Result<()> {
+    /// Returns the ids of the captures that went.
+    pub fn delete_unsaved_older_than(&self, days: u32, today: LocalDate) -> Result<Vec<CaptureId>> {
         self.delete_rows(
             "DELETE FROM captures WHERE taken_date < ?1 AND saved_path IS NULL RETURNING id",
             date_number(today.minus_days(days)),
@@ -449,18 +479,19 @@ impl Store {
 
     // `sql` must be a single `DELETE ... RETURNING id`. Its rows are committed as gone before any
     // file is touched.
-    fn delete_rows(&self, sql: &'static str, param: i64) -> Result<()> {
-        let ids: Vec<i64> = {
+    /// Runs a `DELETE … RETURNING id` and removes the deleted captures' temp files.
+    fn delete_rows(&self, sql: &'static str, param: i64) -> Result<Vec<CaptureId>> {
+        let ids: Vec<CaptureId> = {
             let db = self.db();
             let mut statement = db.prepare(sql)?;
             statement
-                .query_map([param], |row| row.get(0))?
+                .query_map([param], |row| row.get(0).map(CaptureId))?
                 .collect::<rusqlite::Result<_>>()?
         };
-        for id in ids {
-            self.remove_temp_files(CaptureId(id));
+        for &id in &ids {
+            self.remove_temp_files(id);
         }
-        Ok(())
+        Ok(ids)
     }
 
     // Failures are ignored: the file may already be gone, and anything left is swept by `open`.
@@ -1326,10 +1357,16 @@ mod tests {
         add(&store, session, "today", today, (9, 0));
         let boundary = add(&store, session, "30 days", date(2025, 12, 11), (0, 0));
         let expired = add(&store, session, "31 days", date(2025, 12, 10), (23, 59));
-        add(&store, session, "long ago", date(2024, 6, 1), (9, 0));
+        let long_ago = add(&store, session, "long ago", date(2024, 6, 1), (9, 0));
 
-        store.delete_unsaved_older_than(30, today).unwrap();
+        let mut counted = store.unsaved_older_than(30, today).unwrap();
+        counted.sort_by_key(|id| id.0);
+        assert_eq!(counted, [expired, long_ago]);
+        let mut deleted = store.delete_unsaved_older_than(30, today).unwrap();
 
+        deleted.sort_by_key(|id| id.0);
+        assert_eq!(deleted, [expired, long_ago]);
+        assert!(store.unsaved_older_than(30, today).unwrap().is_empty());
         assert_eq!(
             names(&store.session_captures(session).unwrap()),
             ["today", "30 days"]
@@ -1337,6 +1374,38 @@ mod tests {
         assert!(store.image_path(boundary).is_file());
         assert!(!store.image_path(expired).exists());
         assert!(!store.thumbnail_path(expired).exists());
+    }
+
+    #[test]
+    fn the_count_leaves_out_saved_captures() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "old saved", date(2020, 1, 1), (9, 0));
+        saved_copy(&store, id, &dir, "old.png");
+        let unsaved = add(&store, session, "old unsaved", date(2020, 1, 2), (9, 0));
+        assert_eq!(store.unsaved_older_than(30, TODAY).unwrap(), [unsaved]);
+    }
+
+    #[test]
+    fn deleting_by_id_skips_captures_saved_since_they_were_counted() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        let session = store.new_session().unwrap();
+        let first = add(&store, session, "first", date(2020, 1, 1), (9, 0));
+        let second = add(&store, session, "second", date(2020, 1, 2), (9, 0));
+        let newer = add(&store, session, "newer", TODAY, (9, 0));
+        let counted = store.unsaved_older_than(30, TODAY).unwrap();
+        saved_copy(&store, second, &dir, "second.png");
+
+        assert_eq!(store.delete_unsaved(&counted).unwrap(), [first]);
+        assert_eq!(
+            names(&store.session_captures(session).unwrap()),
+            ["newer", "second"]
+        );
+        assert!(!store.image_path(first).exists());
+        assert!(store.image_path(newer).is_file());
+        assert!(store.delete_unsaved(&[]).unwrap().is_empty());
     }
 
     #[test]

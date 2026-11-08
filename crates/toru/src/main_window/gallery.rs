@@ -564,6 +564,34 @@ impl Gallery {
         removed
     }
 
+    /// Takes away the cards of the captures the store has deleted, wherever they are listed, and
+    /// returns how many went. A day group left empty goes with them; the session group stays. A
+    /// fetch under way is dropped even when no listed card went, since its page was read before
+    /// the delete and may list some of them, and the next render asks again. A focused card that
+    /// goes stops being rendered, which the main window answers by refocusing, and the current
+    /// card is chosen afresh if it went.
+    pub fn remove_captures(&mut self, deleted: &[CaptureId], cx: &mut Context<Self>) -> usize {
+        let mut removed = 0;
+        for group in &mut self.groups {
+            let (gone, kept): (Vec<Card>, Vec<Card>) = std::mem::take(&mut group.cards)
+                .into_iter()
+                .partition(|card| deleted.contains(&card.files.id));
+            group.cards = kept;
+            removed += gone.len();
+            self.cleared.extend(gone);
+        }
+        self.groups
+            .retain(|group| matches!(group.kind, GroupKind::Session) || !group.cards.is_empty());
+        if self.current.is_some_and(|id| self.card(id).is_none()) {
+            self.current = None;
+        }
+        self.fetch = None;
+        self.fetch_failed = false;
+        self.rebuild_rows(cx);
+        cx.notify();
+        removed
+    }
+
     /// Lists or drops the groups before this session. A focused card that goes with them stops
     /// being rendered, which the main window's `on_focus_lost` answers by refocusing.
     pub fn set_show_previous(&mut self, on: bool, cx: &Context<Self>) {

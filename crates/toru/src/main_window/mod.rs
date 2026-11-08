@@ -4,7 +4,8 @@
 //! editor (§5) replaces everything under the title bar with it. Captures come in through
 //! `captures`, the gallery's buttons act on them in `actions`, and the gallery pages through
 //! earlier days itself (`history`). Each choice that is a setting reads and writes `Settings`,
-//! every write going through `change_settings` to the store.
+//! every write going through `change_settings` to the store. Old unsaved captures are deleted by
+//! the retention setting (`retention`) at launch, at midnight and when the setting changes.
 
 mod actions;
 mod bottom_bar;
@@ -15,6 +16,7 @@ mod closing;
 mod delayed;
 mod gallery;
 mod history;
+mod retention;
 mod selection;
 mod settings;
 mod title_bar;
@@ -75,6 +77,8 @@ pub struct MainWindow {
     /// otherwise `pattern_error` says what is wrong.
     pattern: Entity<InputState>,
     pattern_error: Option<NameError>,
+    /// The Delete unsaved after control's state (`retention`).
+    retention: retention::RetentionControl,
     settings_scroll: ScrollHandle,
     /// Scrolls the settings column to whichever of its controls takes keyboard focus.
     settings_focus: FocusInView,
@@ -193,6 +197,7 @@ impl MainWindow {
             }
         })
         .detach();
+        let retention = retention::RetentionControl::new(settings.retention, window, cx);
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(DAY_CHECK_EVERY).await;
@@ -212,6 +217,7 @@ impl MainWindow {
             gear: cx.focus_handle().tab_stop(true),
             pattern,
             pattern_error: None,
+            retention,
             settings_scroll: ScrollHandle::new(),
             settings_focus: FocusInView::new(cx),
             session_started: now.clock().into(),
@@ -266,6 +272,8 @@ impl MainWindow {
                 })
             })
             .ok();
+        // A new day may put more captures past the retention period.
+        self.clean_up_history(cx);
         cx.notify();
     }
 
@@ -522,6 +530,7 @@ impl Render for MainWindow {
             })
             // Absolute, so showing it moves nothing (DESIGN.md §2).
             .children(self.toast.get().cloned())
+            .children(self.retention_dialog(cx))
             .children(
                 self.quit_prompt
                     .map(|unsaved| self.quit_dialog(unsaved, cx)),
