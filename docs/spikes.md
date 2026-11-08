@@ -647,7 +647,8 @@ byte, and two OLE bookkeeping formats were left out because they only refer to t
 ### Not verified
 
 - Alpha in window captures. `xcap` uses `PrintWindow` for those, a different path from the full-monitor captures measured
-  in 1.2, so section 5.3 must check whether its frames are opaque.
+  in 1.2. Section 5.3 crops the window out of the frozen monitor frames instead, which 1.2 found opaque, so `xcap`'s
+  window captures are still unchecked.
 - Pasting the image into anything other than Paint: browsers, chat apps, Word, other image editors.
 - Which clipboard format Paint or any other app reads.
 - Real screenshots, whose PNG encoding time will differ.

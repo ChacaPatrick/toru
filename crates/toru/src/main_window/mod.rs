@@ -190,17 +190,17 @@ impl MainWindow {
     fn capture(&mut self, mode: CaptureMode, cx: &mut Context<Self>) {
         self.cancel_countdown(cx);
         match mode {
-            CaptureMode::Region => self.capture_region(cx),
-            CaptureMode::Window => self.capture_window(cx),
+            CaptureMode::Region | CaptureMode::Window => self.capture_with_overlay(mode, cx),
             CaptureMode::FullScreen => self.capture_full_screen(cx),
         }
     }
 
-    /// Opens the region overlay (DESIGN.md §6); its crop arrives in `add_capture`.
-    fn capture_region(&mut self, cx: &mut Context<Self>) {
+    /// Opens the Region or Window overlay (DESIGN.md §6); its image arrives in `add_capture`.
+    fn capture_with_overlay(&mut self, mode: CaptureMode, cx: &mut Context<Self>) {
         let this = cx.entity();
         let failed = this.clone();
-        overlay::start_region(
+        overlay::start(
+            mode,
             cx,
             move |image, mode, cx| {
                 this.update(cx, |this, cx| this.add_capture(image, mode, cx));
@@ -208,9 +208,6 @@ impl MainWindow {
             move |cx| failed.update(cx, |this, cx| this.report_region_failed(cx)),
         );
     }
-
-    /// Section 5.3 opens its overlay from here.
-    fn capture_window(&mut self, _cx: &mut Context<Self>) {}
 
     /// Runs `f` on the window. Deferred, because the window can't be reached from inside one of
     /// its own handlers.

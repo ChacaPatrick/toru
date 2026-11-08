@@ -1,8 +1,8 @@
 //! The little the app needs from the operating system that GPUI 0.3.11 doesn't offer: restoring
 //! a maximized window, a display's size in physical pixels, the local time, the app-data and
 //! default save folders, showing a file in the file manager, keeping Toru's own windows out of a
-//! capture and bringing the capture overlay to the foreground. Windows is done here; the other
-//! platforms get the fallbacks at the bottom until they are.
+//! capture, bringing the capture overlay to the foreground and telling which windows a user can
+//! pick. Windows is done here; the other platforms get the fallbacks at the bottom until they are.
 
 use std::{path::PathBuf, time::Duration};
 
@@ -73,6 +73,9 @@ mod windows {
     const GWL_EXSTYLE: i32 = -20;
     const WS_EX_TOPMOST: u32 = 0x8;
     const WS_EX_TOOLWINDOW: u32 = 0x80;
+    const WS_EX_TRANSPARENT: u32 = 0x20;
+    const WS_EX_LAYERED: u32 = 0x0008_0000;
+    const LWA_ALPHA: u32 = 0x2;
 
     #[link(name = "user32")]
     unsafe extern "system" {
@@ -94,6 +97,13 @@ mod windows {
         fn IsHungAppWindow(hwnd: isize) -> i32;
         fn AttachThreadInput(attach: u32, attach_to: u32, on: i32) -> i32;
         fn SetForegroundWindow(hwnd: isize) -> i32;
+        fn GetWindowLongPtrW(hwnd: isize, index: i32) -> isize;
+        fn GetLayeredWindowAttributes(
+            hwnd: isize,
+            key: *mut u32,
+            alpha: *mut u8,
+            flags: *mut u32,
+        ) -> i32;
     }
 
     #[link(name = "kernel32")]
@@ -268,6 +278,39 @@ mod windows {
         unsafe { MessageBoxW(0, text.as_ptr(), caption.as_ptr(), MB_ICONERROR) };
     }
 
+    /// The full `HWND` from the low 32 bits `xcap` keeps as a window id: handles are 32-bit
+    /// values sign-extended to 64, so the top half is the bottom half's sign.
+    pub fn hwnd_from_id(id: u32) -> isize {
+        id as i32 as isize
+    }
+
+    /// Whether the user can see and click the window `xcap` lists as `id`, so it is worth
+    /// picking. `xcap` lists every visible top-level window, including click-through ones
+    /// (`WS_EX_TRANSPARENT`): a layered, click-through, topmost window the size of the desktop,
+    /// which some apps keep for drawing over everything, would be the only thing under the
+    /// pointer on that screen. A layered window set fully transparent is invisible too. Layered
+    /// windows drawn per pixel aren't told apart: there's no cheap way, and they are rare on top
+    /// of real windows.
+    pub fn is_window_pickable(id: u32) -> bool {
+        let hwnd = hwnd_from_id(id);
+        // SAFETY: a plain user32 call on a handle; for a handle that has gone it answers 0.
+        let ex_style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
+        if ex_style & WS_EX_TRANSPARENT != 0 {
+            return false;
+        }
+        if ex_style & WS_EX_LAYERED != 0 {
+            let (mut key, mut alpha, mut flags) = (0u32, 0u8, 0u32);
+            // SAFETY: three writable out-parameters; the call fails, leaving them, for a window
+            // that isn't layered with `SetLayeredWindowAttributes`.
+            let known =
+                unsafe { GetLayeredWindowAttributes(hwnd, &mut key, &mut alpha, &mut flags) } != 0;
+            if known && flags & LWA_ALPHA != 0 && alpha == 0 {
+                return false;
+            }
+        }
+        true
+    }
+
     pub fn exclude_windows_from_capture(exclude: bool) {
         let affinity = if exclude {
             WDA_EXCLUDEFROMCAPTURE
@@ -348,8 +391,8 @@ pub const EXCLUDE_SETTLE: Duration = Duration::from_millis(50);
 
 #[cfg(windows)]
 pub use windows::{
-    bring_overlay_to_foreground, default_save_folder, exclude_windows_from_capture, local_now,
-    restore_window, reveal_file, show_startup_error,
+    bring_overlay_to_foreground, default_save_folder, exclude_windows_from_capture,
+    is_window_pickable, local_now, restore_window, reveal_file, show_startup_error,
 };
 
 #[cfg(not(windows))]
@@ -371,6 +414,11 @@ pub fn bring_overlay_to_foreground() {}
 
 #[cfg(not(windows))]
 pub fn exclude_windows_from_capture(_exclude: bool) {}
+
+#[cfg(not(windows))]
+pub fn is_window_pickable(_id: u32) -> bool {
+    true
+}
 
 #[cfg(not(windows))]
 pub fn show_startup_error(message: &str) {
@@ -452,5 +500,18 @@ mod tests {
         assert!(windows::must_attach(7, 3));
         assert!(!windows::must_attach(3, 3));
         assert!(!windows::must_attach(0, 3));
+    }
+
+    #[test]
+    fn a_window_id_sign_extends_back_to_its_handle() {
+        assert_eq!(windows::hwnd_from_id(0x0002_0ABC), 0x0002_0ABC);
+        assert_eq!(windows::hwnd_from_id(0xFFFF_0ABC), -0xF544);
+    }
+
+    #[test]
+    fn a_handle_nobody_has_is_left_to_the_other_checks() {
+        // Its style reads as 0, so nothing here rules it out, and the call neither fails nor
+        // panics on a bad handle.
+        assert!(is_window_pickable(0));
     }
 }
