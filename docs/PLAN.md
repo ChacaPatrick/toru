@@ -17,7 +17,7 @@ Results go in `docs/spikes.md`.
 - [x] 1.2 Capture overlay: a borderless topmost window per monitor showing a frozen image
 - [x] 1.3 Name fields with real text editing, and smooth scrolling with 200 real thumbnails
 - [x] 1.4 Copy image and copy as files
-- [ ] 1.5 Narrator check
+- [ ] 1.5 Narrator check (Windows UI Automation passed; the owner's listening test in `docs/spikes.md` is still open)
 
 ## Phase 2: Core logic, no UI
 - [ ] 2.1 Capture records and naming with `_2`/`_3` **[parallel with 2.3]**

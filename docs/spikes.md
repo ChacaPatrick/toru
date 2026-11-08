@@ -679,3 +679,172 @@ items passed in the checks above with synthesized input; the unticked ones need 
 - [ ] Run it again, delete one file from `%TEMP%\toru_spike_clipboard`, and paste: note whether Explorer shows anything.
   The test saw no new window and no files arrive.
 - [ ] Afterwards, delete `%TEMP%\toru_spike_clipboard`.
+
+## 1.5 Narrator check
+
+**Answer:** at this pinned snapshot, GPUI's accessibility tree is really exposed to Windows. A separate process using
+UI Automation (UIA) saw every control with the right name, control type and state, invoked and toggled them through UIA
+patterns with the app reacting, set a text field's value, and received focus-changed and live-region events within
+milliseconds (one run of 15 had delayed focus events, cause unknown; see "Keyboard focus"). **No screen reader was
+run**: Narrator was deliberately not started, so this is evidence that a screen reader can read the app, not proof of
+how Narrator, NVDA or JAWS behave.
+
+**Recommendation, provisional: the tree is exposed to UI Automation, but whether a screen reader works is unproven, so
+keep labelling controls and test in 10.2.** Section 1.5 stays open until a person has listened, using the checklist
+below. Three things must be designed for in the meantime: something has to hold focus when a window opens and whenever the
+focused element goes away, because Tab and Space did nothing without it (see "Keyboard focus"); off-screen gallery cards won't be in the tree (see "Limits");
+and `gpui-kit`'s input has no Text pattern, so a reader gets a name field's value but no caret or selection echo.
+
+Tested 2026-11-08 on Windows 11 build 26200, Rust 1.98.1, `gpui-pre` 0.3.11, `gpui-kit` 0.9.0, `accesskit_windows`
+0.34.0, on a scale-1 monitor. Code: `crates/toru/examples/spike_a11y.rs`.
+
+### What was tested
+
+The example is a window with a button, a switch, a `gpui-kit` text input, a checkbox, a static text line, and a toast
+that appears when the button is pressed. It uses only existing dependencies; `gpui::accesskit` is re-exported. A
+throwaway C# tool, kept in the temp folder and since deleted, queried it from another process through .NET
+`System.Windows.Automation`, plus native `IUIAutomation` for the live setting, which the managed client wouldn't return,
+and the Aria role. The app prints each state change and focus change with a timestamp, which is what "the app reacted"
+means below.
+
+From the code, nothing is exposed until a client asks: `WM_GETOBJECT` activates AccessKit, and GPUI hands back an empty
+root and forces a new frame. In the first two runs, the first walk, at 87–90 ms after the probe first touched the window,
+already had all 13 elements. `UiaHasServerSideProvider` returned true for the window.
+
+### What Windows sees
+
+Names, types and patterns are from walking the raw UIA tree. Control and content views gave 13 and 8 elements of the same
+tree, as expected: the content view drops window chrome. The Aria role and live setting are from `IUIAutomation`.
+
+| Control | Name | Control type | Aria role | State exposed | Focusable | Patterns |
+|---|---|---|---|---|---|---|
+| Button | `Copy all` | Button | `button` | none | Yes | Invoke |
+| Toggle (`Role::Switch`, `aria_toggled`) | `Keep unsaved` | Button | `switch` | ToggleState On/Off | Yes | Toggle |
+| `gpui-kit` `Input` with `aria_label` | `Capture name` | Edit | `textbox` | Value, IsReadOnly false | Yes | Value |
+| Selection (`Role::CheckBox`, `aria_toggled`) | `Select capture 1` | CheckBox | `checkbox` | ToggleState On/Off | Yes | Toggle |
+| Toast (`Role::Status`, live) | `Copied N times` | StatusBar | `status` | LiveSetting 1 (Polite) | No | none |
+| Static `text!("...")` | `This session` | Text | not read | none | No | none |
+| Window | Window title | Window | not read | focused when nothing inside is | While nothing inside has focus | Window, Transform |
+
+Title bar, System menu, Minimize, Maximize and Close also appear, with the same names as any window, supplied by the
+native frame, not by the example. A window opened without a title has an empty name, so every Toru window needs one.
+`FromPoint` at the centre of each of the four interactive controls returned that control.
+
+### Driving controls through UIA
+
+Read in full in the first full pass. Three later full passes ran the same actions but were checked only for the keyboard
+results; the native-property run and all 14 timing runs below also exercised Invoke or a key press.
+
+| Action through UIA | Result |
+|---|---|
+| `InvokePattern.Invoke` on the button | Handler ran, toast appeared. Repeated presses each ran it |
+| `TogglePattern.Toggle` on the switch, twice | App state flipped, `ToggleState` went On then Off, and a property-changed event arrived each time |
+| `TogglePattern.Toggle` on the checkbox | Same |
+| `ValuePattern.SetValue` on the input | Text became `Renamed by UIA`, the `Change` event fired and a `Value` property-changed event arrived |
+| `AutomationElement.SetFocus` on a button, the switch and the input | App focus moved there, and `FocusedElement` reported it |
+| `AutomationElement.FromPoint` | Correct control for all four |
+
+From the app's log, Invoke, Toggle and SetValue also moved keyboard focus onto the control. Whether a reader announces
+that as a focus change is something to listen for in 10.2.
+
+### Keyboard focus
+
+Tab was synthesized with `SendInput` into the example's own window, with its foreground state checked before every key.
+
+- **Focus events arrive and match.** In the three runs using UIA's event cache, 10 presses each, every Tab produced one
+  focus-changed event for the right element, in order, 5–14 ms after the key. In 8 more runs where the handler or the
+  main thread read live properties back from the app on each event, the events stayed on time and reads took 0–3 ms.
+  `HasKeyboardFocus` and `FocusedElement` agreed with the app's own log wherever they were read.
+- **One odd run.** In the very first full pass, 1 of 15 keyboard runs, focus events arrived in delayed bursts, up to 3 s
+  late, while the app's focus log showed each change within the probe's 400 ms wait. None of the 14 later runs reproduced
+  it, including 3 more full passes with the same probe and a debug build, so the cause is unknown.
+- **Tab does nothing until something has focus.** With nothing focused at launch, 10 Tab presses and a Space changed
+  nothing, in all three runs. From the code, `Window::focus_node_id_in_rendered_frame` falls back to the root dispatch node
+  when nothing is focused or the focused element is no longer rendered, and `gpui_kit::Root` binds Tab on an element below
+  it, so the binding is never reached. Toru has to focus something when each window opens, and restore focus (for example
+  through `on_focus_lost`) when the focused element goes away: a deleted card, a collapsed day group, closing select mode,
+  or a card scrolled out of the list. Only the launch case was tested; the rest is from the code. This is a keyboard
+  problem for everyone, so it belongs with 10.1 as well.
+- Space on a focused `Copy all` ran its `on_click` once in each of the 11 timing runs that reached it. Enter wasn't tried.
+
+### Live regions
+
+GPUI 0.3.11 has no `aria_live` setter, but `a11y_synthetic_children` hands over the raw `accesskit::Node`:
+
+```rust
+div().id("toast").role(Role::Status).aria_label(message.clone())
+    .a11y_synthetic_children(|builder| { builder.parent_node().set_live(Live::Polite); })
+    .child(message)
+```
+
+`accesskit_windows` raises `UIA_LiveRegionChangedEventId` when a node with a name and a non-off live setting is added, or
+when its name changes. All three cases fired the event, with the right text in the event cache:
+
+| Case | Event |
+|---|---|
+| Toast appears for the first time | `liveRegion`, 2–7 ms after the app logged the press (11 timing runs) |
+| Text changes while shown | `liveRegion` and a `Name` property-changed event |
+| Dismissed, then shown again | `liveRegion` |
+
+`LiveSetting` read through the native client was 1 (`Polite`) on the toast and 0 on the other controls.
+
+### Limits
+
+- **Clicks through UIA are simulated mouse clicks.** From the code, `on_click` only marks the node clickable. With no
+  action listener, GPUI sends a left mouse down and up at the centre of the node's bounds, so whatever is on top at that
+  point receives it. A control that can be covered or clipped across its centre, such as one under the return pill, the
+  toast or the editor's tool pill, or a card partly scrolled out, needs `on_a11y_action(Click, …)`, which takes
+  precedence over this fallback. The example has no overlapping controls, so covered and clipped cases weren't tested.
+- **Only elements with both `.id()` and `.role()` are in the tree.** Plain `.child("text")` isn't: the buttons above have
+  no text child, which is why their labels aren't read twice. Text that must be read needs `text!`, or `.id()` + `.role()` + `.aria_label()`.
+  GPUI's docs warn that `text!` in a loop gives every item the same ID, which panics in debug builds and silently drops nodes
+  in release. Focusable elements without an ID and a role leave a reader announcing the whole window (from the code).
+- **The input exposes Value only, no Text pattern.** `gpui-kit` 0.9.0 sets `aria_value` and doesn't provide text-run nodes,
+  so `accesskit_windows` can't support `TextPattern`. A reader can see the whole value but has no caret or selection
+  information, so arrow-key echo in a name field probably won't work. Value-change events do fire.
+- **Off-screen cards aren't in the tree.** Section 1.3's virtual list only builds visible rows, and only built elements
+  produce nodes. Toru's gallery will need to scroll the focused card into view (already required) and may want
+  `aria_position_in_set`/`aria_size_of_set`. Not built or tested here.
+- **The tree stays on.** From the code, Windows' `a11y_init` drops the deactivation callback, so after any client connects,
+  every frame builds a tree update for the rest of that window's life. The cost wasn't measured.
+- Debug builds have assertions in this path, such as for duplicate node IDs. The debug run had no panics and empty stderr.
+- `LocalizedControlType` is `region` on the window root, for no reason found here, and `button`, not `switch`, for the
+  toggle. How that sounds wasn't checked.
+
+### Hands-on checks
+
+Run 2026-11-08 by an agent on the owner's desktop, with no person watching and Narrator not started, nor any speech. Keys
+were synthesized with `SendInput` only while `GetForegroundWindow` returned the example's window, which it did in every run.
+The focus-changed handler is system-wide by design, so it filtered on process ID before reading anything, and no other
+app's element data was logged. The example was stopped by its own process ID. The probe and its output were in the temp
+folder and have been deleted. All runs ended with empty stderr. 23 launches in total: 1 read-only walk, 4 full passes (3
+release, 1 debug), 1 native-property read, 3 where a probe bug in its cache setup stopped it before sending any input, 3
+with no initial focus, and 11 timing runs.
+
+### Not verified
+
+- **What any screen reader actually says or does.** Narrator was not started, on purpose, and NVDA and JAWS weren't tried. That
+  includes what's spoken for each control, whether a focus change or live region is announced, speech ordering, and whether
+  anything is interrupted. Zed issue #41138, still open, was filed against Zed 0.209.6 on JAWS and NVDA; whether a current
+  GPUI behaves differently for those two readers is unknown from here.
+- Clients that use MSAA or IAccessible2 instead of UIA. Only UIA was queried.
+- Alt-Tab back to the window and the focus events around window activation (`update_window_focus_state`).
+- Any display scale other than 1, so element bounding rectangles at other scales.
+- Off-screen and scrolled content, menus, dialogs and the toast's timing out, since none exist in the example.
+- The cost of building the tree on each frame with a real gallery.
+- Enter on a focused control.
+
+### Owner's checklist
+
+This needs a person listening, so none of it is ticked. Run from PowerShell, with `%USERPROFILE%\.cargo\bin` on `PATH`:
+`cargo run --release -p toru --example spike_a11y`, then start Narrator with Ctrl+Win+Enter. Nothing is focused at launch, so
+click `Copy all` first; that also shows the toast.
+
+- [ ] Tab from `Copy all`: `Dismiss toast` is read as a button, `Keep unsaved` with its on/off state, `Capture name` as an edit
+  field with its value, and `Select capture 1` as a check box with its state.
+- [ ] Space on `Keep unsaved` and on `Select capture 1`: the new state is read.
+- [ ] Press `Copy all`: `Copied N times` is read without focus moving, each time it changes, and again after `Dismiss toast`.
+- [ ] Type in `Capture name`: characters are echoed. Arrow left and right: note whether the character at the caret is read,
+  since the field has no Text pattern.
+- [ ] Narrator's item navigation (Caps Lock + arrows) reaches every control and `This session`, with no doubled labels.
+- [ ] Repeat the above with NVDA if it can be installed, and note any difference.
