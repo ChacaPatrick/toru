@@ -8,8 +8,12 @@ use gpui::{
     div, prelude::*, px,
 };
 
-use super::{Handler, Icon, focus_marks, keyed_focus, refined};
+use super::{Handler, Icon, focus_marks, keyed_focus, refined, shadowed};
 use crate::theme::{ActiveTheme, ThemedText};
+
+/// How much of the button's text colour the `.sub` label keeps. The mockups' CSS says .75, which
+/// leaves Game Boy green's sub at 4.4:1; .8 is 4.8:1 there and reads the same (DESIGN.md §7).
+pub const SUB_OPACITY: f32 = 0.8;
 
 #[derive(IntoElement)]
 pub struct Button {
@@ -185,13 +189,13 @@ impl RenderOnce for Button {
                     .pl_2()
                     .border_l_1()
                     .border_color(text)
-                    .opacity(0.75)
+                    .opacity(SUB_OPACITY)
                     .type_style(theme, sub_font)
                     .child(sub_font.case.apply(&sub))
             }));
 
-        let button = div()
-            .id(self.id)
+        let button = div().id(self.id);
+        let button = shadowed(button, shadow, radius)
             .role(Role::Button)
             .aria_label(aria_label)
             .track_focus(&focus)
@@ -209,7 +213,6 @@ impl RenderOnce for Button {
             .border(border.width)
             .border_color(border.color)
             .rounded(radius)
-            .shadow(shadow.clone())
             .type_style(theme, font)
             .whitespace_nowrap()
             .cursor_pointer()

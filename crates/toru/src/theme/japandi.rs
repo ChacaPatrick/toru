@@ -1,11 +1,12 @@
 //! The Japandi look, copied from the "Japandi" entry of `design/tokens.json`.
 
-use gpui::{BoxShadow, FontWeight, Hsla, px, rgb};
+use gpui::{FontWeight, Hsla, px};
 use toru_core::settings::Look;
 
 use super::{
-    Border, Borders, Case, Colors, DayDate, Family, Fill, Fonts, Icons, Palette, Radii, Shadows,
-    Sizes, Strings, Theme, TypeScale, TypeStyle,
+    Border, Borders, Colors, DayDate, Fill, Fonts, Icons, Palette, Radii, Shadows, Sizes, Strings,
+    Theme, TypeScale,
+    css::{body, display, gradient, hex, hex_alpha, mono, soft_shadow},
 };
 
 pub fn palettes() -> [Palette; 3] {
@@ -71,6 +72,9 @@ pub fn theme(palette: usize) -> Theme {
             b.input = Border::solid(1., hex(0x4a463e));
             b.button = Border::solid(1., hex(0x4a463e));
             b.chip = Border::solid(1., hex(0x4a463e));
+            // tokens.json leaves the light tag (#faf7f1 at .9) with its light-palette `--tag-text`
+            // (#6b665c): 4.4:1 over this palette's thumb. The base `--bulk-sep` grey reaches 5.7:1.
+            c.tag_text = hex(0x5a564e);
         }
         _ => {}
     }
@@ -84,22 +88,17 @@ pub fn theme(palette: usize) -> Theme {
 /// tokens.json fixes `--focus`, `--focus-halo` and the window control colour at the base palette's
 /// values, which fail DESIGN.md §7 on the other palettes (the focus ring is 1.2:1 on Charcoal & clay).
 /// So the focus ring follows the text, the halo the accent, and the controls the muted colour.
+/// The bulk bar is the ink of the text, where that ring is 1:1, so on it the ring is the bar's
+/// own light text.
 fn follow_palette(c: &mut Colors) {
     c.focus = c.text;
+    c.bulk_focus = c.bulk_text;
     c.focus_halo = Hsla {
         a: 0.25,
         ..c.accent
     };
     c.controls = c.muted;
-    c.toggle_on = c.accent_bg;
-    c.toggle_on_knob = c.accent_text;
-    c.on_bg = c.accent_bg;
-    c.on_text = c.accent_text;
-    c.chip_saved_bg = c.accent_bg;
-    c.chip_saved_text = c.accent_text;
-    c.bulk_main_bg = c.accent_bg;
-    c.bulk_main_text = c.accent_text;
-    c.swatch_on = c.accent;
+    c.follow_accent();
     c.label = c.muted;
     c.earlier_card_bg = c.surface;
 }
@@ -158,6 +157,7 @@ fn base() -> Theme {
             bulk_main_bg: hex(0x7a5c3e),
             bulk_main_text: hex(0xfaf7f1),
             focus: hex(0x2b2a26),
+            bulk_focus: hex(0xfaf7f1),
             focus_halo: hex_alpha(0x7a5c3e, 0.25),
             sticker: hex(0xc4855a),
             sticker_line: hex(0x2b2a26),
@@ -222,7 +222,7 @@ fn base() -> Theme {
             button_sub: body(12., FontWeight::NORMAL),
             chip: body(11., FontWeight::SEMIBOLD),
             tag: body(11., FontWeight::NORMAL),
-            field: TypeStyle::new(Family::Mono, 13., FontWeight::NORMAL, Case::AsWritten),
+            field: mono(13., FontWeight::NORMAL),
             segment: body(13., FontWeight::NORMAL),
             setting: body(14., FontWeight::NORMAL),
             title_bar: body(13., FontWeight::NORMAL),
@@ -250,83 +250,22 @@ fn base() -> Theme {
     }
 }
 
-fn body(size: f32, weight: FontWeight) -> TypeStyle {
-    TypeStyle::new(Family::Body, size, weight, Case::AsWritten)
-}
-
-fn display(size: f32, weight: FontWeight) -> TypeStyle {
-    TypeStyle::new(Family::Display, size, weight, Case::AsWritten)
-}
-
-fn hex(rgb_hex: u32) -> Hsla {
-    rgb(rgb_hex).into()
-}
-
-fn hex_alpha(rgb_hex: u32, alpha: f32) -> Hsla {
-    Hsla {
-        a: alpha,
-        ..hex(rgb_hex)
-    }
-}
-
-fn gradient(angle: f32, from: u32, to: u32) -> Fill {
-    Fill::Gradient {
-        angle,
-        from: hex(from),
-        to: hex(to),
-    }
-}
-
-/// CSS `0 {y}px {blur}px color`. GPUI's blur radius is the Gaussian sigma; CSS's blur is twice it.
-fn soft_shadow(y: f32, blur: f32, color: Hsla) -> BoxShadow {
-    BoxShadow::new(px(0.), px(y), color).blur_radius(px(blur / 2.))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::Rgba;
+    use crate::theme::test_support::{Entry, assert_token, css_hex};
 
-    /// The "Japandi" entry of `design/tokens.json`, as text.
-    fn japandi_entry() -> String {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/tokens.json");
-        let text = std::fs::read_to_string(path).expect("design/tokens.json is readable");
-        let start = text.find("\"Japandi\"").unwrap();
-        let end = text.find("\"Y2K\"").unwrap();
-        text[start..end].to_string()
+    fn entry() -> Entry {
+        Entry::new("Japandi", Some("Y2K"), &palettes())
     }
 
     /// The entry's base values, up to the palette overrides.
     fn tokens() -> String {
-        let entry = japandi_entry();
-        entry[..entry.find("\"palettes\"").unwrap()].to_string()
+        entry().base()
     }
 
-    /// One palette's overrides, from its name to the next palette's.
     fn palette_section(index: usize) -> String {
-        let entry = japandi_entry();
-        let names = palettes().map(|palette| format!("\"{}", palette.name));
-        let start = entry.find(&names[index]).unwrap();
-        let end = names
-            .get(index + 1)
-            .map_or(entry.len(), |next| entry.find(next.as_str()).unwrap());
-        entry[start..end].to_string()
-    }
-
-    fn css_hex(color: Hsla) -> String {
-        let rgba = Rgba::from(color);
-        let channel = |value: f32| (value * 255.).round() as u8;
-        format!(
-            "#{:02x}{:02x}{:02x}",
-            channel(rgba.r),
-            channel(rgba.g),
-            channel(rgba.b)
-        )
-    }
-
-    fn assert_token(tokens: &str, var: &str, value: &str) {
-        let line = format!("\"{var}\": \"{value}\"");
-        assert!(tokens.contains(&line), "tokens.json lacks {line}");
+        entry().palette(index)
     }
 
     #[test]
@@ -439,9 +378,19 @@ mod tests {
             assert_eq!(css_hex(c.focus_halo), css_hex(c.accent));
             assert_eq!(c.focus_halo.a, 0.25);
         }
+        // `--focus` is `--bulk-bg` itself on Linen, so the ring on the bulk bar is its text.
+        assert_token(&tokens, "--bulk-bg", "#2b2a26");
+        for index in 0..3 {
+            let c = theme(index).colors;
+            assert_eq!(css_hex(c.bulk_focus), css_hex(c.bulk_text));
+        }
         assert_token(&tokens, "--surface-sel", "#ece4d6");
         assert_eq!(css_hex(theme(1).colors.surface_sel), "#ece4d6");
         assert_eq!(css_hex(theme(2).colors.surface_sel), "#35322b");
+        assert_token(&tokens, "--tag-text", "#6b665c");
+        assert!(!palette_section(2).contains("--tag-text"));
+        assert_eq!(css_hex(theme(1).colors.tag_text), "#6b665c");
+        assert_eq!(css_hex(theme(2).colors.tag_text), "#5a564e");
     }
 
     /// Each slice stops at the next section, so a value copied from the wrong palette is caught.

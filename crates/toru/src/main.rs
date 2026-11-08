@@ -14,10 +14,10 @@ use gpui::{
 };
 use gpui_kit::component::input::InputState;
 use gpui_platform::application;
-use toru_core::settings::{BUILT_IN_PALETTES, PaletteChoice, Settings};
+use toru_core::settings::{BUILT_IN_PALETTES, Look, PaletteChoice, Settings};
 
 use theme::{ActiveTheme, Theme, ThemedText, install_fonts, set_theme};
-use ui::{Button, Chip, Flash, Icon, Menu, Segmented, TextField, Toast, Toggle};
+use ui::{Button, Chip, Flash, Icon, Menu, Segmented, TextField, Toast, Toggle, shadowed};
 
 const DELAYS: [&str; 3] = ["3 s", "5 s", "10 s"];
 const FORMATS: [&str; 3] = ["PNG", "JPG", "WebP"];
@@ -67,6 +67,15 @@ impl Gallery {
         let look = self.settings.look;
         let next = (cx.theme().palette + 1) % BUILT_IN_PALETTES;
         self.settings.appearance_mut(look).palette = PaletteChoice::BuiltIn(next);
+        set_theme(Theme::from_settings(&self.settings), cx);
+    }
+
+    fn next_look(&mut self, cx: &mut Context<Self>) {
+        self.settings.look = match self.settings.look {
+            Look::Japandi => Look::PixelArt,
+            Look::PixelArt => Look::NeoBrutalism,
+            Look::NeoBrutalism => Look::Japandi,
+        };
         set_theme(Theme::from_settings(&self.settings), cx);
     }
 
@@ -250,21 +259,35 @@ impl Render for Gallery {
                 row()
                     .justify_between()
                     .child(
-                        div()
-                            .type_style(theme, text.section)
-                            .child(format!("Controls · {}", palette.name)),
+                        div().type_style(theme, text.section).child(
+                            text.section
+                                .case
+                                .apply(&format!("Controls · {:?} · {}", theme.look, palette.name)),
+                        ),
                     )
                     .child(
-                        Button::new("palette", "Next palette")
-                            .small()
-                            .on_click(Self::act(cx, |this, cx| this.next_palette(cx))),
+                        row()
+                            .gap_2()
+                            .child(
+                                Button::new("look", "Next look")
+                                    .small()
+                                    .on_click(Self::act(cx, |this, cx| this.next_look(cx))),
+                            )
+                            .child(
+                                Button::new("palette", "Next palette")
+                                    .small()
+                                    .on_click(Self::act(cx, |this, cx| this.next_palette(cx))),
+                            ),
                     ),
             )
             .child(section(cx, "Buttons", toolbar))
             .child(section(
                 cx,
                 "Card actions and chips",
-                row().gap_6().child(unsaved_actions).child(saved_actions),
+                card(
+                    cx,
+                    row().gap_6().child(unsaved_actions).child(saved_actions),
+                ),
             ))
             .child(section(cx, "Toggles", toggles))
             .child(section(cx, "Segmented control", format))
@@ -297,6 +320,21 @@ fn row() -> Div {
     div().flex().items_center()
 }
 
+/// A `.card` surface, so the card controls are seen on what they will sit on.
+fn card(cx: &Context<Gallery>, body: impl IntoElement) -> Div {
+    let theme = cx.theme();
+    let border = theme.borders.card;
+    let radius = theme.radii.lg;
+    let card = div()
+        .relative()
+        .p(px(10.))
+        .bg(theme.colors.surface)
+        .border(border.width)
+        .border_color(border.color)
+        .rounded(radius);
+    shadowed(card, &theme.shadows.card, radius).child(body)
+}
+
 fn hint(cx: &Context<Gallery>, text: impl Into<SharedString>) -> Div {
     let theme = cx.theme();
     div()
@@ -315,9 +353,25 @@ fn section(cx: &Context<Gallery>, label: &'static str, body: impl IntoElement) -
             div()
                 .type_style(theme, theme.type_scale.label)
                 .text_color(theme.colors.label)
-                .child(label),
+                .child(theme.type_scale.label.case.apply(label)),
         )
         .child(body)
+}
+
+/// `toru [japandi|pixel_art|neo_brutalism] [palette]` opens the gallery in that look and palette,
+/// so each can be checked against the mockups without clicking through.
+fn settings_from_args() -> Settings {
+    let mut settings = Settings::default();
+    let mut args = std::env::args().skip(1);
+    settings.look = match args.next().as_deref() {
+        Some("pixel_art") => Look::PixelArt,
+        Some("neo_brutalism") => Look::NeoBrutalism,
+        _ => Look::Japandi,
+    };
+    if let Some(palette) = args.next().and_then(|arg| arg.parse().ok()) {
+        settings.appearance_mut(settings.look).palette = PaletteChoice::BuiltIn(palette);
+    }
+    settings
 }
 
 fn main() {
@@ -325,7 +379,7 @@ fn main() {
         gpui_kit::init(cx);
         ui::init(cx);
         install_fonts(cx);
-        let settings = Settings::default();
+        let settings = settings_from_args();
         set_theme(Theme::from_settings(&settings), cx);
         let bounds = Bounds::centered(None, size(px(1100.), px(760.)), cx);
         gpui_kit::open_window(

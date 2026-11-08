@@ -4,9 +4,15 @@
 //! its values, exactly as the JSON does. Components read everything from the active theme and never
 //! hard-code a colour or size.
 
+pub mod contrast;
+mod css;
 mod fonts;
 mod japandi;
 mod kit;
+mod neo_brutalism;
+mod pixel_art;
+#[cfg(test)]
+mod test_support;
 
 use gpui::{
     App, Background, BoxShadow, Font, FontWeight, Global, Hsla, Pixels, SharedString, Styled, font,
@@ -48,8 +54,8 @@ impl Theme {
     pub fn new(look: Look, palette: usize) -> Theme {
         match look {
             Look::Japandi => japandi::theme(palette),
-            // Section 3.3 adds these.
-            Look::PixelArt | Look::NeoBrutalism => japandi::theme(palette),
+            Look::PixelArt => pixel_art::theme(palette),
+            Look::NeoBrutalism => neo_brutalism::theme(palette),
         }
     }
 
@@ -57,7 +63,8 @@ impl Theme {
     pub fn palettes(look: Look) -> [Palette; BUILT_IN_PALETTES] {
         match look {
             Look::Japandi => japandi::palettes(),
-            Look::PixelArt | Look::NeoBrutalism => japandi::palettes(),
+            Look::PixelArt => pixel_art::palettes(),
+            Look::NeoBrutalism => neo_brutalism::palettes(),
         }
     }
 }
@@ -140,6 +147,8 @@ pub struct Colors {
     pub bulk_main_bg: Hsla,
     pub bulk_main_text: Hsla,
     pub focus: Hsla,
+    /// The focus ring on the bulk bar, whose dark or coloured `bulk_bg` can swallow `focus`.
+    pub bulk_focus: Hsla,
     pub focus_halo: Hsla,
     pub sticker: Hsla,
     pub sticker_line: Hsla,
@@ -147,6 +156,22 @@ pub struct Colors {
     /// Outline around the chosen colour swatch in the editor panel.
     pub swatch_on: Hsla,
     pub load_bg: Hsla,
+}
+
+impl Colors {
+    /// The on-states as the base CSS draws them: the accent fill with the accent text. A look
+    /// whose `extra_css` pins them to other colours sets those after this.
+    pub fn follow_accent(&mut self) {
+        self.toggle_on = self.accent_bg;
+        self.toggle_on_knob = self.accent_text;
+        self.on_bg = self.accent_bg;
+        self.on_text = self.accent_text;
+        self.chip_saved_bg = self.accent_bg;
+        self.chip_saved_text = self.accent_text;
+        self.bulk_main_bg = self.accent_bg;
+        self.bulk_main_text = self.accent_text;
+        self.swatch_on = self.accent;
+    }
 }
 
 /// A background that may be flat, a two-stop gradient, or one of the patterned fills the other
@@ -174,8 +199,8 @@ pub enum Fill {
 }
 
 impl Fill {
-    /// What GPUI can paint directly. Patterns return their base colour; section 3.3 adds the
-    /// painter for them.
+    /// What GPUI can paint directly. Patterns return their base colour; the painter for them
+    /// arrives with the cards and the editor canvas that use them (Phases 4 and 8).
     pub fn background(&self) -> Background {
         match *self {
             Fill::Solid(color) => color.into(),

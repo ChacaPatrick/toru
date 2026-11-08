@@ -20,13 +20,15 @@ mod toggle;
 use std::{collections::HashSet, rc::Rc, sync::Arc};
 
 use gpui::{
-    AnyElement, App, Div, ElementId, FocusHandle, Global, KeyBinding, MouseDownEvent, Pixels,
-    Refineable, StyleRefinement, Window, WindowId, canvas, div, prelude::*, px,
+    AnyElement, App, BoxShadow, Div, ElementId, FocusHandle, Global, KeyBinding, MouseDownEvent,
+    Pixels, Refineable, StyleRefinement, Window, WindowId, canvas, div, prelude::*, px,
 };
 
 use crate::theme::Theme;
 
 pub use button::Button;
+#[cfg(test)]
+pub use button::SUB_OPACITY;
 pub use chip::Chip;
 pub use flash::Flash;
 pub use icons::Icon;
@@ -58,6 +60,20 @@ fn keyed_focus(window: &mut Window, cx: &mut App, id: &ElementId) -> FocusHandle
         .use_keyed_state(key, cx, |_, cx| cx.focus_handle().tab_stop(true))
         .read(cx)
         .clone()
+}
+
+/// Gives `element` a theme shadow list. GPUI 0.3.11 measures inset shadows from the border box and
+/// paints the border over them, so a band no wider than the border is hidden on any bordered
+/// element. The drop shadows go on the element and the inset ones on an unfilled overlay child,
+/// which sits inside the border, as a CSS inset shadow does. Call it before adding the content.
+pub fn shadowed<E: Styled + ParentElement>(element: E, shadows: &[BoxShadow], radius: Pixels) -> E {
+    let (inset, drop): (Vec<BoxShadow>, Vec<BoxShadow>) =
+        shadows.iter().cloned().partition(|shadow| shadow.inset);
+    let mut element = element.shadow(drop);
+    if !inset.is_empty() {
+        element = element.child(div().absolute().inset_0().rounded(radius).shadow(inset));
+    }
+    element
 }
 
 /// Applies the sizing a caller set on a control through `Styled`.

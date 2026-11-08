@@ -70,7 +70,12 @@ impl RenderOnce for Segmented {
         let c = &theme.colors;
         let border = theme.borders.input;
         let radius = theme.radii.md;
-        let inner_radius = radius - border.width;
+        // Square looks have a radius of 0, which stays 0 inside the border.
+        let inner_radius = if radius > border.width {
+            radius - border.width
+        } else {
+            px(0.)
+        };
         let font = theme.type_scale.segment;
         let focused = focus.iter().any(|focus| focus.is_focused(window));
 
