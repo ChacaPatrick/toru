@@ -1,0 +1,13 @@
+[workspace]
+members = ["crates/toru"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+# GPUI snapshots can change the API at any time, so both crates stay pinned to one exact version.
+gpui = { package = "gpui-pre", version = "=0.3.11" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.11" }

@@ -9,7 +9,7 @@ spec: Phase 5 onward, a section isn't done until every control it touches works 
 
 ## Phase 0: Foundation
 - [x] 0.1 Set up `main` and HTTPS, add `design/`, `CLAUDE.md` and this plan
-- [ ] 0.2 Pin the toolchain and open a blank GPUI window
+- [x] 0.2 Pin the toolchain and open a blank GPUI window
 
 ## Phase 1: Prove the risky parts
 Results go in `docs/spikes.md`.
