@@ -59,8 +59,7 @@ pub fn toolbar(this: &MainWindow, cx: &Context<MainWindow>) -> Div {
             format!("{choice} s"),
             choice == seconds,
             act(cx, move |this, cx| {
-                this.settings.delay_seconds = choice;
-                cx.notify();
+                this.change_settings(cx, |settings| settings.delay_seconds = choice)
             }),
         );
     }
@@ -70,8 +69,7 @@ pub fn toolbar(this: &MainWindow, cx: &Context<MainWindow>) -> Div {
             choice.label(),
             choice == mode,
             act(cx, move |this, cx| {
-                this.settings.delay_mode = choice;
-                cx.notify();
+                this.change_settings(cx, |settings| settings.delay_mode = choice)
             }),
         );
     }
@@ -126,9 +124,20 @@ pub fn toolbar(this: &MainWindow, cx: &Context<MainWindow>) -> Div {
                 .on_click(|_, _| {}),
         )
         .child(
-            Button::icon_only("settings", Icon::Gear, "Settings").on_click(act(cx, |this, cx| {
-                this.settings.settings_collapsed = !this.settings.settings_collapsed;
-                cx.notify();
+            Button::icon_only(
+                "settings",
+                Icon::Gear,
+                if settings.settings_collapsed {
+                    "Show settings"
+                } else {
+                    "Hide settings"
+                },
+            )
+            .track_focus(&this.gear)
+            .on_click(act(cx, |this, cx| {
+                this.change_settings(cx, |settings| {
+                    settings.settings_collapsed = !settings.settings_collapsed
+                })
             })),
         )
 }

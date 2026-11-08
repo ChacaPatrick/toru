@@ -32,7 +32,7 @@ Results go in `docs/spikes.md`.
 ## Phase 4: Main window with mock data [Fable]
 - [x] 4.1 Title bar and toolbar, with the display picker and expanded Delayed menu
 - [x] 4.2 Gallery grid, cards and day groups with Collapse
-- [ ] 4.3 Settings column with collapse
+- [x] 4.3 Settings column with collapse
 - [ ] 4.4 Bottom bar, toast, top-centre return pill, search, keyboard navigation
 - [ ] 4.5 Select mode and bulk bar
 

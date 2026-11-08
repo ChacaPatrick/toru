@@ -18,7 +18,8 @@ use theme::{Theme, install_fonts, set_theme};
 
 /// The mockups' size.
 const WINDOW_SIZE: (f32, f32) = (1280., 940.);
-const MIN_WINDOW_SIZE: (f32, f32) = (720., 480.);
+/// Wide enough for three usable cards beside the open settings column; the toolbar wraps.
+const MIN_WINDOW_SIZE: (f32, f32) = (900., 480.);
 
 /// `toru [japandi|pixel_art|neo_brutalism] [palette]` opens the window in that look and palette,
 /// so each can be checked against the mockups without clicking through.

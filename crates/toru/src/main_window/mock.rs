@@ -10,6 +10,9 @@ use toru_core::{
 
 use super::gallery::GroupKind;
 
+/// The folder the mock data calls the save folder, until 5.6 asks the system for the real one.
+pub const SAVE_FOLDER: &str = r"C:\Users\Pat\Pictures\Screenshots";
+
 /// The day the mock data calls today.
 pub const TODAY: LocalDate = LocalDate {
     year: 2026,
@@ -266,8 +269,7 @@ fn shot(
             width,
             height,
             taken_at: LocalDateTime { date, hour, minute },
-            saved_path: saved
-                .then(|| PathBuf::from(format!(r"C:\Users\Pat\Pictures\Screenshots\{name}.png"))),
+            saved_path: saved.then(|| PathBuf::from(format!(r"{SAVE_FOLDER}\{name}.png"))),
         },
         // Roughly a PNG's weight: about 1.1 bytes per pixel.
         bytes: u64::from(width) * u64::from(height) * 11 / 10,

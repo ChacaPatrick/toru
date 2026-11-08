@@ -9,7 +9,7 @@ use gpui::{
     Window, div, prelude::*, px,
 };
 
-use super::{focus_marks, keyed_focus};
+use super::{arrow_target, focus_marks, keyed_focus};
 use crate::theme::{ActiveTheme, ThemedText};
 
 type ChangeHandler = Rc<dyn Fn(usize, &mut Window, &mut App)>;
@@ -83,12 +83,8 @@ impl RenderOnce for Segmented {
             let on_change = on_change.clone();
             let focus = focus.clone();
             move |event: &KeyDownEvent, window: &mut Window, cx: &mut App| {
-                let next = match event.keystroke.key.as_str() {
-                    "left" | "up" => (selected + count - 1) % count,
-                    "right" | "down" => (selected + 1) % count,
-                    "home" => 0,
-                    "end" => count - 1,
-                    _ => return,
+                let Some(next) = arrow_target(&event.keystroke.key, selected, count) else {
+                    return;
                 };
                 cx.stop_propagation();
                 focus[next].focus(window, cx);

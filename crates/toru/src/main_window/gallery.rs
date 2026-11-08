@@ -1,10 +1,12 @@
 //! The gallery (DESIGN.md §2 with CLAUDE.md's overrides): one scrolling list holding "This
-//! session", then "Earlier today", then one group per earlier day, each a header over a 3-across
-//! grid of cards. A day group's Collapse folds its cards away.
+//! session", then, while "Show previous screenshots" is on, "Earlier today" and one group per
+//! earlier day, each a header over a 3-across grid of cards. A day group's Collapse folds its
+//! cards away.
 //!
 //! The list is `gpui-kit`'s virtual list (`docs/spikes.md` §1.3): it needs every row's height
-//! up front, so the rows are rebuilt when a group collapses or expands, and the card height comes
-//! from `card::height` at the gallery's current width. Each name field's text lives in its
+//! up front, so the rows are rebuilt when a group collapses or expands or the earlier groups are
+//! shown or hidden, and the card height comes from `card::height` at the gallery's current
+//! width. Each name field's text lives in its
 //! `InputState`, so edits survive scrolling out of view and back.
 
 use std::{ops::Range, rc::Rc, time::Duration};
@@ -71,6 +73,8 @@ pub enum GalleryEvent {
 pub struct Gallery {
     groups: Vec<Group>,
     rows: Vec<Row>,
+    /// The "Show previous screenshots" setting: whether any group but the session's is listed.
+    show_previous: bool,
     today: LocalDate,
     /// The width the main window gives the gallery, from which the card width follows.
     width: Pixels,
@@ -106,8 +110,9 @@ impl Gallery {
             })
             .collect::<Vec<_>>();
         Gallery {
-            rows: rows(&groups),
+            rows: rows(&groups, true),
             groups,
+            show_previous: true,
             today: mock::TODAY,
             width: px(0.),
             card_height: px(0.),
@@ -120,9 +125,18 @@ impl Gallery {
         self.width = width;
     }
 
+    /// Lists or drops the groups before this session. A focused card that goes with them stops
+    /// being rendered, which the main window's `on_focus_lost` answers by refocusing.
+    pub fn set_show_previous(&mut self, on: bool) {
+        if self.show_previous != on {
+            self.show_previous = on;
+            self.rows = rows(&self.groups, on);
+        }
+    }
+
     fn toggle_collapsed(&mut self, group: usize, cx: &mut Context<Self>) {
         self.groups[group].collapsed = !self.groups[group].collapsed;
-        self.rows = rows(&self.groups);
+        self.rows = rows(&self.groups, self.show_previous);
         cx.notify();
     }
 
@@ -303,11 +317,14 @@ impl Render for Gallery {
     }
 }
 
-/// The list's rows: each group's header, then its cards three to a row unless it is collapsed,
-/// then the bottom padding.
-fn rows(groups: &[Group]) -> Vec<Row> {
+/// The list's rows: each listed group's header, then its cards three to a row unless it is
+/// collapsed, then the bottom padding. Only the session group is listed unless `show_previous`.
+fn rows(groups: &[Group], show_previous: bool) -> Vec<Row> {
     let mut rows = Vec::new();
     for (index, group) in groups.iter().enumerate() {
+        if !show_previous && !matches!(group.kind, GroupKind::Session) {
+            continue;
+        }
         rows.push(Row::Header(index));
         if group.collapsed {
             continue;

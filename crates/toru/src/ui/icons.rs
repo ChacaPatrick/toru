@@ -26,6 +26,7 @@ pub enum Icon {
     Spinner,
     ChevronDown,
     ChevronUp,
+    ChevronRight,
     // The editor's tools, in pill order.
     Select,
     Pan,
@@ -57,7 +58,8 @@ impl Icon {
             | Icon::ArrowUp
             | Icon::Spinner
             | Icon::ChevronDown
-            | Icon::ChevronUp => px(16.),
+            | Icon::ChevronUp
+            | Icon::ChevronRight => px(16.),
             Icon::Region
             | Icon::Window
             | Icon::Screen
@@ -103,6 +105,7 @@ impl Icon {
             Icon::Spinner => r#"<path d="M21 12a9 9 0 1 1-3-6.7"/>"#,
             Icon::ChevronDown => r#"<path d="M6 9l6 6 6-6"/>"#,
             Icon::ChevronUp => r#"<path d="M6 15l6-6 6 6"/>"#,
+            Icon::ChevronRight => r#"<path d="M9 6l6 6-6 6"/>"#,
             Icon::Select => r#"<path d="M5 3l14 9-6 1.5L10 20z"/>"#,
             Icon::Pan => {
                 r#"<path d="M8 13V5a1.5 1.5 0 0 1 3 0v6M11 10V4a1.5 1.5 0 0 1 3 0v7M14 11V6a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6h-1a6 6 0 0 1-5-2.7L3 13a1.6 1.6 0 0 1 2.7-1.7L8 14"/>"#
