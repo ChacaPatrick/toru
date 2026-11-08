@@ -204,6 +204,7 @@ fn base() -> Theme {
         },
         sizes: Sizes {
             button_sm_padding: px(12.),
+            tag_padding_x: px(7.),
             window_control_square: None,
         },
         fonts: Fonts {
@@ -247,6 +248,7 @@ fn base() -> Theme {
             copied: "Copied to clipboard",
             back_to_session: "Back to this session",
             earlier: "Earlier — ",
+            earlier_today: "Earlier today",
             session: "This session",
             day_date: DayDate::Long,
         },

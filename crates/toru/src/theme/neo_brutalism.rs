@@ -236,6 +236,7 @@ fn base() -> Theme {
         },
         sizes: Sizes {
             button_sm_padding: gpui::px(9.),
+            tag_padding_x: gpui::px(7.),
             window_control_square: None,
         },
         fonts: Fonts {
@@ -281,6 +282,7 @@ fn base() -> Theme {
             copied: "COPIED.",
             back_to_session: "BACK TO THIS SESSION",
             earlier: "EARLIER — ",
+            earlier_today: "EARLIER TODAY",
             session: "THIS SESSION",
             day_date: DayDate::LongUpper,
         },

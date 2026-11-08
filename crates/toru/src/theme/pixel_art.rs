@@ -233,6 +233,7 @@ fn base() -> Theme {
         },
         sizes: Sizes {
             button_sm_padding: gpui::px(12.),
+            tag_padding_x: gpui::px(6.),
             // `.titlebar .win span::before{width:10px;height:10px;background:currentColor}`
             window_control_square: Some(gpui::px(10.)),
         },
@@ -279,6 +280,7 @@ fn base() -> Theme {
             copied: "★ COPIED! ★",
             back_to_session: "BACK TO SESSION",
             earlier: "EARLIER — ",
+            earlier_today: "EARLIER TODAY",
             session: "THIS SESSION",
             day_date: DayDate::ShortUpper,
         },

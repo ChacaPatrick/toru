@@ -1,5 +1,10 @@
 //! Plain local date and time values.
 
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
 /// A date in local time. `month` is 1 to 12 and `day` is 1 to 31.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LocalDate {
@@ -9,6 +14,33 @@ pub struct LocalDate {
 }
 
 impl LocalDate {
+    /// "Nov", or "???" for a month outside 1 to 12, which a date read back from a damaged
+    /// database may have.
+    pub fn month_short(self) -> &'static str {
+        usize::from(self.month)
+            .checked_sub(1)
+            .and_then(|index| MONTHS.get(index))
+            .unwrap_or(&"???")
+    }
+
+    /// "Tue", by Sakamoto's method, or "???" for a month outside 1 to 12.
+    pub fn weekday_short(self) -> &'static str {
+        const OFFSETS: [i64; 12] = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+        let Some(offset) = usize::from(self.month)
+            .checked_sub(1)
+            .and_then(|index| OFFSETS.get(index))
+        else {
+            return "???";
+        };
+        // Floor divisions, so January and February of year 0 come out right too.
+        let year = i64::from(self.year) - i64::from(self.month < 3);
+        let days = year + year.div_euclid(4) - year.div_euclid(100)
+            + year.div_euclid(400)
+            + offset
+            + i64::from(self.day);
+        WEEKDAYS[days.rem_euclid(7) as usize]
+    }
+
     /// The date `days` days earlier, or January 1 of year 0 if that would come before it.
     pub fn minus_days(self, days: u32) -> LocalDate {
         let LocalDate {
@@ -113,5 +145,17 @@ mod tests {
     #[test]
     fn stops_at_the_earliest_date() {
         assert_eq!(date(2026, 11, 8).minus_days(u32::MAX), date(0, 1, 1));
+    }
+
+    #[test]
+    fn month_and_weekday_names() {
+        assert_eq!(date(2026, 11, 8).weekday_short(), "Sun");
+        assert_eq!(date(2026, 11, 6).weekday_short(), "Fri");
+        assert_eq!(date(2024, 2, 29).weekday_short(), "Thu");
+        assert_eq!(date(2000, 1, 1).weekday_short(), "Sat");
+        assert_eq!(date(0, 1, 1).weekday_short(), "Sat");
+        assert_eq!(date(2026, 11, 8).month_short(), "Nov");
+        assert_eq!(date(2026, 13, 8).month_short(), "???");
+        assert_eq!(date(2026, 0, 8).weekday_short(), "???");
     }
 }

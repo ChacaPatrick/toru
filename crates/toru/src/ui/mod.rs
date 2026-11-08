@@ -9,6 +9,7 @@
 
 mod button;
 mod chip;
+mod fill;
 mod flash;
 mod icons;
 mod input;
@@ -16,6 +17,7 @@ mod menu;
 mod segmented;
 mod toast;
 mod toggle;
+mod tooltip;
 
 use std::{collections::HashSet, rc::Rc, sync::Arc};
 
@@ -26,16 +28,15 @@ use gpui::{
 
 use crate::theme::Theme;
 
-pub use button::Button;
 #[cfg(test)]
 pub use button::SUB_OPACITY;
+pub use button::{Button, SMALL_HEIGHT as BUTTON_SMALL_HEIGHT};
 pub use icons::Icon;
 pub use menu::Menu;
-// The card, settings column and bottom bar controls, used from section 4.2 on.
+pub use {chip::Chip, fill::fill, flash::Flash, input::TextField, toast::Toast, tooltip::Tooltip};
+// The settings column's controls, used from section 4.3 on.
 #[allow(unused_imports)]
-pub use {
-    chip::Chip, flash::Flash, input::TextField, segmented::Segmented, toast::Toast, toggle::Toggle,
-};
+pub use {segmented::Segmented, toggle::Toggle};
 
 /// What a control does when pressed.
 pub type Handler = Rc<dyn Fn(&mut Window, &mut App)>;

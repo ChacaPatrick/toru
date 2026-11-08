@@ -15,8 +15,8 @@ mod pixel_art;
 mod test_support;
 
 use gpui::{
-    App, Background, BoxShadow, Font, FontWeight, Global, Hsla, Pixels, SharedString, Styled, font,
-    px,
+    App, Background, BoxShadow, Font, FontWeight, Global, Hsla, Pixels, SharedString, Styled,
+    TextRun, Window, font, px,
 };
 use toru_core::settings::{BUILT_IN_PALETTES, Look, PaletteChoice, Settings};
 
@@ -213,8 +213,8 @@ pub enum Fill {
 }
 
 impl Fill {
-    /// What GPUI can paint directly. Patterns return their base colour; the painter for them
-    /// arrives with the cards and the editor canvas that use them (Phases 4 and 8).
+    /// What GPUI can paint directly. Patterns return their base colour; `ui::fill` paints them
+    /// in full.
     pub fn background(&self) -> Background {
         match *self {
             Fill::Solid(color) => color.into(),
@@ -300,6 +300,8 @@ pub struct Shadows {
 pub struct Sizes {
     /// The horizontal padding of `.btn.sm`.
     pub button_sm_padding: Pixels,
+    /// The horizontal padding of a thumbnail's caption tag.
+    pub tag_padding_x: Pixels,
     /// A look that draws each window control as a filled square of this size instead of a glyph.
     pub window_control_square: Option<Pixels>,
 }
@@ -356,17 +358,39 @@ impl TypeStyle {
         }
     }
 
+    fn font(&self, theme: &Theme) -> Font {
+        Font {
+            weight: self.weight,
+            ..font(theme.fonts.family(self.family))
+        }
+    }
+
     /// The height of one line at CSS `line-height: normal`: the font's ascent plus descent, for a
     /// control whose height comes from its text, as the mockups' chips do.
     pub fn natural_line_height(&self, theme: &Theme, cx: &App) -> Pixels {
-        let font = Font {
-            weight: self.weight,
-            ..font(theme.fonts.family(self.family))
-        };
         let text_system = cx.text_system();
-        let font_id = text_system.resolve_font(&font);
+        let font_id = text_system.resolve_font(&self.font(theme));
         // The Windows text system reports the descent as a negative distance.
         text_system.ascent(font_id, self.size) + text_system.descent(font_id, self.size).abs()
+    }
+
+    /// The width of `text` set in this style, with its case applied, for a layout that has to be
+    /// known before the text is laid out. Rounded up, as GPUI's text element rounds its width.
+    pub fn text_width(&self, text: &str, theme: &Theme, window: &Window) -> Pixels {
+        let text = self.case.apply(text);
+        let run = TextRun {
+            len: text.len(),
+            font: self.font(theme),
+            color: Hsla::default(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        window
+            .text_system()
+            .layout_line(&text, self.size, &[run], None)
+            .width
+            .ceil()
     }
 }
 
@@ -448,6 +472,8 @@ pub struct Strings {
     pub back_to_session: &'static str,
     /// Before the day in a history group header.
     pub earlier: &'static str,
+    /// The header of today's captures from sessions that have ended.
+    pub earlier_today: &'static str,
     pub session: &'static str,
     pub day_date: DayDate,
 }

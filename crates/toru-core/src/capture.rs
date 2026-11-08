@@ -4,10 +4,6 @@ use std::path::PathBuf;
 
 use crate::time::{LocalDate, LocalDateTime};
 
-const MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureMode {
     Region,
@@ -49,12 +45,7 @@ impl Capture {
         let when = if date == today {
             time
         } else {
-            // A date read back from a damaged database may have any month.
-            let month = usize::from(date.month)
-                .checked_sub(1)
-                .and_then(|index| MONTHS.get(index))
-                .unwrap_or(&"???");
-            format!("{month} {}, {time}", date.day)
+            format!("{} {}, {time}", date.month_short(), date.day)
         };
         let mode = self.mode.label();
         format!("{}×{} · {mode} · {when}", self.width, self.height)

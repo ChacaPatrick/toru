@@ -20,6 +20,10 @@ use crate::theme::{ActiveTheme, ThemedText, contrast, hover_tint};
 /// go to the full text colour when hovered.
 pub const SUB_OPACITY: f32 = 0.8;
 
+/// `.btn` and `.btn.sm` heights, for layouts that must know a row's height before it is laid out.
+pub const HEIGHT: f32 = 40.;
+pub const SMALL_HEIGHT: f32 = 32.;
+
 /// What a `Menu` hangs on its trigger: the trigger's focus, whether the menu is open, and the
 /// press that opens or closes it.
 pub(super) struct MenuTrigger {
@@ -210,9 +214,9 @@ impl RenderOnce for Button {
             (false, false) => scale.button,
         };
         let (height, padding) = if self.small {
-            (px(32.), theme.sizes.button_sm_padding)
+            (px(SMALL_HEIGHT), theme.sizes.button_sm_padding)
         } else {
-            (px(40.), px(16.))
+            (px(HEIGHT), px(16.))
         };
         let square = self.square;
         let split = self.sub_name.is_some();

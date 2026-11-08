@@ -4,7 +4,7 @@
 use gpui::{Context, Div, div, prelude::*, px};
 use toru_core::{capture::CaptureMode, settings::DELAY_SECONDS};
 
-use super::MainWindow;
+use super::{MainWindow, act};
 use crate::theme::{ActiveTheme, ThemedText};
 use crate::ui::{Button, Icon, Menu};
 
@@ -38,7 +38,7 @@ pub fn toolbar(this: &MainWindow, cx: &Context<MainWindow>) -> Div {
             menu.choice(
                 display.label,
                 index == chosen,
-                MainWindow::act(cx, move |this, cx| {
+                act(cx, move |this, cx| {
                     this.display = Some(display.id);
                     cx.notify();
                 }),
@@ -58,7 +58,7 @@ pub fn toolbar(this: &MainWindow, cx: &Context<MainWindow>) -> Div {
         delayed = delayed.choice(
             format!("{choice} s"),
             choice == seconds,
-            MainWindow::act(cx, move |this, cx| {
+            act(cx, move |this, cx| {
                 this.settings.delay_seconds = choice;
                 cx.notify();
             }),
@@ -69,7 +69,7 @@ pub fn toolbar(this: &MainWindow, cx: &Context<MainWindow>) -> Div {
         delayed = delayed.choice(
             choice.label(),
             choice == mode,
-            MainWindow::act(cx, move |this, cx| {
+            act(cx, move |this, cx| {
                 this.settings.delay_mode = choice;
                 cx.notify();
             }),
@@ -126,12 +126,9 @@ pub fn toolbar(this: &MainWindow, cx: &Context<MainWindow>) -> Div {
                 .on_click(|_, _| {}),
         )
         .child(
-            Button::icon_only("settings", Icon::Gear, "Settings").on_click(MainWindow::act(
-                cx,
-                |this, cx| {
-                    this.settings.settings_collapsed = !this.settings.settings_collapsed;
-                    cx.notify();
-                },
-            )),
+            Button::icon_only("settings", Icon::Gear, "Settings").on_click(act(cx, |this, cx| {
+                this.settings.settings_collapsed = !this.settings.settings_collapsed;
+                cx.notify();
+            })),
         )
 }
