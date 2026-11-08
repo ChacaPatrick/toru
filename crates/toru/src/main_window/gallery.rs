@@ -17,12 +17,24 @@
 //! controls are tab stops, so Tab doesn't walk every control of every card. Moving focus scrolls
 //! the card into view with its ring, and when the current card is scrolled out of the list the
 //! first card still listed takes its place, so Tab never lands out of sight.
+//!
+//! Select mode (DESIGN.md §4): Select, a Ctrl-click on a thumbnail, or Ctrl+A enters it; every
+//! card then shows a checkbox, the session header keeps its search field (CLAUDE.md) with Select
+//! all and Done in Select's place and the mode's hint in its own hint's, and a card's lower row
+//! shows its path hint in place of its actions. A press on a checkbox or thumbnail toggles the card, a Shift-press ranges from the
+//! last one pressed, and Space does the same on the focused card. The selection is kept by card
+//! id, so it survives scrolling, and is cut down to the listed cards whenever the rows are
+//! rebuilt: a card a search filters out, one folded away by Collapse or one hidden by turning
+//! Show previous off drops out of it, so the bulk bar's counts always match the checkboxes on
+//! view. Esc or Done leaves, clearing the selection. The main window draws the bulk bar from
+//! `selection_counts` and routes Esc and Ctrl+A here from anywhere in the window.
 
 use std::{ops::Range, path::PathBuf, rc::Rc, time::Duration};
 
 use gpui::{
-    AnyElement, Context, Entity, EventEmitter, Focusable, KeyDownEvent, Pixels, Render, Role,
-    ScrollStrategy, SharedString, Size, Window, accesskit::Live, div, point, prelude::*, px, size,
+    AnyElement, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyDownEvent,
+    Modifiers, Pixels, Render, Role, ScrollStrategy, SharedString, Size, Window, accesskit::Live,
+    div, point, prelude::*, px, size,
 };
 use gpui_kit::component::{
     VirtualListScrollHandle,
@@ -32,7 +44,10 @@ use gpui_kit::component::{
 };
 use toru_core::{capture::Capture, export::SavedFile, store::CaptureId, time::LocalDate};
 
-use super::{act, card, mock};
+use super::{
+    HINT_LEADING, act, bulk_bar, card, mock,
+    selection::{Counts, Selection, enters_select_mode},
+};
 use crate::theme::{ActiveTheme, DayDate, Theme, ThemedText};
 use crate::ui::{Button, Flash, FocusInView, Icon, JUMP_HEIGHT, Jump, TextField};
 
@@ -40,11 +55,17 @@ const PADDING_X: f32 = 18.;
 const PADDING_TOP: f32 = 16.;
 /// Below the last row: room for the toast and return pill, as the mockups leave.
 const PADDING_BOTTOM: f32 = 64.;
+/// Below the last row while the bulk bar floats over the gallery's foot (the Select mockups'
+/// `padding-bottom: 90px`).
+const BULK_PADDING_BOTTOM: f32 = 90.;
 /// Between a header and its grid, between card rows, and between columns.
 const GAP: f32 = 16.;
 const COLUMNS: usize = 3;
 /// A header row is as tall as its controls: the search field and Select, or Collapse.
 const HEADER_HEIGHT: f32 = 32.;
+/// Between the session header's row and select mode's hint line beneath it.
+const SELECT_HINT_GAP: f32 = 6.;
+const SELECT_HINT: &str = "Select mode · Shift-click for a range · Ctrl+A for all";
 const SEARCH_WIDTH: f32 = 180.;
 /// `.earlier`'s margin and padding above its rule.
 const EARLIER_MARGIN: f32 = 6.;
@@ -157,6 +178,8 @@ pub struct Gallery {
     focus: FocusInView,
     /// The rows the list built last frame.
     rendered: Range<usize>,
+    select_mode: bool,
+    selection: Selection,
 }
 
 impl EventEmitter<GalleryEvent> for Gallery {}
@@ -206,6 +229,8 @@ impl Gallery {
             query: String::new(),
             focus: FocusInView::new(cx),
             rendered: 0..0,
+            select_mode: false,
+            selection: Selection::default(),
         };
         gallery.rebuild_rows(cx);
         gallery
@@ -372,6 +397,81 @@ impl Gallery {
         cx.notify();
     }
 
+    pub fn in_select_mode(&self) -> bool {
+        self.select_mode
+    }
+
+    /// How many cards are selected and how many of those are saved, for the bulk bar.
+    pub fn selection_counts(&self) -> Counts {
+        let saved = self
+            .groups
+            .iter()
+            .flat_map(|group| &group.cards)
+            .filter(|card| self.selection.contains(card.id) && card.capture.is_saved())
+            .count();
+        Counts {
+            selected: self.selection.len(),
+            saved,
+        }
+    }
+
+    fn enter_select_mode(&mut self, cx: &mut Context<Self>) {
+        self.select_mode = true;
+        cx.notify();
+    }
+
+    /// Esc or Done: out of select mode with nothing selected.
+    pub fn leave_select_mode(&mut self, cx: &mut Context<Self>) {
+        self.select_mode = false;
+        self.selection.clear();
+        cx.notify();
+    }
+
+    /// Ctrl+A or Select all: every listed card, entering select mode if need be.
+    pub fn select_all(&mut self, cx: &mut Context<Self>) {
+        self.select_mode = true;
+        self.selection.set_all(&self.listed_ids());
+        cx.notify();
+    }
+
+    /// The bulk bar's ✕: the selection goes, select mode stays. Focus moves into the gallery,
+    /// where Tab reaches the current card, since the bar it was on goes with the selection.
+    pub fn clear_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.selection.clear();
+        self.focus_handle().focus(window, cx);
+        cx.notify();
+    }
+
+    /// The gallery's own focus, which Tab leaves for the current card. The main window sends
+    /// focus here when the element holding it stops being drawn.
+    pub fn focus_handle(&self) -> FocusHandle {
+        self.focus.focus().clone()
+    }
+
+    /// A press on a card's checkbox or thumbnail, or Space on the card, with the modifiers held.
+    /// Outside select mode only a Ctrl-press, without Alt, counts, and enters it; a Shift-press
+    /// ranges from the last card pressed on its own.
+    pub(super) fn press_card(&mut self, id: usize, modifiers: Modifiers, cx: &mut Context<Self>) {
+        if !self.select_mode {
+            if !enters_select_mode(&modifiers) {
+                return;
+            }
+            self.select_mode = true;
+        }
+        if modifiers.shift {
+            self.selection.extend_to(id, &self.listed_ids());
+        } else {
+            self.selection.toggle(id);
+        }
+        self.current = Some(id);
+        cx.notify();
+    }
+
+    /// The listed cards' ids in reading order: what a range runs over and Select all selects.
+    fn listed_ids(&self) -> Vec<usize> {
+        self.shown().into_iter().map(|(_, id)| id).collect()
+    }
+
     pub fn copy(&mut self, id: usize, cx: &mut Context<Self>) {
         let capture = self.card(id).and_then(|card| Some(card.files.as_ref()?.id));
         match capture {
@@ -468,6 +568,7 @@ impl Gallery {
         }
         rows.push(Row::Footer);
         self.rows = rows;
+        self.selection.retain_listed(&self.listed_ids());
     }
 
     /// The card with `id`, for the editor to open.
@@ -502,8 +603,9 @@ impl Gallery {
             .map(|c| c.id)
     }
 
-    /// Arrow keys, Home, End and Enter while a card itself has focus. A card's controls keep
-    /// their own keys: the name field needs its arrows.
+    /// Arrow keys, Home, End, Enter and, in select mode, Space while a card itself has focus. A
+    /// card's controls keep their own keys: the name field needs its arrows. Esc and Ctrl+A are
+    /// the main window's, so they work from anywhere in it.
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.focused_card(window) else {
             return;
@@ -518,6 +620,11 @@ impl Gallery {
             "enter" => {
                 cx.stop_propagation();
                 self.open_editor(id, cx);
+                return;
+            }
+            "space" if self.select_mode => {
+                cx.stop_propagation();
+                self.press_card(id, event.keystroke.modifiers, cx);
                 return;
             }
             "left" => step(-1),
@@ -565,6 +672,9 @@ impl Gallery {
 
     fn row_height(&self, row: &Row, theme: &Theme) -> Pixels {
         match row {
+            Row::Header(0) if self.select_mode => {
+                px(PADDING_TOP + HEADER_HEIGHT + GAP) + select_hint_height(theme)
+            }
             Row::Header(0) => px(PADDING_TOP + HEADER_HEIGHT + GAP),
             Row::Header(_) => {
                 px(EARLIER_MARGIN + EARLIER_PADDING + HEADER_HEIGHT + GAP)
@@ -572,8 +682,22 @@ impl Gallery {
             }
             Row::Cards { .. } => self.card_height + px(GAP),
             Row::NoMatch { .. } | Row::Loading => px(NOTICE_HEIGHT + GAP),
-            Row::Footer => px(PADDING_BOTTOM - GAP),
+            Row::Footer if self.selection.is_empty() => px(PADDING_BOTTOM - GAP),
+            Row::Footer => px(BULK_PADDING_BOTTOM - GAP),
         }
+    }
+
+    /// How far the list is scrolled, as the next frame will show it. The virtual list clamps
+    /// the offset only when it lays out, after this render, so an offset left over from a
+    /// longer list is clamped here too; otherwise the return pill could stay up after turning
+    /// Show previous off or collapsing groups has brought the session back into view.
+    fn scrolled(&self, theme: &Theme) -> Pixels {
+        let content = self
+            .rows
+            .iter()
+            .fold(px(0.), |sum, row| sum + self.row_height(row, theme));
+        let furthest = (content - self.scroll.bounds().size.height).max(px(0.));
+        (-self.scroll.offset().y).min(furthest)
     }
 
     /// How far down the content the session group ends, after which the return pill shows.
@@ -634,6 +758,8 @@ impl Gallery {
                                 earlier,
                                 copied: self.copied.get() == Some(&card.id),
                                 active: self.current == Some(card.id),
+                                select_mode: self.select_mode,
+                                selected: self.selection.contains(card.id),
                             },
                             window,
                             cx,
@@ -664,8 +790,9 @@ impl Gallery {
         .into_any_element()
     }
 
-    /// The session header with the search field and Select at its right, or an earlier group's
-    /// with its rule above and Collapse at its right.
+    /// The session header with the search field and Select at its right, and select mode's
+    /// hint on a line beneath while the mode is on, or an earlier group's header with its rule
+    /// above and Collapse at its right.
     fn header(&self, index: usize, cx: &Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let c = &theme.colors;
@@ -734,19 +861,55 @@ impl Gallery {
             .gap(px(12.))
             .child(titles);
         if index == 0 {
-            return row
+            // The search field stays through select mode (CLAUDE.md), so a search that is still
+            // filtering the cards is on view; Select all and Done take Select's place.
+            let controls = div().flex_none().flex().items_center().gap(px(8.)).child(
+                TextField::new(&self.search, "Search names")
+                    .height(px(HEADER_HEIGHT))
+                    .w(px(SEARCH_WIDTH)),
+            );
+            let controls = if self.select_mode {
+                controls
+                    .child(
+                        Button::new("select-all", "Select all")
+                            .small()
+                            .on_click(act(cx, |this, cx| this.select_all(cx))),
+                    )
+                    .child(
+                        Button::new("done", "Done")
+                            .small()
+                            .primary()
+                            .on_click(act(cx, |this, cx| this.leave_select_mode(cx))),
+                    )
+            } else {
+                controls.child(
+                    Button::new("select", "Select")
+                        .small()
+                        .on_click(act(cx, |this, cx| this.enter_select_mode(cx))),
+                )
+            };
+            let row = row.child(controls);
+            if !self.select_mode {
+                return row.into_any_element();
+            }
+            // The session line stays through select mode (CLAUDE.md), so the mode's hint goes
+            // on a line of its own beneath the row, where it has the gallery's whole width.
+            let hint_style = theme.type_scale.hint;
+            return div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .child(row)
                 .child(
                     div()
-                        .flex_none()
-                        .flex()
-                        .gap(px(8.))
-                        .child(
-                            TextField::new(&self.search, "Search names")
-                                .height(px(HEADER_HEIGHT))
-                                .w(px(SEARCH_WIDTH)),
-                        )
-                        // Select mode arrives in 4.5.
-                        .child(Button::new("select", "Select").small().on_click(|_, _| {})),
+                        .mt(px(SELECT_HINT_GAP))
+                        .type_style(theme, hint_style)
+                        .line_height(hint_style.size * HINT_LEADING)
+                        .text_color(c.muted)
+                        .whitespace_nowrap()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(SELECT_HINT),
                 )
                 .into_any_element();
         }
@@ -781,24 +944,21 @@ impl Render for Gallery {
         let theme = cx.theme();
         self.card_height = card::height(self.card_width(), theme, window, cx);
         let session_bottom = self.session_bottom(theme);
-        let pill = -self.scroll.offset().y > session_bottom;
+        let pill = self.scrolled(theme) > session_bottom;
 
-        // Scroll a newly focused control into view, keeping it clear of the pill.
-        let mut viewport = self.scroll.bounds();
-        if pill {
-            let covered = px(PILL_TOP + JUMP_HEIGHT);
-            viewport.origin.y += covered;
-            viewport.size.height -= covered;
-        }
+        // Scroll a newly focused control into view, keeping it clear of the pill and the bulk bar.
+        let bar =
+            (!self.selection.is_empty()).then(|| px(bulk_bar::BOTTOM) + bulk_bar::height(theme));
+        let viewport = uncovered(self.scroll.bounds(), pill, bar);
         let by = self.focus.scroll_by(viewport, window, cx);
         if by != px(0.) {
             self.scroll
                 .set_offset(self.scroll.offset() + point(px(0.), by));
         }
         // After that scroll, so the pill answers to where the list is now.
-        let pill = -self.scroll.offset().y > session_bottom;
-
         let theme = cx.theme();
+        let pill = self.scrolled(theme) > session_bottom;
+
         let sizes: Rc<Vec<Size<Pixels>>> = Rc::new(
             self.rows
                 .iter()
@@ -949,6 +1109,27 @@ fn notice(
         .child(text)
 }
 
+/// The part of the list's `bounds` nothing floats over: below the return pill while it shows,
+/// and above the bulk bar, `bar` tall with its margin, while it does. A focused control is
+/// scrolled into this, so its ring isn't hidden under either.
+fn uncovered(mut bounds: Bounds<Pixels>, pill: bool, bar: Option<Pixels>) -> Bounds<Pixels> {
+    if pill {
+        let covered = px(PILL_TOP + JUMP_HEIGHT);
+        bounds.origin.y += covered;
+        bounds.size.height -= covered;
+    }
+    if let Some(bar) = bar {
+        bounds.size.height -= bar;
+    }
+    bounds.size.height = bounds.size.height.max(px(0.));
+    bounds
+}
+
+/// What select mode's hint line adds to the session header: its gap and one line of hint.
+fn select_hint_height(theme: &Theme) -> Pixels {
+    px(SELECT_HINT_GAP) + theme.type_scale.hint.size * HINT_LEADING
+}
+
 fn physical_width(width: Pixels, scale: f32) -> u32 {
     (f32::from(width) * scale).ceil().max(1.) as u32
 }
@@ -1003,6 +1184,24 @@ mod tests {
         assert_eq!(day_date(NOV_4, DayDate::Long), "Wed, Nov 4");
         assert_eq!(day_date(NOV_4, DayDate::ShortUpper), "NOV 4");
         assert_eq!(day_date(NOV_4, DayDate::LongUpper), "WED NOV 4");
+    }
+
+    #[test]
+    fn focus_viewport_stays_clear_of_the_pill_and_the_bulk_bar() {
+        let list = Bounds::new(point(px(0.), px(100.)), size(px(600.), px(500.)));
+        assert_eq!(uncovered(list, false, None), list);
+        let under_pill = uncovered(list, true, None);
+        assert_eq!(under_pill.top(), px(100. + PILL_TOP + JUMP_HEIGHT));
+        assert_eq!(under_pill.bottom(), px(600.));
+        let above_bar = uncovered(list, false, Some(px(72.)));
+        assert_eq!(above_bar.top(), px(100.));
+        assert_eq!(above_bar.bottom(), px(600. - 72.));
+        let both = uncovered(list, true, Some(px(72.)));
+        assert_eq!(both.top(), under_pill.top());
+        assert_eq!(both.bottom(), above_bar.bottom());
+        // A list shorter than what covers it leaves nothing, not a negative height.
+        let tiny = Bounds::new(point(px(0.), px(0.)), size(px(600.), px(40.)));
+        assert_eq!(uncovered(tiny, true, Some(px(72.))).size.height, px(0.));
     }
 
     #[test]

@@ -34,7 +34,7 @@ Results go in `docs/spikes.md`.
 - [x] 4.2 Gallery grid, cards and day groups with Collapse
 - [x] 4.3 Settings column with collapse
 - [x] 4.4 Bottom bar, toast, top-centre return pill, search, keyboard navigation
-- [ ] 4.5 Select mode and bulk bar
+- [x] 4.5 Select mode and bulk bar
 
 ## Phase 5: Real capture
 The local date and time come from `GetLocalTime` in `crates/toru/src/platform.rs`, so no date library is needed.

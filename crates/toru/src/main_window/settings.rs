@@ -3,19 +3,23 @@
 //! mockups' `.settings` lays them out, then Look and Palette (§8), which have no mockup and
 //! follow the Palettes boards. Every control shows what is in `Settings` and every change
 //! goes through `MainWindow::change_settings`. The column scrolls on its own when the window is
-//! short, and follows keyboard focus so a focused control always shows with its ring. Its hide
-//! button, at the right of the first label, collapses it; the toolbar's gear brings it back.
+//! short, and follows keyboard focus so a focused control always shows with its ring. While the
+//! bulk bar (§4) floats over the column's foot, the column ends with room for it, so the last
+//! control can be scrolled clear, and focus is kept clear of it too. Its hide button, at the
+//! right of the first label, collapses it; the toolbar's gear brings it back.
 
 use std::{path::PathBuf, sync::Arc};
 
-use gpui::{App, Context, Div, ElementId, Hsla, SharedString, Window, div, point, prelude::*, px};
+use gpui::{
+    App, Context, Div, ElementId, Hsla, Pixels, SharedString, Window, div, point, prelude::*, px,
+};
 use gpui_kit::component::scroll::ScrollableElement;
 use toru_core::{
     naming::NameError,
     settings::{Look, OnClose, PaletteChoice, SaveFormat, Settings},
 };
 
-use super::{MainWindow, act};
+use super::{HINT_LEADING, MainWindow, act};
 use crate::theme::{ActiveTheme, Theme, ThemedText, set_theme};
 use crate::ui::{
     BUTTON_SMALL_HEIGHT, Button, Icon, MIN_TARGET, RadioGroup, Segmented, TextField, Toggle,
@@ -26,8 +30,6 @@ const PADDING: f32 = 18.;
 const GROUP_GAP: f32 = 22.;
 const GAP: f32 = 11.;
 const ROW_GAP: f32 = 10.;
-/// `.hint`'s `line-height: 1.45`.
-const HINT_LEADING: f32 = 1.45;
 const FIELD_HEIGHT: f32 = 36.;
 const PATTERN_HEIGHT: f32 = 34.;
 /// A label row is at least this tall. The hide button, centred on the first one, overhangs it
@@ -46,14 +48,18 @@ const ON_CLOSE: [OnClose; 3] = [OnClose::Ask, OnClose::Keep, OnClose::Discard];
 const LOOKS: [Look; 3] = [Look::Japandi, Look::PixelArt, Look::NeoBrutalism];
 const LOOK_NAMES: [&str; 3] = ["Japandi", "Pixel art", "Neo-brutalism"];
 
+/// `bar`: how much of the column's foot the bulk bar covers, with its margin, while it shows.
 pub fn settings_column(
     this: &mut MainWindow,
+    bar: Option<Pixels>,
     window: &Window,
     cx: &mut Context<MainWindow>,
 ) -> Div {
-    let by = this
-        .settings_focus
-        .scroll_by(this.settings_scroll.bounds(), window, cx);
+    let mut viewport = this.settings_scroll.bounds();
+    if let Some(bar) = bar {
+        viewport.size.height = (viewport.size.height - bar).max(px(0.));
+    }
+    let by = this.settings_focus.scroll_by(viewport, window, cx);
     if by != px(0.) {
         this.settings_scroll
             .set_offset(this.settings_scroll.offset() + point(px(0.), by));
@@ -83,6 +89,7 @@ pub fn settings_column(
         .flex_col()
         .gap(px(GROUP_GAP))
         .p(px(PADDING))
+        .when_some(bar, |content, bar| content.pb(px(PADDING) + bar))
         .child(
             group_with(theme, "Session", hide)
                 .child(toggle(

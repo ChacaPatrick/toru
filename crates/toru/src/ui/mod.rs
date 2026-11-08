@@ -12,6 +12,7 @@
 //! presses.
 
 mod button;
+mod checkbox;
 mod chip;
 mod dialog;
 mod fill;
@@ -31,7 +32,7 @@ mod tooltip;
 use std::{collections::HashSet, rc::Rc, sync::Arc};
 
 use gpui::{
-    AnyElement, App, Bounds, BoxShadow, ElementId, Entity, FocusHandle, Global, KeyBinding,
+    AnyElement, App, Bounds, BoxShadow, ElementId, Entity, FocusHandle, Global, Hsla, KeyBinding,
     MouseDownEvent, MouseUpEvent, Pixels, Refineable, StyleRefinement, WeakEntity, Window,
     WindowId, canvas, div, prelude::*, px,
 };
@@ -40,12 +41,14 @@ use crate::theme::Theme;
 
 #[cfg(test)]
 pub use button::SUB_OPACITY;
-pub use button::{Button, SMALL_HEIGHT as BUTTON_SMALL_HEIGHT};
+pub use button::{BULK_HEIGHT as BULK_BUTTON_HEIGHT, Button, SMALL_HEIGHT as BUTTON_SMALL_HEIGHT};
+pub use checkbox::SIZE as CHECKBOX_SIZE;
 pub use dialog::Dialog;
 pub use icons::Icon;
 pub use jump::{HEIGHT as JUMP_HEIGHT, Jump};
 pub use menu::Menu;
 pub use {
+    checkbox::Checkbox,
     chip::Chip,
     fill::fill,
     flash::Flash,
@@ -319,6 +322,28 @@ pub fn focus_marks(
     window: &Window,
     cx: &App,
 ) -> Vec<AnyElement> {
+    focus_marks_in(
+        focused,
+        theme.colors.focus,
+        theme,
+        radius,
+        border,
+        window,
+        cx,
+    )
+}
+
+/// `focus_marks` with the ring in `ring`: the bulk bar's controls use `bulk_focus`, since the
+/// bar's own colour can swallow `focus`.
+pub fn focus_marks_in(
+    focused: bool,
+    ring: Hsla,
+    theme: &Theme,
+    radius: Pixels,
+    border: Pixels,
+    window: &Window,
+    cx: &App,
+) -> Vec<AnyElement> {
     let mut marks = Vec::new();
     if focused {
         marks.push(focus_note(border));
@@ -343,7 +368,7 @@ pub fn focus_marks(
     .size_0();
     marks.push(watcher.into_any_element());
     if focused && keyboard_focus(window, cx) {
-        marks.extend(focus_ring(theme, radius, border));
+        marks.extend(focus_ring_in(ring, theme, radius, border));
     }
     marks
 }
@@ -378,25 +403,38 @@ fn focus_note(border: Pixels) -> AnyElement {
 /// whose own border is `border` wide. `focus_marks` adds the note; a text field, which always
 /// shows its ring, draws these alone.
 fn focus_ring(theme: &Theme, radius: Pixels, border: Pixels) -> [AnyElement; 2] {
-    let ring = |offset: f32, color| {
-        let inset = ring_inset(offset, border);
-        div()
-            .absolute()
-            .top(inset)
-            .left(inset)
-            .right(inset)
-            .bottom(inset)
-            // Square looks stay square, as a CSS outline does around a square box.
-            .rounded(if radius > px(0.) {
-                radius + px(offset)
-            } else {
-                px(0.)
-            })
-            .border(px(RING_WIDTH))
-            .border_color(color)
-    };
+    focus_ring_in(theme.colors.focus, theme, radius, border)
+}
+
+fn focus_ring_in(color: Hsla, theme: &Theme, radius: Pixels, border: Pixels) -> [AnyElement; 2] {
     [
-        ring(RING_GAP, theme.colors.focus).into_any_element(),
-        ring(RING_WIDTH, theme.colors.focus_halo).into_any_element(),
+        ring(RING_GAP, color, radius, border),
+        ring(RING_WIDTH, theme.colors.focus_halo, radius, border),
     ]
+}
+
+/// A selected card's outline (`.card.sel`): the accent where the focus ring goes, with no halo.
+/// A focused card draws its ring over it.
+pub fn selection_ring(theme: &Theme, radius: Pixels, border: Pixels) -> AnyElement {
+    ring(RING_GAP, theme.colors.accent, radius, border)
+}
+
+/// A 3px line whose outer edge is `offset` outside a control with `border`, following its
+/// rounding, as a CSS outline does. Square looks stay square.
+fn ring(offset: f32, color: Hsla, radius: Pixels, border: Pixels) -> AnyElement {
+    let inset = ring_inset(offset, border);
+    div()
+        .absolute()
+        .top(inset)
+        .left(inset)
+        .right(inset)
+        .bottom(inset)
+        .rounded(if radius > px(0.) {
+            radius + px(offset)
+        } else {
+            px(0.)
+        })
+        .border(px(RING_WIDTH))
+        .border_color(color)
+        .into_any_element()
 }

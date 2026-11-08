@@ -7,6 +7,15 @@
 //! The card is focusable itself, for the gallery's arrow keys, and shows the §7 ring when it has
 //! keyboard focus. Only the gallery's current card and its controls are tab stops; a press
 //! anywhere on a card makes it the current one.
+//!
+//! In select mode (DESIGN.md §4) a checkbox sits at the card's top-left corner, a selected card
+//! takes the accent outline and the `surface_sel` fill, and the lower row shows the chip with
+//! the path hint instead of the actions. Nothing changes the card's shape. A click anywhere on
+//! the card outside its controls, the checkbox included, is the gallery's `press_card`, and so
+//! is a Ctrl-click outside select mode, which is how the mode is entered from a card. The name
+//! field, the buttons and the menu keep their clicks to themselves.
+
+use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, Context, Div, MouseButton, ObjectFit, Pixels, Role, Stateful, Window, div,
@@ -17,10 +26,12 @@ use toru_core::time::LocalDate;
 use super::{
     act,
     gallery::{Card, Gallery},
+    selection::path_hint,
 };
 use crate::theme::{ActiveTheme, Theme, ThemedText, TypeStyle};
 use crate::ui::{
-    BUTTON_SMALL_HEIGHT, Button, Chip, Menu, TextField, Tooltip, fill, focus_marks, shadowed,
+    BUTTON_SMALL_HEIGHT, Button, CHECKBOX_SIZE, Checkbox, Chip, MIN_TARGET, Menu, TextField,
+    Tooltip, fill, focus_marks, selection_ring, shadowed,
 };
 
 const PADDING: f32 = 10.;
@@ -32,6 +43,8 @@ const ROW_GAP: f32 = 10.;
 const ACTION_GAP: f32 = 6.;
 const TAG_LEFT: f32 = 8.;
 const TAG_BOTTOM: f32 = 6.;
+/// `.check{left:18px;top:18px}`: where the checkbox's box sits inside the card.
+const CHECK_INSET: f32 = 18.;
 
 /// The card's height at `card_width`, from the theme: the actions wrap under the chip and onto
 /// further lines as the mockups' larger-type looks and narrower windows need, and the height
@@ -112,13 +125,15 @@ pub fn file_size(bytes: u64) -> String {
 }
 
 /// What varies between two cards of one capture: `earlier` marks a group whose session has
-/// ended, `copied` shows the check mark, and `active` makes the card and its controls the
-/// grid's tab stops.
+/// ended, `copied` shows the check mark, `active` makes the card and its controls the grid's
+/// tab stops, `select_mode` shows the checkbox and the path hint, and `selected` the outline.
 #[derive(Clone, Copy)]
 pub struct State {
     pub earlier: bool,
     pub copied: bool,
     pub active: bool,
+    pub select_mode: bool,
+    pub selected: bool,
 }
 
 /// `position` is the card's place in its group, which chooses among the look's thumbnail fills.
@@ -134,6 +149,8 @@ pub fn render(
         earlier,
         copied,
         active,
+        select_mode,
+        selected,
     } = state;
     let focus = card.focus.clone().tab_stop(active);
     let theme = cx.theme();
@@ -148,6 +165,11 @@ pub fn render(
     let make_current = act(cx, move |this, cx| this.set_current(id, cx));
     let save_or_open = act(cx, move |this, cx| this.save_or_open(id, cx));
     let open_editor = act(cx, move |this, cx| this.open_editor(id, cx));
+    let gallery = cx.entity();
+    let press = Rc::new(move |modifiers, _: &mut Window, cx: &mut App| {
+        gallery.update(cx, |this, cx| this.press_card(id, modifiers, cx))
+    });
+    let press_box = press.clone();
     let rename = {
         let name = card.name.clone();
         move |window: &mut Window, cx: &mut gpui::App| {
@@ -192,14 +214,53 @@ pub fn render(
         )
         .child(second.on_click(save_or_open))
         .child(menu);
+    let chip = Chip::new("status", if saved { "Saved ✓" } else { "Unsaved" }).saved(saved);
     let status = div()
         .flex()
         .flex_wrap()
         .items_center()
         .justify_between()
         .gap(px(ROW_GAP))
-        .child(Chip::new("status", if saved { "Saved ✓" } else { "Unsaved" }).saved(saved))
-        .child(actions);
+        .child(chip);
+    let status = if select_mode {
+        // `.card .row .hint`: the saved path, or "no path yet", elided from the left.
+        let hint = card
+            .capture
+            .saved_path
+            .as_deref()
+            .map_or_else(|| "no path yet".to_string(), path_hint);
+        status.child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_right()
+                .type_style(theme, theme.type_scale.hint)
+                .text_color(c.muted)
+                .whitespace_nowrap()
+                .overflow_hidden()
+                .text_ellipsis()
+                .child(hint),
+        )
+    } else {
+        status.child(actions)
+    };
+    let checkbox = select_mode.then(|| {
+        // The box sits where the mockups put it, inside a target the minimum size (§7).
+        let margin = (MIN_TARGET - CHECKBOX_SIZE) / 2.;
+        div()
+            .absolute()
+            .left(px(CHECK_INSET - margin))
+            .top(px(CHECK_INSET - margin))
+            .child(
+                Checkbox::new(
+                    ("check", id),
+                    format!("Select {}", card.name.read(cx).value()),
+                    selected,
+                )
+                .tab_stop(active)
+                .on_press(move |modifiers, window, cx| press_box(modifiers, window, cx)),
+            )
+    });
 
     let card_element = div()
         .id(("card", card.id))
@@ -208,7 +269,8 @@ pub fn render(
         .track_focus(&focus)
         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
             make_current(window, cx)
-        });
+        })
+        .on_click(move |event, window, cx| press(event.modifiers(), window, cx));
     shadowed(card_element, &theme.shadows.card, radius)
         .relative()
         .flex_1()
@@ -217,7 +279,9 @@ pub fn render(
         .flex_col()
         .gap(px(GAP))
         .p(px(PADDING))
-        .bg(if earlier {
+        .bg(if selected {
+            c.surface_sel
+        } else if earlier {
             c.earlier_card_bg
         } else {
             c.surface
@@ -226,9 +290,12 @@ pub fn render(
         .border_color(border.color)
         .rounded(radius)
         .child(
-            // A double-click on the thumbnail opens the editor (DESIGN.md §5).
+            // A double-click on the thumbnail opens the editor (DESIGN.md §5), outside select
+            // mode, where every click is a press (§4) and Enter opens (§7). Any other click
+            // goes on to the card.
             thumbnail(card, position, today, size, theme, cx).on_click(move |event, window, cx| {
-                if event.click_count() == 2 {
+                if event.click_count() == 2 && !select_mode {
+                    cx.stop_propagation();
                     open_editor_by_click(window, cx);
                 }
             }),
@@ -240,6 +307,10 @@ pub fn render(
                 .w_full(),
         )
         .child(status)
+        .children(checkbox)
+        .when(selected, |this| {
+            this.child(selection_ring(theme, radius, border.width))
+        })
         .children(focus_marks(
             focus.is_focused(window),
             theme,

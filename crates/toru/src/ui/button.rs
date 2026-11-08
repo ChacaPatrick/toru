@@ -1,5 +1,7 @@
 //! `.btn` and its variants: `.primary`, `.sm`, `.icon`, the `.sub` secondary label, and the Copy
-//! button's check mark, which is laid over the hidden label so the button keeps its width.
+//! button's check mark, which is laid over the hidden label so the button keeps its width. The
+//! bulk bar's buttons (`.bulk button`) are a variant too: borderless on the bar's colour, with a
+//! small `.n` note such as a count after the label, and the ring in `bulk_focus`.
 //!
 //! A button with a sub can be split: it keeps the look of one button, but the sub is a second
 //! control, so pressing the label does the button's own work and pressing the sub opens a `Menu`.
@@ -11,8 +13,8 @@ use gpui::{
     Window, div, prelude::*, px,
 };
 
-use super::{Handler, Icon, focus_marks, keyed_focus, refined, shadowed};
-use crate::theme::{ActiveTheme, ThemedText, contrast, hover_tint};
+use super::{Handler, Icon, focus_marks, focus_marks_in, keyed_focus, refined, shadowed};
+use crate::theme::{ActiveTheme, Border, ThemedText, contrast, hover_tint};
 
 /// How much of the button's text colour the `.sub` label keeps. The mockups' CSS says .75, which
 /// leaves Game Boy green's sub at 4.4:1; .8 is 4.8:1 there and reads the same (DESIGN.md §7).
@@ -23,6 +25,21 @@ pub const SUB_OPACITY: f32 = 0.8;
 /// `.btn` and `.btn.sm` heights, for layouts that must know a row's height before it is laid out.
 pub const HEIGHT: f32 = 40.;
 pub const SMALL_HEIGHT: f32 = 32.;
+/// `.bulk button`'s height and horizontal padding.
+pub const BULK_HEIGHT: f32 = 36.;
+const BULK_PADDING: f32 = 12.;
+/// How much of the bar's text colour a bulk note keeps (`.bulk .n{opacity:.7}`).
+const NOTE_OPACITY: f32 = 0.7;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Plain,
+    Primary,
+    /// On the bulk bar; `main` is the bar's one filled action.
+    Bulk {
+        main: bool,
+    },
+}
 
 /// What a `Menu` hangs on its trigger: the trigger's focus, whether the menu is open, and the
 /// press that opens or closes it.
@@ -39,7 +56,9 @@ pub struct Button {
     icon: Option<Icon>,
     sub: Option<SharedString>,
     aria_label: Option<SharedString>,
-    primary: bool,
+    kind: Kind,
+    /// The small note after the label, such as the count a bulk action covers.
+    note: Option<SharedString>,
     small: bool,
     /// As wide as it is tall, with the content centred: icon-only and glyph-only buttons.
     square: bool,
@@ -64,7 +83,8 @@ impl Button {
             icon: None,
             sub: None,
             aria_label: None,
-            primary: false,
+            kind: Kind::Plain,
+            note: None,
             small: false,
             square: false,
             check_mark: false,
@@ -116,7 +136,19 @@ impl Button {
     }
 
     pub fn primary(mut self) -> Button {
-        self.primary = true;
+        self.kind = Kind::Primary;
+        self
+    }
+
+    /// A bulk bar button; `main` fills it as the bar's one main action.
+    pub fn bulk(mut self, main: bool) -> Button {
+        self.kind = Kind::Bulk { main };
+        self
+    }
+
+    /// The small note after the label: "(2)" or "(1 new)".
+    pub fn note(mut self, note: impl Into<SharedString>) -> Button {
+        self.note = Some(note.into());
         self
     }
 
@@ -209,33 +241,56 @@ impl RenderOnce for Button {
         }
         let theme = cx.theme();
         let c = &theme.colors;
-        let (bg, text, border, shadow) = if self.primary {
-            (
-                c.accent_bg,
-                c.accent_text,
-                theme.borders.accent,
-                &theme.shadows.accent,
-            )
-        } else {
-            (
+        let none = Vec::new();
+        let (bg, text, border, shadow, ring) = match self.kind {
+            Kind::Plain => (
                 c.button_bg,
                 c.button_text,
                 theme.borders.button,
                 &theme.shadows.button,
-            )
+                c.focus,
+            ),
+            Kind::Primary => (
+                c.accent_bg,
+                c.accent_text,
+                theme.borders.accent,
+                &theme.shadows.accent,
+                c.focus,
+            ),
+            Kind::Bulk { main: true } => (
+                c.bulk_main_bg,
+                c.bulk_main_text,
+                Border::none(),
+                &none,
+                c.bulk_focus,
+            ),
+            Kind::Bulk { main: false } => (
+                gpui::transparent_black(),
+                c.bulk_text,
+                Border::none(),
+                &none,
+                c.bulk_focus,
+            ),
         };
         let scale = &theme.type_scale;
-        let font = match (self.primary, self.small) {
-            (true, true) => scale.primary_button_sm,
-            (true, false) => scale.primary_button,
-            (false, true) => scale.button_sm,
-            (false, false) => scale.button,
+        let font = match (self.kind, self.small) {
+            (Kind::Bulk { .. }, _) => scale.bulk_button,
+            (Kind::Primary, true) => scale.primary_button_sm,
+            (Kind::Primary, false) => scale.primary_button,
+            (Kind::Plain, true) => scale.button_sm,
+            (Kind::Plain, false) => scale.button,
         };
-        let (height, padding) = if self.small {
-            (px(SMALL_HEIGHT), theme.sizes.button_sm_padding)
-        } else {
-            (px(HEIGHT), px(16.))
+        let (height, padding) = match self.kind {
+            Kind::Bulk { .. } => (px(BULK_HEIGHT), px(BULK_PADDING)),
+            _ if self.small => (px(SMALL_HEIGHT), theme.sizes.button_sm_padding),
+            _ => (px(HEIGHT), px(16.)),
         };
+        // What lies under the text: the bar for an unfilled bulk button.
+        let under = if bg.a == 0. { c.bulk_bg } else { bg };
+        // A bulk button's hover is a tint of its text, as the jump pill's is: the mockups' CSS
+        // gives the bar's buttons no hover, and a borderless button would otherwise show none.
+        let bulk = matches!(self.kind, Kind::Bulk { .. });
+        let hover_bg = contrast::over(hover_tint(text), under);
         let square = self.square;
         let split = self.sub_name.is_some();
         // The sub is part of the name, as a `<button>`'s text would be: "Delayed 5 s". A split
@@ -244,8 +299,9 @@ impl RenderOnce for Button {
             "Copied".into()
         } else {
             let name = self.aria_label.or(self.label.clone()).unwrap_or_default();
-            match &self.sub {
-                Some(sub) if !split => format!("{name} {}", sub.trim_end_matches(" ▾")).into(),
+            match (&self.sub, &self.note) {
+                (Some(sub), _) if !split => format!("{name} {}", sub.trim_end_matches(" ▾")).into(),
+                (_, Some(note)) => format!("{name} {note}").into(),
                 _ => name,
             }
         };
@@ -311,6 +367,20 @@ impl RenderOnce for Button {
                 .into_any_element()
         });
 
+        let note = self.note.map(|note| {
+            let note_font = theme.type_scale.bulk_count;
+            let note_text = contrast::over(
+                Hsla {
+                    a: NOTE_OPACITY,
+                    ..text
+                },
+                under,
+            );
+            div()
+                .type_style(theme, note_font)
+                .text_color(note_text)
+                .child(note_font.case.apply(&note))
+        });
         let content = div()
             .h_full()
             .flex()
@@ -319,7 +389,8 @@ impl RenderOnce for Button {
             .when(self.check_mark, |this| this.invisible())
             .children(self.icon.map(|icon| icon.render(theme, text)))
             .children(self.label.map(|label| font.case.apply(&label)))
-            .children(sub);
+            .children(sub)
+            .children(note);
 
         let button = div().id(self.id);
         let button = shadowed(button, shadow, radius)
@@ -344,13 +415,18 @@ impl RenderOnce for Button {
             .type_style(theme, font)
             .whitespace_nowrap()
             .cursor_pointer()
+            .when(bulk, |this| this.hover(|style| style.bg(hover_bg)))
             .when_some(self.on_click, |this, handler| {
                 let for_a11y = handler.clone();
-                this.on_click(move |_, window, cx| handler(window, cx))
-                    // A screen reader's click lands at the control's centre, which can be covered.
-                    .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
-                        for_a11y(window, cx)
-                    })
+                this.on_click(move |_, window, cx| {
+                    // The press is the button's alone, not the card's beneath it.
+                    cx.stop_propagation();
+                    handler(window, cx)
+                })
+                // A screen reader's click lands at the control's centre, which can be covered.
+                .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
+                    for_a11y(window, cx)
+                })
             })
             .child(content)
             .when(self.check_mark, |this| {
@@ -364,8 +440,9 @@ impl RenderOnce for Button {
                         .child(Icon::Check.render(theme, text)),
                 )
             })
-            .children(focus_marks(
+            .children(focus_marks_in(
                 focus.is_focused(window),
+                ring,
                 theme,
                 radius,
                 border.width,

@@ -1,17 +1,20 @@
 //! The main window (DESIGN.md §2): title bar, capture toolbar, the body with the gallery and the
-//! settings column, then the bottom bar, with the toast above it. Opening a card in the editor
-//! (§5) replaces everything under the title bar with it. This session's captures are real
+//! settings column, then the bottom bar, with the toast above it. While anything is selected the
+//! bulk bar (§4) floats over the gallery's foot in the bottom bar's place. Opening a card in the
+//! editor (§5) replaces everything under the title bar with it. This session's captures are real
 //! (`captures`, `actions`); the earlier groups are mock until 7.1. Each choice that is a
 //! setting reads and writes `Settings`, every write going through `change_settings` to the store.
 
 mod actions;
 mod bottom_bar;
+mod bulk_bar;
 mod captures;
 mod card;
 mod closing;
 mod delayed;
 mod gallery;
 mod mock;
+mod selection;
 mod settings;
 mod title_bar;
 mod toolbar;
@@ -19,8 +22,8 @@ mod toolbar;
 use std::{cell::Cell, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
 use gpui::{
-    AnyWindowHandle, App, Context, DisplayId, Entity, FocusHandle, Focusable, Pixels, ScrollHandle,
-    SharedString, Task, Window, div, prelude::*, px,
+    AnyWindowHandle, App, Context, DisplayId, Entity, FocusHandle, Focusable, KeyDownEvent, Pixels,
+    ScrollHandle, SharedString, Task, Window, div, prelude::*, px,
 };
 use gpui_kit::component::input::{InputEvent, InputState};
 use tiny_skia::Pixmap;
@@ -42,6 +45,8 @@ use gallery::{Gallery, GalleryEvent};
 pub const WINDOW_TITLE: &str = "Toru";
 
 const TOAST_FOR: Duration = Duration::from_secs(2);
+/// `.hint`'s `line-height: 1.45`.
+const HINT_LEADING: f32 = 1.45;
 
 /// A display Full screen can capture, as the picker shows it.
 struct Display {
@@ -111,15 +116,18 @@ impl MainWindow {
         // Something must hold focus for Tab to work (`docs/spikes.md` §1.5). This fires in the
         // draw where the focused element stops being rendered, as a collapsed group's card or a
         // name field scrolled out of the list does. Focus goes to the nearest focusable ancestor
-        // still drawn, the gallery or the settings column, so Tab carries on from there, and to
-        // the first control when there is none: the editor's Back while it is open, else Region.
+        // still drawn, the gallery or the settings column, so Tab carries on from there. When
+        // there is none, it goes to the editor's Back while the editor is open; otherwise, as when
+        // the bottom bar gives way to the bulk bar or the bulk bar goes with the selection while a
+        // button on it has focus, it goes into the gallery, where Tab reaches the current card; the
+        // toolbar's Region button would start a capture on the Enter or Space that follows.
         cx.on_focus_lost(window, |this, window, cx| {
             let target =
                 window
                     .focus_lost_restore_target(cx)
                     .unwrap_or_else(|| match &this.editor {
                         Some(editor) => editor.focus_handle(cx),
-                        None => this.first.clone(),
+                        None => this.gallery.read(cx).focus_handle(),
                     });
             target.focus(window, cx)
         })
@@ -356,6 +364,27 @@ impl MainWindow {
         self.toast
             .show(toast, TOAST_FOR, cx, |this| &mut this.toast);
     }
+
+    /// Select mode's keys, from anywhere in the window (DESIGN.md §4 and §7): Esc leaves it and
+    /// Ctrl+A selects every listed card. A control that handles the key itself, as a name field
+    /// does with both, keeps it.
+    fn key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        let keystroke = &event.keystroke;
+        let select_mode = self.gallery.read(cx).in_select_mode();
+        match keystroke.key.as_str() {
+            "escape" if select_mode => {
+                cx.stop_propagation();
+                self.gallery
+                    .update(cx, |gallery, cx| gallery.leave_select_mode(cx));
+            }
+            "a" if selection::selects_all(&keystroke.modifiers) => {
+                cx.stop_propagation();
+                self.gallery
+                    .update(cx, |gallery, cx| gallery.select_all(cx));
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Runs `f` on a view from one of its controls' handlers.
@@ -401,7 +430,14 @@ impl Render for MainWindow {
             gallery.set_width(width, window.scale_factor());
             gallery.set_show_previous(show_previous, cx);
         });
+        let counts = self.gallery.read(cx).selection_counts();
+        // While anything is selected the bulk bar floats over the foot of the gallery and, at
+        // widths under about 1450px, of the settings column too; both keep a focused control
+        // clear of it (§7).
+        let bar =
+            (counts.selected > 0).then(|| px(bulk_bar::BOTTOM) + bulk_bar::height(cx.theme()));
         frame
+            .on_key_down(cx.listener(|this, event, _, cx| this.key_down(event, cx)))
             .child(toolbar::toolbar(self, cx))
             .child(
                 div()
@@ -416,10 +452,16 @@ impl Render for MainWindow {
                             .child(self.gallery.clone()),
                     )
                     .when(!self.settings.settings_collapsed, |body| {
-                        body.child(settings::settings_column(self, window, cx))
+                        body.child(settings::settings_column(self, bar, window, cx))
                     }),
             )
-            .child(bottom_bar::bottom_bar(self, cx))
+            // The bulk bar takes the bottom bar's place while anything is selected (§4).
+            .when(counts.selected == 0, |this| {
+                this.child(bottom_bar::bottom_bar(self, cx))
+            })
+            .when(counts.selected > 0, |this| {
+                this.child(bulk_bar::bulk_bar(&counts, cx))
+            })
             // Absolute, so showing it moves nothing (DESIGN.md §2).
             .children(self.toast.get().cloned())
             .children(

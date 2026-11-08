@@ -81,12 +81,15 @@ impl RenderOnce for TextField {
 
         let state = self.state;
         let field = div()
+            .id(("field", state.entity_id()))
             .relative()
             .flex_none()
             // Runs after the frame has taken focus for itself, and hands it to the text.
             .on_any_mouse_down(move |_, window, cx| {
                 state.update(cx, |state, cx| state.focus(window, cx))
             })
+            // A click in the field is the field's alone, not the card's beneath it.
+            .on_click(|_, _, cx| cx.stop_propagation())
             .child(input)
             .when(focused, |this| {
                 this.children(focus_ring(theme, radius, px(0.)))
