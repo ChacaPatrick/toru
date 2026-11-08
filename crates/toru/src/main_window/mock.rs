@@ -1,5 +1,5 @@
-//! Mock gallery data until Phase 5 reads real captures. It is shaped as `toru_core`'s `Capture`,
-//! so only the source changes then. The file sizes stand in for the ones the files will have.
+//! Mock data for the earlier groups until 7.1 loads real history. It is shaped as `toru_core`'s
+//! `Capture`, so only the source changes then. The file sizes stand in for the real files' sizes.
 
 use std::path::PathBuf;
 
@@ -25,37 +25,13 @@ pub struct MockCapture {
     pub bytes: u64,
 }
 
-/// The groups, newest first: this session, earlier today, then one per earlier day. Enough to
-/// scroll, with saved and unsaved captures in each.
+/// The groups below this session, newest first: earlier today, then one per earlier day. Enough
+/// to scroll, with saved and unsaved captures in each.
 pub fn groups() -> Vec<(GroupKind, Vec<MockCapture>)> {
     use CaptureMode::*;
     let today = TODAY;
     let day = |days_ago| today.minus_days(days_ago);
     vec![
-        (
-            GroupKind::Session,
-            vec![
-                shot(
-                    "screenshot_11_08_2026_4",
-                    Region,
-                    (1440, 900),
-                    today,
-                    14,
-                    31,
-                    false,
-                ),
-                shot("login-bug-repro", Window, (820, 610), today, 14, 22, true),
-                shot(
-                    "screenshot_11_08_2026_3",
-                    FullScreen,
-                    (2560, 1440),
-                    today,
-                    14,
-                    15,
-                    false,
-                ),
-            ],
-        ),
         (
             GroupKind::EarlierToday,
             vec![

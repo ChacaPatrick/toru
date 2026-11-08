@@ -9,16 +9,19 @@
 //! width. Each name field's text lives in its
 //! `InputState`, so edits survive scrolling out of view and back.
 
-use std::{ops::Range, rc::Rc, time::Duration};
+use std::{ops::Range, path::PathBuf, rc::Rc, time::Duration};
 
 use gpui::{
     AnyElement, Context, Entity, EventEmitter, Pixels, Render, Size, Window, div, prelude::*, px,
     size,
 };
 use gpui_kit::component::{
-    VirtualListScrollHandle, input::InputState, scroll::ScrollableElement, v_virtual_list,
+    VirtualListScrollHandle,
+    input::{InputEvent, InputState},
+    scroll::ScrollableElement,
+    v_virtual_list,
 };
-use toru_core::{capture::Capture, time::LocalDate};
+use toru_core::{capture::Capture, naming::validate_name, store::CaptureId, time::LocalDate};
 
 use super::{act, card, mock};
 use crate::theme::{ActiveTheme, DayDate, Theme, ThemedText};
@@ -55,9 +58,25 @@ pub struct Group {
 pub struct Card {
     /// Unique among the gallery's cards; element ids are built from it.
     pub id: usize,
+    /// `None` on a mock card: the earlier groups stay mock until 7.1.
+    pub files: Option<CardFiles>,
     pub capture: Capture,
     pub bytes: u64,
     pub name: Entity<InputState>,
+}
+
+/// Where a real capture lives in the store.
+pub struct CardFiles {
+    pub id: CaptureId,
+    pub image: PathBuf,
+    pub thumbnail: PathBuf,
+}
+
+/// A capture the store has just taken in, on its way to becoming a card.
+pub struct NewCard {
+    pub files: CardFiles,
+    pub capture: Capture,
+    pub bytes: u64,
 }
 
 enum Row {
@@ -67,7 +86,17 @@ enum Row {
 }
 
 pub enum GalleryEvent {
+    /// A mock card's Copy: nothing to copy, only the feedback.
     Copied,
+    /// A real card's Copy, which the main window carries out.
+    Copy {
+        card: usize,
+        image: PathBuf,
+    },
+    Renamed {
+        capture: CaptureId,
+        name: String,
+    },
 }
 
 pub struct Gallery {
@@ -78,7 +107,9 @@ pub struct Gallery {
     today: LocalDate,
     /// The width the main window gives the gallery, from which the card width follows.
     width: Pixels,
+    scale: f32,
     card_height: Pixels,
+    next_card: usize,
     scroll: VirtualListScrollHandle,
     /// The card whose Copy shows a check mark.
     copied: Flash<usize>,
@@ -87,42 +118,104 @@ pub struct Gallery {
 impl EventEmitter<GalleryEvent> for Gallery {}
 
 impl Gallery {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut next_id = 0;
-        let groups = mock::groups()
-            .into_iter()
-            .map(|(kind, captures)| Group {
-                kind,
-                cards: captures
-                    .into_iter()
-                    .map(|mock| {
-                        next_id += 1;
-                        let name = mock.capture.name.clone();
-                        Card {
-                            id: next_id,
-                            capture: mock.capture,
-                            bytes: mock.bytes,
-                            name: cx.new(|cx| InputState::new(window, cx).default_value(name)),
-                        }
-                    })
-                    .collect(),
-                collapsed: false,
-            })
-            .collect::<Vec<_>>();
+    pub fn new(today: LocalDate, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut next_card = 0;
+        let session = Group {
+            kind: GroupKind::Session,
+            cards: Vec::new(),
+            collapsed: false,
+        };
+        let earlier = mock::groups().into_iter().map(|(kind, captures)| Group {
+            kind,
+            cards: captures
+                .into_iter()
+                .map(|mock| {
+                    next_card += 1;
+                    let name = mock.capture.name.clone();
+                    Card {
+                        id: next_card,
+                        files: None,
+                        capture: mock.capture,
+                        bytes: mock.bytes,
+                        name: cx.new(|cx| InputState::new(window, cx).default_value(name)),
+                    }
+                })
+                .collect(),
+            collapsed: false,
+        });
+        let groups = std::iter::once(session).chain(earlier).collect::<Vec<_>>();
         Gallery {
             rows: rows(&groups, true),
             groups,
             show_previous: true,
-            today: mock::TODAY,
+            today,
             width: px(0.),
+            scale: 1.,
             card_height: px(0.),
+            next_card,
             scroll: VirtualListScrollHandle::new(),
             copied: Flash::new(),
         }
     }
 
-    pub fn set_width(&mut self, width: Pixels) {
+    pub fn set_width(&mut self, width: Pixels, scale: f32) {
         self.width = width;
+        self.scale = scale;
+    }
+
+    /// How wide a thumbnail has to be to stay sharp on a card, and no wider, since GPU memory
+    /// grows quickly with it (`docs/spikes.md` §1.3): the card's width in physical pixels.
+    pub fn thumbnail_width(&self) -> u32 {
+        physical_width(self.card_width(), self.scale)
+    }
+
+    /// Puts a capture at the top of this session. The name field's `Window` is why the main
+    /// window passes one in.
+    pub fn add_session_card(&mut self, new: NewCard, window: &mut Window, cx: &mut Context<Self>) {
+        let name = {
+            let text = new.capture.name.clone();
+            cx.new(|cx| InputState::new(window, cx).default_value(text))
+        };
+        let capture = new.files.id;
+        cx.subscribe(&name, move |this, name, event: &InputEvent, cx| {
+            let InputEvent::Change = event else {
+                return;
+            };
+            // Anything that isn't a valid file name isn't kept; 5.5 says so on the card.
+            let typed = name.read(cx).value().to_string();
+            if validate_name(&typed).is_ok() {
+                this.set_card_name(capture, typed.clone());
+                cx.emit(GalleryEvent::Renamed {
+                    capture,
+                    name: typed,
+                });
+            }
+        })
+        .detach();
+        self.today = new.capture.taken_at.date;
+        self.next_card += 1;
+        self.groups[0].cards.insert(
+            0,
+            Card {
+                id: self.next_card,
+                files: Some(new.files),
+                capture: new.capture,
+                bytes: new.bytes,
+                name,
+            },
+        );
+        self.rows = rows(&self.groups, self.show_previous);
+        cx.notify();
+    }
+
+    fn set_card_name(&mut self, capture: CaptureId, name: String) {
+        let card = self.groups[0]
+            .cards
+            .iter_mut()
+            .find(|card| card.files.as_ref().is_some_and(|files| files.id == capture));
+        if let Some(card) = card {
+            card.capture.name = name;
+        }
     }
 
     /// Lists or drops the groups before this session. A focused card that goes with them stops
@@ -140,11 +233,33 @@ impl Gallery {
         cx.notify();
     }
 
-    /// Mock: the image goes nowhere yet, but the feedback is real.
     pub fn copy(&mut self, id: usize, cx: &mut Context<Self>) {
+        let image = self
+            .groups
+            .iter()
+            .flat_map(|group| &group.cards)
+            .find(|card| card.id == id)
+            .and_then(|card| {
+                let files = card.files.as_ref()?;
+                Some(
+                    card.capture
+                        .saved_path
+                        .clone()
+                        .unwrap_or(files.image.clone()),
+                )
+            });
+        match image {
+            Some(image) => cx.emit(GalleryEvent::Copy { card: id, image }),
+            None => {
+                self.show_copied(id, cx);
+                cx.emit(GalleryEvent::Copied);
+            }
+        }
+    }
+
+    pub fn show_copied(&mut self, card: usize, cx: &mut Context<Self>) {
         self.copied
-            .show(id, COPIED_FOR, cx, |this| &mut this.copied);
-        cx.emit(GalleryEvent::Copied);
+            .show(card, COPIED_FOR, cx, |this| &mut this.copied);
     }
 
     fn card_width(&self) -> Pixels {
@@ -343,6 +458,10 @@ fn rows(groups: &[Group], show_previous: bool) -> Vec<Row> {
     rows
 }
 
+fn physical_width(width: Pixels, scale: f32) -> u32 {
+    (f32::from(width) * scale).ceil().max(1.) as u32
+}
+
 fn plural(count: usize, noun: &str) -> String {
     if count == 1 {
         format!("1 {noun}")
@@ -376,6 +495,13 @@ mod tests {
         assert_eq!(day_date(NOV_4, DayDate::Long), "Wed, Nov 4");
         assert_eq!(day_date(NOV_4, DayDate::ShortUpper), "NOV 4");
         assert_eq!(day_date(NOV_4, DayDate::LongUpper), "WED NOV 4");
+    }
+
+    #[test]
+    fn thumbnail_widths_are_physical_pixels() {
+        assert_eq!(physical_width(px(304.), 1.), 304);
+        assert_eq!(physical_width(px(304.5), 2.), 609);
+        assert_eq!(physical_width(px(0.), 1.), 1);
     }
 
     #[test]

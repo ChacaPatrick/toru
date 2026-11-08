@@ -32,7 +32,7 @@ pub fn toolbar(this: &MainWindow, cx: &Context<MainWindow>) -> Div {
                 .icon(Icon::Screen)
                 .sub(format!("Display {} ▾", chosen + 1))
                 .split(format!("Display {}, choose display", chosen + 1))
-                .on_click(|_, _| {}),
+                .on_click(act(cx, |this, cx| this.capture_full_screen(cx))),
         ),
         |menu, (index, display)| {
             menu.choice(

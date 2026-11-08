@@ -126,7 +126,7 @@ shell's own handling in every state observed here. The Off row is not establishe
 physical bounds. The frozen image is shown in the right place. A GDI recapture of the overlay doesn't match it pixel for pixel: 3–9% of
 pixels differ by more than 3 levels, and this isn't noise over time. The difference is on edges only and happens somewhere
 between GPUI's drawing and the readback; its cause is unknown, see "Pixel mismatch" below. Crops match the captured frame, since they come from
-it, but whether that frame is itself faithful to the screen is unverified. Real drags, Esc and taskbar coverage now pass with synthesized input; what still needs a person
+it, and section 5.1 below shows GDI readback returns plain GDI-drawn content exactly; GPU-presented content is still unverified. Real drags, Esc and taskbar coverage now pass with synthesized input; what still needs a person
 is in the checklist below.
 
 Tested 2026-11-08 on Windows 11 build 26200, Rust 1.98.1, `gpui-pre` 0.3.11, `xcap` 0.9.8, release build. Code:
@@ -292,10 +292,9 @@ three Esc runs exited with code 0 and empty stderr.
 - Whether a person sees any flash. The sampling covers only thin strips, and a flash elsewhere or shorter than its gaps
   would be missed.
 - How the overlay actually looks to a person, including whether it looks sharper than the live desktop.
-- Whether a captured frame is faithful to the screen. The 1 px columns came back changed through the same GDI path that
-  produces the frame, so saved screenshots may carry the same edge change, and the capture-to-capture baseline can't
-  detect that. Section 5.1 must check this, for example against Windows Graphics Capture or a known pattern drawn by
-  another renderer, on this machine and ideally another GPU.
+- Whether a captured frame is faithful to the screen for GPU-presented content. A pattern drawn with plain GDI came back
+  exact (see section 5.1 below), so the readback itself doesn't change pixels. Windows Graphics Capture was not compared,
+  and another GPU wasn't available.
 - Whether Toru gets foreground focus when launched from a global hotkey rather than a terminal.
 - Hot-plugging, rotated monitors, HDR, and video or protected content.
 - Whether composition, the driver or the GDI readback changes the edges; see "Pixel mismatch".
@@ -848,3 +847,59 @@ click `Copy all` first; that also shows the toast.
   since the field has no Text pattern.
 - [ ] Narrator's item navigation (Caps Lock + arrows) reaches every control and `This session`, with no doubled labels.
 - [ ] Repeat the above with NVDA if it can be installed, and note any difference.
+
+## 5.1 GDI capture fidelity and keeping Toru out of the shot
+
+**Answer:** yes to both, on this machine. A known pattern drawn in a plain Win32 window by GDI came back from `xcap`'s
+default GDI capture **pixel for pixel**, on both monitors, 1 px columns included. So the readback is faithful for that
+content, and section 1.2's sharpened edges don't come from the readback or from desktop composition of an ordinary
+window; they belong to what GPUI presents, which this test doesn't cover. Separately, `WDA_EXCLUDEFROMCAPTURE` takes a
+GPUI window out of a GDI capture with no wait, and it comes back as soon as the affinity is cleared.
+
+Tested 2026-11-08 on Windows 11 build 26200, Rust 1.98.1, `gpui-pre` 0.3.11, `xcap` 0.9.8, both monitors, debug build. Code:
+`crates/toru/examples/spike_capture.rs`. Captures stayed in memory and only counts were printed; nothing was written to
+disk and no input was sent.
+
+### Fidelity
+
+A topmost, non-activating `WS_POPUP` window, 256x96 at (100, 100) inside each monitor, drew its pixels with
+`SetDIBitsToDevice`, so no scaling or text rendering is involved. Three bands, read back through `Monitor::capture_image`,
+each band 8,192 pixels, three captures per monitor:
+
+| Band | Exact | Wrong (off by >3) | Worst | Mean error | Values read |
+|---|---|---|---|---|---|
+| 1 px columns at 64 and 192 | 8,192 | 0 | 0 | 0.00 | 64 to 192 |
+| 1 px columns at 0 and 255 | 8,192 | 0 | 0 | 0.00 | 0 to 255 |
+| Flat steps | 8,192 | 0 | 0 | 0.00 | 0 to 240 |
+
+The same on the 240 Hz primary (2560x1440, scale 1) and the 60 Hz second monitor at (8, -1440), all three captures each. Section 1.2's
+GPUI-drawn columns came back from 0 to 211 through this same `xcap` path on the same machine. So the difference is in how GPUI's
+content reaches the screen or the desktop's copy of it, and saved screenshots of ordinary GDI-drawn windows are exact. Nothing here
+observes the panel itself, so what a person sees for GPU content is still only the 1.2 checklist item.
+
+### Not verified
+
+- Windows Graphics Capture, and any GPU but this RX 7900 XTX.
+- GPU-presented content other than GPUI: browsers, games, video. Those use the path 1.2 could not settle.
+- Why GPUI's content differs. `KMD_USUSharpeningDegree` is still only a suspicion.
+- Scales other than 1.
+
+### Keeping Toru's window out of the shot
+
+`SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)` on every window of the GPUI thread, in a magenta 320x200
+`WindowKind::PopUp` window on the primary monitor, three runs each at waits of 0, 16, 33, 50, 100 and 200 ms between setting it and
+capturing:
+
+| Step | Magenta pixels in the capture |
+|---|---|
+| Window visible, no affinity | 63,608 |
+| Affinity set, any wait including 0 ms | 0, in all 18 captures |
+| Affinity cleared, 150 ms later | 63,608, in all 18 captures |
+
+What's behind the window shows through in the shot, and the window never moves, so there is no minimize animation to wait
+for and nothing to restore. A non-topmost window was tried first and another window covered it partway through the run, so
+the table is from the topmost one. Toru waits 50 ms, as a margin of a few frames. `Monitor::all`, matching the monitor by the low
+32 bits of its `DisplayId` and `capture_image` ran in the app for both a press and a held clipboard, against a temporary
+build, with the frames kept in memory only.
+
+The flag needs Windows 10 2004 or later, which Windows 11 always is.

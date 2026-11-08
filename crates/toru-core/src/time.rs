@@ -84,6 +84,19 @@ pub struct LocalDateTime {
     pub minute: u8,
 }
 
+impl LocalDateTime {
+    /// "2:31 PM".
+    pub fn clock(self) -> String {
+        let period = if self.hour < 12 { "AM" } else { "PM" };
+        let hour = if self.hour.is_multiple_of(12) {
+            12
+        } else {
+            self.hour % 12
+        };
+        format!("{hour}:{:02} {period}", self.minute)
+    }
+}
+
 fn days_in_month(year: u16, month: u8) -> u8 {
     match month {
         4 | 6 | 9 | 11 => 30,

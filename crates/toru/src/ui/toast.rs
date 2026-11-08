@@ -6,15 +6,25 @@ use gpui::{App, Role, SharedString, Window, accesskit::Live, div, prelude::*, px
 use super::Icon;
 use crate::theme::{ActiveTheme, ThemedText};
 
-#[derive(IntoElement)]
+#[derive(IntoElement, Clone)]
 pub struct Toast {
     message: SharedString,
+    /// Something went wrong, so the message stands alone without the check mark.
+    failed: bool,
 }
 
 impl Toast {
     pub fn new(message: impl Into<SharedString>) -> Toast {
         Toast {
             message: message.into(),
+            failed: false,
+        }
+    }
+
+    pub fn failed(message: impl Into<SharedString>) -> Toast {
+        Toast {
+            message: message.into(),
+            failed: true,
         }
     }
 }
@@ -54,7 +64,9 @@ impl RenderOnce for Toast {
                     .shadow(theme.shadows.pop.clone())
                     .type_style(theme, font)
                     .whitespace_nowrap()
-                    .child(Icon::Check.render(theme, c.toast_text))
+                    .when(!self.failed, |toast| {
+                        toast.child(Icon::Check.render(theme, c.toast_text))
+                    })
                     .child(font.case.apply(&self.message)),
             )
     }

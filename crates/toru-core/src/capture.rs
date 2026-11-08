@@ -38,10 +38,8 @@ impl Capture {
 
     /// The thumbnail caption. The date only appears for a capture from a day other than `today`.
     pub fn caption(&self, today: LocalDate) -> String {
-        let LocalDateTime { date, hour, minute } = self.taken_at;
-        let period = if hour < 12 { "AM" } else { "PM" };
-        let hour = if hour % 12 == 0 { 12 } else { hour % 12 };
-        let time = format!("{hour}:{minute:02} {period}");
+        let date = self.taken_at.date;
+        let time = self.taken_at.clock();
         let when = if date == today {
             time
         } else {

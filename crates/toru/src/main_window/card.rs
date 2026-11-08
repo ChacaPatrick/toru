@@ -5,8 +5,8 @@
 //! gets the same height whatever its status, as DESIGN.md §2 asks.
 
 use gpui::{
-    AnyElement, App, Context, Pixels, Window, div, linear_color_stop, linear_gradient, prelude::*,
-    px,
+    AnyElement, App, Context, ObjectFit, Pixels, Window, div, img, linear_color_stop,
+    linear_gradient, prelude::*, px,
 };
 use toru_core::time::LocalDate;
 
@@ -210,7 +210,8 @@ pub fn empty_slot(theme: &Theme) -> impl IntoElement {
         .border(theme.borders.card.width)
 }
 
-/// The theme's fill, until Phase 5 puts the capture's image here, under the caption tag.
+/// The theme's fill with the capture's thumbnail over it, under the caption tag. A mock card, or
+/// one whose file hasn't loaded, shows the fill alone.
 fn thumbnail(
     card: &Card,
     position: usize,
@@ -237,6 +238,14 @@ fn thumbnail(
         linear_color_stop(c.thumb_shade, 1.),
     );
     let tag = theme.type_scale.tag;
+    let image = card.files.as_ref().map(|files| {
+        img(files.thumbnail.clone())
+            .absolute()
+            .inset_0()
+            .size_full()
+            .rounded(radius)
+            .object_fit(ObjectFit::Cover)
+    });
 
     div()
         .id("thumb")
@@ -249,6 +258,7 @@ fn thumbnail(
         .border_color(border.color)
         .tooltip(Tooltip::build(size))
         .child(fill(fill_choice, radius))
+        .children(image)
         .child(div().absolute().inset_0().rounded(radius).bg(shade))
         .child(
             div()

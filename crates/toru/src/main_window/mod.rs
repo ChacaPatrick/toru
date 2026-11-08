@@ -1,8 +1,9 @@
 //! The main window (DESIGN.md §2): title bar, capture toolbar, then the body with the gallery
-//! and the settings column; the bottom bar follows in 4.4. Everything here is mock behaviour:
-//! the capture buttons capture nothing yet, but each choice that is a setting already reads and
-//! writes `Settings`, every write going through `change_settings`.
+//! and the settings column; the bottom bar follows in 4.4. This session's captures are real
+//! (`captures`); the earlier groups are mock until 7.1. Each choice that is a setting reads and
+//! writes `Settings`, every write going through `change_settings` to the store.
 
+mod captures;
 mod card;
 mod gallery;
 mod mock;
@@ -10,16 +11,17 @@ mod settings;
 mod title_bar;
 mod toolbar;
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use gpui::{
-    App, Context, DisplayId, Entity, FocusHandle, ScrollHandle, SharedString, Window, div,
-    prelude::*, px,
+    AnyWindowHandle, App, Context, DisplayId, Entity, FocusHandle, Pixels, ScrollHandle,
+    SharedString, Task, Window, div, prelude::*, px,
 };
 use gpui_kit::component::input::{InputEvent, InputState};
 use toru_core::{
     naming::{NameError, validate_pattern},
     settings::Settings,
+    store::{SessionId, Store},
 };
 
 use crate::platform;
@@ -37,6 +39,8 @@ struct Display {
 }
 
 pub struct MainWindow {
+    store: Arc<Store>,
+    session: SessionId,
     settings: Settings,
     /// The Region button, focused when the window opens so Tab works from the start (spike 1.5).
     first: FocusHandle,
@@ -49,17 +53,28 @@ pub struct MainWindow {
     settings_scroll: ScrollHandle,
     /// Scrolls the settings column to whichever of its controls takes keyboard focus.
     settings_focus: FocusInView,
-    /// Mock data until Phase 5 starts real sessions.
     session_started: SharedString,
     /// The display Full screen captures. `None`, or a display that has since gone, means the
     /// primary one.
     display: Option<DisplayId>,
     gallery: Entity<Gallery>,
-    toast: Flash<SharedString>,
+    toast: Flash<Toast>,
+    /// The window new cards' name fields are created in.
+    window: AnyWindowHandle,
+    /// The last job handed to `enqueue`, which the next one waits for.
+    queue: Option<Task<()>>,
+    /// A full-screen capture is under way, so a second press doesn't overlap it.
+    capturing: bool,
 }
 
 impl MainWindow {
-    pub fn new(settings: Settings, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        store: Arc<Store>,
+        session: SessionId,
+        settings: Settings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let first = cx.focus_handle().tab_stop(true);
         first.focus(window, cx);
         // Something must hold focus for Tab to work (`docs/spikes.md` §1.5). This fires in the
@@ -67,12 +82,17 @@ impl MainWindow {
         // name field scrolled out of the list does, so focus returns to the first control at once.
         cx.on_focus_lost(window, |this, window, cx| this.first.focus(window, cx))
             .detach();
-        let gallery = cx.new(|cx| Gallery::new(window, cx));
+        let now = platform::local_now();
+        let gallery = cx.new(|cx| {
+            let mut gallery = Gallery::new(now.date, window, cx);
+            gallery.set_width(gallery_width(&settings, window), window.scale_factor());
+            gallery
+        });
         cx.subscribe(&gallery, |this, _, event: &GalleryEvent, cx| match event {
-            GalleryEvent::Copied => {
-                let message = cx.theme().strings.copied.into();
-                this.toast
-                    .show(message, TOAST_FOR, cx, |this| &mut this.toast);
+            GalleryEvent::Copied => this.report_copy(Ok(()), cx),
+            GalleryEvent::Copy { card, image } => this.copy_card(*card, image.clone(), cx),
+            GalleryEvent::Renamed { capture, name } => {
+                this.rename_capture(*capture, name.clone(), cx)
             }
         })
         .detach();
@@ -90,6 +110,8 @@ impl MainWindow {
         })
         .detach();
         MainWindow {
+            store,
+            session,
             settings,
             first,
             gear: cx.focus_handle().tab_stop(true),
@@ -97,10 +119,13 @@ impl MainWindow {
             pattern_error: None,
             settings_scroll: ScrollHandle::new(),
             settings_focus: FocusInView::new(cx),
-            session_started: "2:14 PM".into(),
+            session_started: now.clock().into(),
             display: None,
             gallery,
             toast: Flash::new(),
+            window: window.window_handle(),
+            queue: None,
+            capturing: false,
         }
     }
 
@@ -130,11 +155,19 @@ impl MainWindow {
         format!("Toru — session started {}", self.session_started).into()
     }
 
-    /// Every change to a setting goes through here, so Phase 5's store has one place to write
-    /// it to disk from.
+    /// Every change to a setting goes through here, and on to the store.
     fn change_settings(&mut self, cx: &mut Context<Self>, change: impl FnOnce(&mut Settings)) {
         change(&mut self.settings);
+        let settings = self.settings.clone();
+        self.write_store("Couldn't save your settings", cx, move |store| {
+            store.save_settings(&settings)
+        });
         cx.notify();
+    }
+
+    fn show_toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
+        self.toast
+            .show(toast, TOAST_FOR, cx, |this| &mut this.toast);
     }
 }
 
@@ -147,16 +180,22 @@ fn act<V: 'static>(
     move |_, cx| view.update(cx, |this, cx| f(this, cx))
 }
 
+/// The width left for the gallery beside the settings column.
+fn gallery_width(settings: &Settings, window: &Window) -> Pixels {
+    let settings_width = if settings.settings_collapsed {
+        px(0.)
+    } else {
+        px(settings::WIDTH)
+    };
+    window.viewport_size().width - settings_width
+}
+
 impl Render for MainWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings_width = if self.settings.settings_collapsed {
-            px(0.)
-        } else {
-            px(settings::WIDTH)
-        };
+        let width = gallery_width(&self.settings, window);
         let show_previous = self.settings.show_previous;
         self.gallery.update(cx, |gallery, _| {
-            gallery.set_width(window.viewport_size().width - settings_width);
+            gallery.set_width(width, window.scale_factor());
             gallery.set_show_previous(show_previous);
         });
         let theme = cx.theme();
@@ -188,6 +227,6 @@ impl Render for MainWindow {
                     }),
             )
             // The bottom bar arrives in 4.4; until then the toast sits where it will be above it.
-            .children(self.toast.get().map(|message| Toast::new(message.clone())))
+            .children(self.toast.get().cloned())
     }
 }
