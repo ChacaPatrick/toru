@@ -7,6 +7,7 @@ publish.workspace = true
 [dependencies]
 gpui.workspace = true
 gpui_platform.workspace = true
+toru-core = { path = "../toru-core" }
 
 [dev-dependencies]
 clipboard-rs = "=0.3.5"

@@ -25,7 +25,7 @@ Results go in `docs/spikes.md`.
 - [x] 2.3 Saved settings **[parallel with 2.1]**
 
 ## Phase 3: Look and controls [Fable]
-- [ ] 3.1 Theme loader, bundled fonts, and Japandi with its 3 palettes
+- [x] 3.1 Theme loader, bundled fonts, and Japandi with its 3 palettes
 - [ ] 3.2 Shared controls: button, toggle, segmented control, chip, input, menu, toast, with focus rings
 - [ ] 3.3 PixelArt and NeoBrutalism with their palettes, plus an automated contrast test
 
@@ -68,7 +68,7 @@ Drawn with `tiny-skia`, so the screen matches the saved file exactly.
 ## Phase 10: Finish and ship
 - [ ] 10.1 Keyboard, contrast and reduced-motion pass, plus idle memory
 - [ ] 10.2 Screen reader pass, if 1.5 worked
-- [ ] 10.3 Installer, start with Windows, clean-machine test
+- [ ] 10.3 Installer that ships the font licences, start with Windows, clean-machine test
 
 ## Approved libraries
 | Job | Library |

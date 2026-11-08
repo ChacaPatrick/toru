@@ -7487,6 +7487,7 @@ dependencies = [
  "gpui-kit",
  "gpui-pre",
  "gpui-pre-platform",
+ "toru-core",
  "tray-icon",
  "xcap",
 ]
