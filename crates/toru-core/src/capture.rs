@@ -49,7 +49,11 @@ impl Capture {
         let when = if date == today {
             time
         } else {
-            let month = MONTHS[usize::from(date.month) - 1];
+            // A date read back from a damaged database may have any month.
+            let month = usize::from(date.month)
+                .checked_sub(1)
+                .and_then(|index| MONTHS.get(index))
+                .unwrap_or(&"???");
             format!("{month} {}, {time}", date.day)
         };
         let mode = self.mode.label();
@@ -130,6 +134,15 @@ mod tests {
         assert_eq!(caption_at(12, 0), "10×20 · Region · 12:00 PM");
         assert_eq!(caption_at(13, 7), "10×20 · Region · 1:07 PM");
         assert_eq!(caption_at(23, 59), "10×20 · Region · 11:59 PM");
+    }
+
+    #[test]
+    fn caption_copes_with_an_impossible_month() {
+        for month in [0, 13, 255] {
+            let bad = LocalDate { month, ..TODAY };
+            let shot = capture(CaptureMode::Region, (10, 20), bad, (9, 0));
+            assert_eq!(shot.caption(TODAY), "10×20 · Region · ??? 7, 9:00 AM");
+        }
     }
 
     #[test]

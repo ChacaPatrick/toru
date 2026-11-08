@@ -3,3 +3,7 @@ name = "toru-core"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
