@@ -40,12 +40,15 @@ Read `design/DESIGN.md` first for behaviour. `design/mockups/*.html`, `design/sc
 - Editor = floating tool pill + left context panel; tools and shortcuts in DESIGN.md §5.
 
 ## Working rules
-- Every completed section in `docs/PLAN.md` is one commit, pushed to `main`.
-- Before a push: format, clippy and tests pass, then a fresh agent reviews the change. Fix the findings and start a
-  new review. Repeat until a review has no findings. If the same finding is disputed twice, ask the owner.
+- Every completed section in `docs/PLAN.md` is one branch and one pull request, squash-merged to `main` as one commit.
+- Before a merge: format, clippy and tests pass, then a fresh agent reviews the PR. Only bugs and missed requirements
+  count as findings. Fix them and review again, for at most 3 rounds; anything still open after round 3 is listed for
+  the owner and doesn't block the merge. If the same finding is disputed twice, ask the owner.
+- Whoever's PR conflicts with `main` rebases it and resolves the conflict, then re-runs the checks.
 - Keep code straightforward. Don't over-engineer or repeat yourself unless needed.
 - Most coding: Opus 5.5, High, Fast. Graphics, design and UI work: Fable 5.1 only, Opus 5.5 if Fable is exhausted.
-- Run work in parallel only when it has no crossover with other work in progress.
+- Sections may run in parallel, each in its own git worktree. Conflicts are resolved at merge time.
+- Don't send simulated mouse or keyboard input while the owner may be using the computer, unless they've said to.
 - Windows first; keep Windows-specific code in one small module so macOS/Linux can slot in.
 - Colours and sizes come from the theme; never hard-code them in components.
 - UI sections are compared with the mockup PNGs before they count as done.

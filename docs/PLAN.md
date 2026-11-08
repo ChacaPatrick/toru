@@ -1,8 +1,8 @@
 # Toru build plan
 
-Each section below is one reviewed commit pushed to `main` (see the working rules in `CLAUDE.md`).
+Each section below is one reviewed pull request, squash-merged to `main` (see the working rules in `CLAUDE.md`).
 **[Fable]** marks sections that are mostly visual. New UI in any other section, such as a dialog, still goes to Fable.
-**[parallel]** marks work that may run at the same time in separate worktrees.
+Sections may run at the same time in separate worktrees.
 
 Sections name the main items, not every control. `design/DESIGN.md` plus the overrides in `CLAUDE.md` are the full
 spec: Phase 5 onward, a section isn't done until every control it touches works with real data as they describe.
@@ -37,6 +37,7 @@ Results go in `docs/spikes.md`.
 - [ ] 4.5 Select mode and bulk bar
 
 ## Phase 5: Real capture
+The local date and time come from `GetLocalTime` in `crates/toru/src/platform.rs`, so no date library is needed.
 - [ ] 5.1 Full screen capture, copy on capture, real cards in the gallery
 - [ ] 5.2 Region overlay with size readout and magnifier **[Fable for visuals]**
 - [ ] 5.3 Window capture, with the overlay highlighting the window under the cursor **[Fable for visuals]**
