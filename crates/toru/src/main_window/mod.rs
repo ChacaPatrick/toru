@@ -21,6 +21,7 @@ mod history;
 mod retention;
 mod selection;
 mod settings;
+mod shortcuts_dialog;
 mod title_bar;
 mod toolbar;
 
@@ -43,11 +44,13 @@ use toru_core::{
 use crate::editor::{Editor, EditorEvent, document};
 use crate::overlay;
 use crate::platform;
+use crate::shortcuts::{Hotkeys, Planned};
 use crate::theme::{ActiveTheme, ThemedText};
 use crate::ui::{Flash, FocusInView, Toast};
 use backdrop::Backdrop;
 use custom_palette::{BackgroundPicker, CustomEditor};
 use gallery::{Gallery, GalleryEvent};
+use shortcuts_dialog::ShortcutsDialog;
 
 /// The window's title in the taskbar. The title bar Toru draws has its own (`MainWindow::title`).
 pub const WINDOW_TITLE: &str = "Toru";
@@ -62,6 +65,9 @@ const DAY_CHECK_EVERY: Duration = Duration::from_secs(10);
 /// A display Full screen can capture, as the picker shows it.
 struct Display {
     id: DisplayId,
+    /// What a per-display shortcut is stored under (`platform::display_key`): the monitor's own
+    /// identity, which survives restarts and unplugging, where `id` doesn't.
+    key: String,
     /// "Display 1 · 2560×1440": its number and its size in physical pixels, which a capture has.
     label: SharedString,
 }
@@ -115,7 +121,7 @@ pub struct MainWindow {
     has_tray: bool,
     /// The quit dialog is up, asking about this many unsaved captures (`closing`).
     quit_prompt: Option<usize>,
-    /// The quit dialog's first action, focused when the dialog opens.
+    /// The open dialog's first action, focused when the quit dialog opens.
     dialog_focus: FocusHandle,
     /// The custom palette editor, while it is open over the window.
     custom_editor: Option<CustomEditor>,
@@ -127,6 +133,11 @@ pub struct MainWindow {
     backdrop_loading: Option<PathBuf>,
     /// Photos no longer shown, taken out of the GPU at the next frame.
     stale_backdrops: Vec<Arc<RenderImage>>,
+    /// The global shortcut registry (`shortcuts`), and the rows it was last given.
+    hotkeys: Hotkeys,
+    shortcuts: Vec<Planned>,
+    /// The Edit shortcuts dialog, while it is open (`shortcuts_dialog`).
+    shortcuts_dialog: Option<ShortcutsDialog>,
 }
 
 impl MainWindow {
@@ -134,6 +145,7 @@ impl MainWindow {
         store: Arc<Store>,
         session: SessionId,
         settings: Settings,
+        hotkeys: Hotkeys,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -147,14 +159,17 @@ impl MainWindow {
         // the bottom bar gives way to the bulk bar or the bulk bar goes with the selection while a
         // button on it has focus, it goes into the gallery, where Tab reaches the current card; the
         // toolbar's Region button would start a capture on the Enter or Space that follows.
+        // With no such ancestor and the Edit shortcuts dialog open, focus goes to its Done: the
+        // quit dialog's Cancel takes its buttons away while one has focus, and the two dialogs
+        // are siblings, so nothing of the one that went lies inside the one that stays.
         cx.on_focus_lost(window, |this, window, cx| {
-            let target =
-                window
-                    .focus_lost_restore_target(cx)
-                    .unwrap_or_else(|| match &this.editor {
-                        Some(editor) => editor.focus_handle(cx),
-                        None => this.gallery.read(cx).focus_handle(),
-                    });
+            let target = window.focus_lost_restore_target(cx).unwrap_or_else(|| {
+                match (&this.shortcuts_dialog, &this.editor) {
+                    (Some(dialog), _) => dialog.done.clone(),
+                    (None, Some(editor)) => editor.focus_handle(cx),
+                    (None, None) => this.gallery.read(cx).focus_handle(),
+                }
+            });
             target.focus(window, cx)
         })
         .detach();
@@ -162,7 +177,17 @@ impl MainWindow {
             this.window_active = window.is_window_active();
             if this.window_active {
                 this.show_missed_failures(cx);
+            } else {
+                // A key pressed in another app is that app's, not a new shortcut.
+                this.stop_recording(cx);
             }
+        })
+        .detach();
+        // A display plugged in or unplugged, the window hidden in the tray or not, changes which
+        // per-display shortcuts can be registered.
+        let this = cx.weak_entity();
+        cx.observe_displays(move |_, cx| {
+            this.update(cx, |this, cx| this.refresh_hotkeys(cx)).ok();
         })
         .detach();
         // Closing the window hides it in the tray or quits, by the settings (`closing`); GPUI
@@ -222,7 +247,7 @@ impl MainWindow {
             }
         })
         .detach();
-        MainWindow {
+        let mut this = MainWindow {
             store,
             session,
             day: now.date,
@@ -256,7 +281,13 @@ impl MainWindow {
             backdrop: None,
             backdrop_loading: None,
             stale_backdrops: Vec::new(),
-        }
+            hotkeys,
+            shortcuts: Vec::new(),
+            shortcuts_dialog: None,
+        };
+        this.refresh_hotkeys(cx);
+        this.announce_shortcut_problems(cx);
+        this
     }
 
     /// Ends the session and starts another if the date is no longer the session's. It goes on the
@@ -365,6 +396,13 @@ impl MainWindow {
         }
     }
 
+    /// Whether the editor is open with annotations that closing it would lose.
+    fn editor_has_edits(&self, cx: &App) -> bool {
+        self.editor
+            .as_ref()
+            .is_some_and(|editor| editor.read(cx).is_edited())
+    }
+
     /// Back to session. Focus returns to the first control through `on_focus_lost`, and the
     /// picture leaves the GPU.
     fn close_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -385,6 +423,7 @@ impl MainWindow {
                 let (width, height) = platform::display_pixels(display.as_ref());
                 Display {
                     id: display.id(),
+                    key: platform::display_key(display.as_ref()),
                     label: format!("Display {} · {width}×{height}", index + 1).into(),
                 }
             })
@@ -401,7 +440,7 @@ impl MainWindow {
         self.cancel_countdown(cx);
         match mode {
             CaptureMode::Region | CaptureMode::Window => self.capture_with_overlay(mode, cx),
-            CaptureMode::FullScreen => self.capture_full_screen(cx),
+            CaptureMode::FullScreen => self.capture_full_screen(None, cx),
         }
     }
 
@@ -507,53 +546,56 @@ impl Render for MainWindow {
             // First, so everything else paints over them.
             .children(self.backdrop_layers(cx))
             .child(title_bar::title_bar(self.title(cx), window, cx));
-        if let Some(editor) = &self.editor {
-            return frame
-                .child(div().flex_1().min_h_0().child(editor.clone()))
-                .children(self.toast.get().cloned());
-        }
-        let width = gallery_width(&self.settings, window);
-        let show_previous = self.settings.show_previous;
-        self.gallery.update(cx, |gallery, cx| {
-            gallery.set_width(width, window.scale_factor());
-            gallery.set_show_previous(show_previous, cx);
-        });
-        let counts = self.gallery.read(cx).selection_counts();
-        // While anything is selected the bulk bar floats over the foot of the gallery and, at
-        // widths under about 1450px, of the settings column too; both keep a focused control
-        // clear of it (§7).
-        let bar =
-            (counts.selected > 0).then(|| px(bulk_bar::BOTTOM) + bulk_bar::height(cx.theme()));
-        frame
-            .on_key_down(cx.listener(|this, event, _, cx| this.key_down(event, cx)))
-            .child(toolbar::toolbar(self, cx))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
+        let frame = match self.editor.clone() {
+            Some(editor) => frame.child(div().flex_1().min_h_0().child(editor)),
+            None => {
+                let width = gallery_width(&self.settings, window);
+                let show_previous = self.settings.show_previous;
+                self.gallery.update(cx, |gallery, cx| {
+                    gallery.set_width(width, window.scale_factor());
+                    gallery.set_show_previous(show_previous, cx);
+                });
+                let counts = self.gallery.read(cx).selection_counts();
+                // While anything is selected the bulk bar floats over the foot of the gallery
+                // and, at widths under about 1450px, of the settings column too; both keep a
+                // focused control clear of it (§7).
+                let bar = (counts.selected > 0)
+                    .then(|| px(bulk_bar::BOTTOM) + bulk_bar::height(cx.theme()));
+                frame
+                    .on_key_down(cx.listener(|this, event, _, cx| this.key_down(event, cx)))
+                    .child(toolbar::toolbar(self, cx))
                     .child(
                         div()
                             .flex_1()
-                            .min_w_0()
-                            .h_full()
-                            .child(self.gallery.clone()),
+                            .min_h_0()
+                            .flex()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h_full()
+                                    .child(self.gallery.clone()),
+                            )
+                            .when(!self.settings.settings_collapsed, |body| {
+                                body.child(settings::settings_column(self, bar, window, cx))
+                            }),
                     )
-                    .when(!self.settings.settings_collapsed, |body| {
-                        body.child(settings::settings_column(self, bar, window, cx))
-                    }),
-            )
-            // The bulk bar takes the bottom bar's place while anything is selected (§4).
-            .when(counts.selected == 0, |this| {
-                this.child(bottom_bar::bottom_bar(self, cx))
-            })
-            .when(counts.selected > 0, |this| {
-                this.child(bulk_bar::bulk_bar(&counts, cx))
-            })
-            // Absolute, so showing it moves nothing (DESIGN.md §2).
+                    // The bulk bar takes the bottom bar's place while anything is selected (§4).
+                    .when(counts.selected == 0, |this| {
+                        this.child(bottom_bar::bottom_bar(self, cx))
+                    })
+                    .when(counts.selected > 0, |this| {
+                        this.child(bulk_bar::bulk_bar(&counts, cx))
+                    })
+            }
+        };
+        // Absolute, so showing them moves nothing (DESIGN.md §2). The dialogs lie over the
+        // editor as much as the gallery: quitting is asked about wherever the user is.
+        frame
             .children(self.toast.get().cloned())
             .children(self.retention_dialog(cx))
             .children(self.custom_editor_view(window, cx))
+            .children(self.shortcuts_dialog(cx))
             .children(
                 self.quit_prompt
                     .map(|unsaved| self.quit_dialog(unsaved, cx)),

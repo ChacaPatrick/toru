@@ -14,11 +14,13 @@ use tray_icon::{
 const OPEN_ITEM: &str = "open";
 const QUIT_ITEM: &str = "quit";
 
-/// What the tray asks of the app.
+/// What the tray asks of the app, and, on the same channel, a global shortcut's press
+/// (`shortcuts`), carrying the id the registry knows it by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Request {
     Show,
     Quit,
+    Hotkey(u32),
 }
 
 /// Dropping it takes the icon out of the tray.

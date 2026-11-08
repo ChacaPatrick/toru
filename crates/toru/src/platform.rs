@@ -1,6 +1,7 @@
 //! The little the app needs from the operating system that GPUI 0.3.11 doesn't offer: restoring
-//! a maximized window, a display's size in physical pixels, the local time, the app-data and
-//! default save folders, showing a file in the file manager, keeping Toru's own windows out of a
+//! a maximized window, a display's size in physical pixels and the monitor's own identity, which
+//! key and modifiers are down in a key event, the local time, the app-data and default save folders, showing
+//! a file in the file manager, keeping Toru's own windows out of a
 //! capture, bringing the capture overlay to the foreground, telling which windows a user can
 //! pick, hiding the main window in the tray and showing it again, and telling a running Toru
 //! that a second one was launched. Windows is done here; the other platforms get the fallbacks
@@ -8,6 +9,8 @@
 
 use std::{path::PathBuf, time::Duration};
 
+#[cfg(not(windows))]
+use global_hotkey::hotkey::Code;
 use gpui::PlatformDisplay;
 #[cfg(not(windows))]
 use toru_core::time::LocalDateTime;
@@ -25,9 +28,11 @@ mod windows {
         thread,
     };
 
+    use global_hotkey::hotkey::Code;
     use gpui::{App, PlatformDisplay, Window};
     use toru_core::time::{LocalDate, LocalDateTime};
 
+    use super::HeldModifiers;
     use crate::main_window::WINDOW_TITLE;
 
     /// `GUID`.
@@ -50,13 +55,43 @@ mod windows {
         bottom: i32,
     }
 
-    /// `MONITORINFO`.
+    /// `MONITORINFOEXW`: `MONITORINFO` and the adapter's device name, `\\.\DISPLAY1`.
     #[repr(C)]
     struct MonitorInfo {
         size: u32,
         monitor: Rect,
         work: Rect,
         flags: u32,
+        device: [u16; 32],
+    }
+
+    impl MonitorInfo {
+        fn new() -> MonitorInfo {
+            let rect = || Rect {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            };
+            MonitorInfo {
+                size: size_of::<MonitorInfo>() as u32,
+                monitor: rect(),
+                work: rect(),
+                flags: 0,
+                device: [0; 32],
+            }
+        }
+    }
+
+    /// `DISPLAY_DEVICEW`.
+    #[repr(C)]
+    struct DisplayDevice {
+        size: u32,
+        name: [u16; 32],
+        string: [u16; 128],
+        state_flags: u32,
+        id: [u16; 128],
+        key: [u16; 128],
     }
 
     /// `SYSTEMTIME`.
@@ -94,9 +129,21 @@ mod windows {
     const WS_EX_TRANSPARENT: u32 = 0x20;
     const WS_EX_LAYERED: u32 = 0x0008_0000;
     const LWA_ALPHA: u32 = 0x2;
+    const EDD_GET_DEVICE_INTERFACE_NAME: u32 = 0x1;
+
+    const VK_SHIFT: i32 = 0x10;
+    const VK_CONTROL: i32 = 0x11;
+    const VK_MENU: i32 = 0x12;
+    const VK_LWIN: i32 = 0x5B;
+    const VK_RWIN: i32 = 0x5C;
+    /// The first letter, digit and function key; the rest follow in order.
+    const VK_A: i32 = 0x41;
+    const VK_0: i32 = 0x30;
+    const VK_F1: i32 = 0x70;
 
     #[link(name = "user32")]
     unsafe extern "system" {
+        fn GetKeyState(key: i32) -> i16;
         fn EnumThreadWindows(
             thread: u32,
             callback: unsafe extern "system" fn(isize, isize) -> i32,
@@ -112,6 +159,12 @@ mod windows {
         fn PostMessageW(hwnd: isize, message: u32, wparam: usize, lparam: isize) -> i32;
         fn GetClassNameW(hwnd: isize, name: *mut u16, max: i32) -> i32;
         fn GetMonitorInfoW(monitor: isize, info: *mut MonitorInfo) -> i32;
+        fn EnumDisplayDevicesW(
+            device: *const u16,
+            index: u32,
+            display_device: *mut DisplayDevice,
+            flags: u32,
+        ) -> i32;
         fn SetWindowDisplayAffinity(hwnd: isize, affinity: u32) -> i32;
         fn MessageBoxW(hwnd: isize, text: *const u16, caption: *const u16, kind: u32) -> i32;
         fn IsWindowVisible(hwnd: isize) -> i32;
@@ -192,6 +245,82 @@ mod windows {
             );
         }
         (found != 0).then_some(found)
+    }
+
+    /// Whether the key with the virtual-key code `key` is down in the key event being handled.
+    /// `GetKeyState` follows the thread's messages, so inside a key-down handler it says which
+    /// keys were down as that key went down, whatever the layout names them.
+    pub(super) fn key_down(key: i32) -> bool {
+        // SAFETY: a plain user32 call with a virtual-key code.
+        (unsafe { GetKeyState(key) } as u16) & 0x8000 != 0
+    }
+
+    /// The virtual-key code of a key a shortcut can use, by the key's name: the letters, digits
+    /// and function keys are numbered in order, and the few other keys are named one by one.
+    /// `None` for a key a shortcut can't use.
+    pub(super) fn virtual_key(key: Code) -> Option<i32> {
+        let name = key.to_string();
+        match name.as_bytes() {
+            [b'K', b'e', b'y', letter @ b'A'..=b'Z'] => {
+                return Some(VK_A + i32::from(letter - b'A'));
+            }
+            [b'D', b'i', b'g', b'i', b't', digit @ b'0'..=b'9'] => {
+                return Some(VK_0 + i32::from(digit - b'0'));
+            }
+            _ => {}
+        }
+        if let Some(number) = name.strip_prefix('F')
+            && let Ok(number @ 1..=24) = number.parse::<i32>()
+        {
+            return Some(VK_F1 + number - 1);
+        }
+        Some(match key {
+            Code::PrintScreen => 0x2C,
+            Code::Space => 0x20,
+            Code::Insert => 0x2D,
+            Code::Delete => 0x2E,
+            Code::Home => 0x24,
+            Code::End => 0x23,
+            Code::PageUp => 0x21,
+            Code::PageDown => 0x22,
+            Code::ArrowUp => 0x26,
+            Code::ArrowDown => 0x28,
+            Code::ArrowLeft => 0x25,
+            Code::ArrowRight => 0x27,
+            _ => return None,
+        })
+    }
+
+    /// The first of `keys` that `key_down` finds down.
+    pub(super) fn pressed_among(
+        keys: impl Iterator<Item = Code>,
+        key_down: impl Fn(i32) -> bool,
+    ) -> Option<Code> {
+        let mut keys = keys;
+        keys.find(|key| virtual_key(*key).is_some_and(&key_down))
+    }
+
+    /// Which of `keys` is down in the key event being handled (`key_down`), or `None` if none
+    /// of them is.
+    pub fn pressed_key(keys: impl Iterator<Item = Code>) -> Option<Code> {
+        pressed_among(keys, key_down)
+    }
+
+    /// Whether the main window is hidden in the tray (`hide_main_window`), as against shown or
+    /// minimized.
+    pub fn main_window_hidden() -> bool {
+        // SAFETY: a plain user32 call on a window of this thread's.
+        main_window().is_some_and(|hwnd| unsafe { IsWindowVisible(hwnd) } == 0)
+    }
+
+    /// The modifiers down in the key event being handled (`key_down`).
+    pub fn held_modifiers() -> HeldModifiers {
+        HeldModifiers {
+            control: key_down(VK_CONTROL),
+            alt: key_down(VK_MENU),
+            shift: key_down(VK_SHIFT),
+            win: key_down(VK_LWIN) || key_down(VK_RWIN),
+        }
     }
 
     /// Takes the main window off the screen, the taskbar and Alt+Tab; the app keeps running in
@@ -381,30 +510,54 @@ mod windows {
     /// `DisplayId` is the `HMONITOR`, and `GetMonitorInfoW` answers in physical pixels for a
     /// per-monitor-DPI-aware process, which GPUI's are.
     pub fn display_pixels(display: &dyn PlatformDisplay) -> Option<(u32, u32)> {
-        let mut info = MonitorInfo {
-            size: size_of::<MonitorInfo>() as u32,
-            monitor: Rect {
-                left: 0,
-                top: 0,
-                right: 0,
-                bottom: 0,
-            },
-            work: Rect {
-                left: 0,
-                top: 0,
-                right: 0,
-                bottom: 0,
-            },
-            flags: 0,
-        };
-        let monitor = u64::from(display.id()) as isize;
-        // SAFETY: `info` is a writable MONITORINFO with its size filled in.
-        if unsafe { GetMonitorInfoW(monitor, &mut info) } == 0 {
-            return None;
-        }
+        let info = monitor_info(display)?;
         let width = u32::try_from(info.monitor.right - info.monitor.left).ok()?;
         let height = u32::try_from(info.monitor.bottom - info.monitor.top).ok()?;
         Some((width, height))
+    }
+
+    fn monitor_info(display: &dyn PlatformDisplay) -> Option<MonitorInfo> {
+        let mut info = MonitorInfo::new();
+        let monitor = u64::from(display.id()) as isize;
+        // SAFETY: `info` is a writable MONITORINFOEXW with its size filled in.
+        (unsafe { GetMonitorInfoW(monitor, &mut info) } != 0).then_some(info)
+    }
+
+    /// The text up to the first NUL.
+    pub(super) fn until_nul(text: &[u16]) -> String {
+        let length = text.iter().position(|&c| c == 0).unwrap_or(text.len());
+        String::from_utf16_lossy(&text[..length])
+    }
+
+    /// The monitor's device interface path, as `EnumDisplayDevices` gives it with
+    /// `EDD_GET_DEVICE_INTERFACE_NAME`: `\\?\DISPLAY#GSM5B09#5&2d9b2c1f&0&UID4352#{...}`. It
+    /// names the monitor's make and model and the port it is on, so it is the same after a
+    /// restart or an unplugging, and a different monitor on the same port gets its own; the
+    /// same monitor moved to another port counts as new. GPUI's `uuid` hashes only the adapter
+    /// name, `\\.\DISPLAY2`, which whichever monitor is plugged in there inherits. `None` for a
+    /// monitor Windows can't name, as a remote desktop's.
+    pub fn display_key(display: &dyn PlatformDisplay) -> Option<String> {
+        let info = monitor_info(display)?;
+        let mut device = DisplayDevice {
+            size: size_of::<DisplayDevice>() as u32,
+            name: [0; 32],
+            string: [0; 128],
+            state_flags: 0,
+            id: [0; 128],
+            key: [0; 128],
+        };
+        // SAFETY: the adapter name is NUL-terminated within its 32 characters, and `device` is
+        // a writable DISPLAY_DEVICEW with its size filled in.
+        let found = unsafe {
+            EnumDisplayDevicesW(
+                info.device.as_ptr(),
+                0,
+                &mut device,
+                EDD_GET_DEVICE_INTERFACE_NAME,
+            )
+        } != 0;
+        let key = until_nul(&device.id);
+        (found && !key.is_empty()).then_some(key)
     }
 
     pub fn local_now() -> LocalDateTime {
@@ -552,10 +705,37 @@ pub const EXCLUDE_SETTLE: Duration = Duration::from_millis(50);
 
 #[cfg(windows)]
 pub use windows::{
-    bring_overlay_to_foreground, default_save_folder, exclude_windows_from_capture,
-    hide_main_window, is_window_pickable, local_now, request_close, restore_window, reveal_file,
-    show_main_window, show_startup_error, signal_running_instance, watch_for_show,
+    bring_overlay_to_foreground, default_save_folder, exclude_windows_from_capture, held_modifiers,
+    hide_main_window, is_window_pickable, local_now, main_window_hidden, pressed_key,
+    request_close, restore_window, reveal_file, show_main_window, show_startup_error,
+    signal_running_instance, watch_for_show,
 };
+
+/// The modifiers held along with a key (`held_modifiers`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeldModifiers {
+    pub control: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub win: bool,
+}
+
+/// Where the platform can't say which key is down, the recorder falls back to the names GPUI
+/// gives keys.
+#[cfg(not(windows))]
+pub fn pressed_key(_keys: impl Iterator<Item = Code>) -> Option<Code> {
+    None
+}
+
+#[cfg(not(windows))]
+pub fn held_modifiers() -> HeldModifiers {
+    HeldModifiers {
+        control: false,
+        alt: false,
+        shift: false,
+        win: false,
+    }
+}
 
 #[cfg(not(windows))]
 pub fn restore_window(_window: &gpui::Window, _cx: &gpui::App) {}
@@ -589,6 +769,11 @@ pub fn hide_main_window() {}
 pub fn show_main_window() {}
 
 #[cfg(not(windows))]
+pub fn main_window_hidden() -> bool {
+    false
+}
+
+#[cfg(not(windows))]
 pub fn request_close(window: &mut gpui::Window) {
     window.remove_window();
 }
@@ -619,6 +804,20 @@ pub fn app_data_dir() -> PathBuf {
     std::env::var_os("LOCALAPPDATA")
         .map_or_else(std::env::temp_dir, PathBuf::from)
         .join("Toru")
+}
+
+/// What a per-display shortcut is stored under: the monitor's own identity where the platform
+/// gives one (`windows::display_key`), else GPUI's id for the display's place among the
+/// adapters, which whichever monitor is plugged in there inherits.
+pub fn display_key(display: &dyn PlatformDisplay) -> String {
+    #[cfg(windows)]
+    if let Some(key) = windows::display_key(display) {
+        return key;
+    }
+    display
+        .uuid()
+        .map(|uuid| uuid.to_string())
+        .unwrap_or_default()
 }
 
 /// The display's size in physical pixels, falling back to its logical size where the platform
@@ -724,6 +923,80 @@ mod tests {
     fn a_window_id_sign_extends_back_to_its_handle() {
         assert_eq!(windows::hwnd_from_id(0x0002_0ABC), 0x0002_0ABC);
         assert_eq!(windows::hwnd_from_id(0xFFFF_0ABC), -0xF544);
+    }
+
+    #[test]
+    fn text_is_read_up_to_its_nul() {
+        let text: Vec<u16> = "abc\0def".encode_utf16().collect();
+        assert_eq!(windows::until_nul(&text), "abc");
+        assert_eq!(windows::until_nul(&[]), "");
+        assert_eq!(windows::until_nul(&[0]), "");
+    }
+
+    #[test]
+    fn every_shortcut_key_has_its_own_virtual_key_code() {
+        use global_hotkey::hotkey::Code;
+
+        assert_eq!(windows::virtual_key(Code::KeyA), Some(0x41));
+        assert_eq!(windows::virtual_key(Code::KeyZ), Some(0x5A));
+        assert_eq!(windows::virtual_key(Code::Digit0), Some(0x30));
+        assert_eq!(windows::virtual_key(Code::Digit9), Some(0x39));
+        assert_eq!(windows::virtual_key(Code::F1), Some(0x70));
+        assert_eq!(windows::virtual_key(Code::F24), Some(0x87));
+        assert_eq!(windows::virtual_key(Code::PrintScreen), Some(0x2C));
+        assert_eq!(windows::virtual_key(Code::PageDown), Some(0x22));
+        for other in [
+            Code::Escape,
+            Code::Tab,
+            Code::Enter,
+            Code::Fn,
+            Code::F25,
+            Code::Comma,
+        ] {
+            assert_eq!(windows::virtual_key(other), None, "{other}");
+        }
+        let codes: Vec<i32> = crate::shortcuts::keys()
+            .map(|key| windows::virtual_key(key).expect("every shortcut key has a code"))
+            .collect();
+        let distinct: std::collections::HashSet<i32> = codes.iter().copied().collect();
+        assert_eq!(distinct.len(), codes.len());
+    }
+
+    #[test]
+    fn the_key_down_is_found_by_its_virtual_key_code_whatever_it_types() {
+        use global_hotkey::hotkey::Code;
+
+        let keys = crate::shortcuts::keys;
+        // Ctrl+Shift+1: GPUI would say "!" and nothing else is down.
+        assert_eq!(
+            windows::pressed_among(keys(), |vk| vk == 0x31),
+            Some(Code::Digit1)
+        );
+        assert_eq!(
+            windows::pressed_among(keys(), |vk| vk == 0x2C),
+            Some(Code::PrintScreen)
+        );
+        // Esc, Tab and Enter aren't keys a shortcut can use.
+        for other in [0x1B, 0x09, 0x0D] {
+            assert_eq!(windows::pressed_among(keys(), |vk| vk == other), None);
+        }
+        assert_eq!(windows::pressed_among(keys(), |_| false), None);
+    }
+
+    #[test]
+    fn nothing_is_down_in_a_test_with_no_key_event() {
+        // `GetKeyState` follows this thread's messages, and a test thread gets none.
+        assert!(!windows::key_down(0x41));
+        assert_eq!(pressed_key(crate::shortcuts::keys()), None);
+        assert_eq!(
+            held_modifiers(),
+            HeldModifiers {
+                control: false,
+                alt: false,
+                shift: false,
+                win: false,
+            }
+        );
     }
 
     #[test]

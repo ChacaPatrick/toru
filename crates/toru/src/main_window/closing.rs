@@ -87,6 +87,8 @@ impl MainWindow {
     /// there would be no way back from hidden, so then it quits whatever the setting.
     pub(super) fn on_close_requested(&mut self, cx: &mut Context<Self>) -> bool {
         if self.settings.keep_in_tray && self.has_tray {
+            // A hidden window records nothing: the next key press is some other app's.
+            self.stop_recording(cx);
             platform::hide_main_window();
         } else {
             self.request_quit(cx);

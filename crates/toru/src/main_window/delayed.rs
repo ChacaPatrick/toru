@@ -1,6 +1,7 @@
 //! Delayed capture: a countdown on the toolbar's Delayed button, then the capture it was started
 //! for. Toru minimizes for the countdown so the user can arrange their screen, and the time left
-//! follows in the window title, which is what the taskbar shows. Bringing Toru back shows the
+//! follows in the window title, which is what the taskbar shows; started by a shortcut while Toru
+//! is hidden in the tray, it stays hidden (DESIGN.md §3). Bringing Toru back shows the
 //! button counting, and pressing it cancels. Toru isn't brought back afterwards, which would take
 //! the foreground from what was just arranged: the capture lands in the gallery as any capture
 //! taken while minimized does (DESIGN.md §3), and if it fails, the message waits for Toru's return.
@@ -13,6 +14,7 @@ use gpui::{Context, Task};
 use toru_core::capture::CaptureMode;
 
 use super::{MainWindow, WINDOW_TITLE};
+use crate::platform;
 
 const TICK: Duration = Duration::from_secs(1);
 
@@ -69,7 +71,10 @@ impl MainWindow {
         });
         self.on_window(cx, move |window| {
             window.set_window_title(&countdown.window_title());
-            window.minimize_window();
+            // Minimizing a hidden window would put it in the taskbar.
+            if !platform::main_window_hidden() {
+                window.minimize_window();
+            }
         });
         cx.notify();
     }

@@ -6,6 +6,7 @@ mod editor;
 mod main_window;
 mod overlay;
 mod platform;
+mod shortcuts;
 #[allow(dead_code)]
 mod theme;
 mod tray;
@@ -26,6 +27,7 @@ use toru_core::{
 };
 
 use main_window::MainWindow;
+use shortcuts::Hotkeys;
 use theme::{Theme, install_fonts, set_theme};
 use tray::{Request, Tray};
 
@@ -101,6 +103,11 @@ fn main() {
         let (appearance, open_editor) = appearance_from_args(&settings);
         set_theme(Theme::from_settings(&appearance), cx);
         let bounds = Bounds::centered(None, size(px(WINDOW_SIZE.0), px(WINDOW_SIZE.1)), cx);
+        // One channel carries the tray's requests, a second launch and the global shortcuts'
+        // presses to the main thread (`run_in_tray`). The shortcut registry opens its hidden
+        // window here, on that thread, like the tray.
+        let (sender, receiver) = mpsc::channel();
+        let hotkeys = Hotkeys::new(sender.clone(), Request::Hotkey);
         let main = gpui_kit::open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -117,7 +124,7 @@ fn main() {
             cx,
             |window, cx| {
                 cx.new(|cx| {
-                    let mut main = MainWindow::new(store, session, settings, window, cx);
+                    let mut main = MainWindow::new(store, session, settings, hotkeys, window, cx);
                     main.clean_up_history(cx);
                     if open_editor {
                         main.open_newest_in_editor(cx);
@@ -128,7 +135,7 @@ fn main() {
         )
         .expect("failed to open the main window");
         cx.activate(true);
-        run_in_tray(main.1, &data_dir, cx);
+        run_in_tray(main.1, &data_dir, sender, receiver, cx);
     });
 }
 
@@ -137,8 +144,13 @@ fn main() {
 /// watcher on its own thread, so both only send into a channel, and a task on the main thread
 /// does the work. At quit, Toru's own or Windows shutting down, the window applies the On close
 /// setting (`main_window::closing`) and dropping the icon takes it out of the tray at once.
-fn run_in_tray(main: Entity<MainWindow>, data_dir: &Path, cx: &mut App) {
-    let (sender, mut receiver) = mpsc::channel();
+fn run_in_tray(
+    main: Entity<MainWindow>,
+    data_dir: &Path,
+    sender: mpsc::Sender<Request>,
+    mut receiver: mpsc::Receiver<Request>,
+    cx: &mut App,
+) {
     // The tray owns a hidden window, so it is created here, on GPUI's main thread, whose message
     // loop then serves it.
     let mut tray = match Tray::new(sender.clone()) {
@@ -177,6 +189,7 @@ fn run_in_tray(main: Entity<MainWindow>, data_dir: &Path, cx: &mut App) {
             cx.update(|cx| match request {
                 Request::Show => platform::show_main_window(),
                 Request::Quit => main.update(cx, |this, cx| this.request_quit(cx)),
+                Request::Hotkey(id) => main.update(cx, |this, cx| this.hotkey_pressed(id, cx)),
             });
         }
     })

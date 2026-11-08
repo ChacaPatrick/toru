@@ -184,6 +184,38 @@ impl PaletteChoice {
     }
 }
 
+/// A shortcut that captures one display full screen (DESIGN.md §3). The display is named by the
+/// stable id the platform gives it, so the shortcut keeps its place while that display is
+/// unplugged and works again when it is back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplayShortcut {
+    pub display: String,
+    pub shortcut: String,
+}
+
+/// One entry per line, the display and its shortcut split by a tab. Neither holds those
+/// characters: the id is a device path and the shortcut is key names joined by `+`.
+fn display_shortcuts_text(shortcuts: &[DisplayShortcut]) -> String {
+    shortcuts
+        .iter()
+        .map(|entry| format!("{}\t{}", entry.display, entry.shortcut))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A line that isn't two non-empty parts is dropped; the rest still load.
+fn display_shortcuts_from_text(text: &str) -> Vec<DisplayShortcut> {
+    text.lines()
+        .filter_map(|line| {
+            let (display, shortcut) = line.split_once('\t')?;
+            (!display.is_empty() && !shortcut.is_empty()).then(|| DisplayShortcut {
+                display: display.to_string(),
+                shortcut: shortcut.to_string(),
+            })
+        })
+        .collect()
+}
+
 /// The palette choices one look remembers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LookAppearance {
@@ -215,6 +247,8 @@ pub struct Settings {
     pub window_shortcut: Option<String>,
     pub full_screen_shortcut: Option<String>,
     pub delayed_shortcut: Option<String>,
+    /// Full-screen shortcuts for particular displays, at most one per display.
+    pub display_shortcuts: Vec<DisplayShortcut>,
     /// `None` until the app supplies the user's Pictures folder, which core can't know.
     pub save_folder: Option<PathBuf>,
     pub name_pattern: String,
@@ -243,6 +277,7 @@ impl Default for Settings {
             window_shortcut: Some("Ctrl+Shift+W".to_string()),
             full_screen_shortcut: Some("Ctrl+Shift+F".to_string()),
             delayed_shortcut: None,
+            display_shortcuts: Vec::new(),
             save_folder: None,
             name_pattern: DEFAULT_PATTERN.to_string(),
             format: SaveFormat::Png,
@@ -304,6 +339,10 @@ impl Settings {
                 "delayed_shortcut",
                 self.delayed_shortcut.clone().unwrap_or_default(),
             ),
+            (
+                "display_shortcuts",
+                display_shortcuts_text(&self.display_shortcuts),
+            ),
             ("save_folder", path_value(self.save_folder.as_deref())?),
             ("name_pattern", self.name_pattern.clone()),
             ("format", self.format.as_stored().to_string()),
@@ -341,6 +380,7 @@ impl Settings {
             "window_shortcut" => self.window_shortcut = non_empty(value),
             "full_screen_shortcut" => self.full_screen_shortcut = non_empty(value),
             "delayed_shortcut" => self.delayed_shortcut = non_empty(value),
+            "display_shortcuts" => self.display_shortcuts = display_shortcuts_from_text(value),
             "save_folder" => self.save_folder = non_empty(value).map(PathBuf::from),
             "name_pattern" => set(
                 &mut self.name_pattern,
@@ -408,6 +448,16 @@ pub(crate) mod tests {
             window_shortcut: Some("Ctrl+Alt+W".to_string()),
             full_screen_shortcut: Some("Ctrl+Alt+F".to_string()),
             delayed_shortcut: Some("Ctrl+Alt+D".to_string()),
+            display_shortcuts: vec![
+                DisplayShortcut {
+                    display: "7d2b1c4e-0000-5000-8000-000000000001".to_string(),
+                    shortcut: "Ctrl+Alt+1".to_string(),
+                },
+                DisplayShortcut {
+                    display: "7d2b1c4e-0000-5000-8000-000000000002".to_string(),
+                    shortcut: "Ctrl+Alt+2".to_string(),
+                },
+            ],
             save_folder: Some(PathBuf::from(r"D:\写真\shots")),
             name_pattern: "{yyyy}-{mm}-{dd} shot".to_string(),
             format: SaveFormat::WebP,
@@ -468,6 +518,7 @@ pub(crate) mod tests {
                 window_shortcut: Some("Ctrl+Shift+W".to_string()),
                 full_screen_shortcut: Some("Ctrl+Shift+F".to_string()),
                 delayed_shortcut: None,
+                display_shortcuts: Vec::new(),
                 save_folder: None,
                 name_pattern: "screenshot_{mm}_{dd}_{yyyy}".to_string(),
                 format: SaveFormat::Png,
@@ -565,6 +616,28 @@ pub(crate) mod tests {
             ..Settings::default()
         };
         assert_eq!(reloaded(&settings), settings);
+    }
+
+    #[test]
+    fn a_damaged_display_shortcut_line_is_dropped_and_the_rest_load() {
+        let loaded = with_stored(
+            "display_shortcuts",
+            "one\tCtrl+Alt+1\nno tab here\n\tCtrl+Alt+2\nthree\t\nfour\tCtrl+Alt+4",
+        );
+        assert_eq!(
+            loaded.display_shortcuts,
+            vec![
+                DisplayShortcut {
+                    display: "one".to_string(),
+                    shortcut: "Ctrl+Alt+1".to_string(),
+                },
+                DisplayShortcut {
+                    display: "four".to_string(),
+                    shortcut: "Ctrl+Alt+4".to_string(),
+                },
+            ]
+        );
+        assert_eq!(with_stored("display_shortcuts", ""), Settings::default());
     }
 
     #[test]

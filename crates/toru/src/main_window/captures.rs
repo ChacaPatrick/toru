@@ -11,7 +11,7 @@ use clipboard_rs::{
     Clipboard, ClipboardContext,
     common::{RustImage, RustImageData},
 };
-use gpui::{AsyncApp, Context, SharedString, WeakEntity, prelude::*};
+use gpui::{AsyncApp, Context, DisplayId, SharedString, WeakEntity, prelude::*};
 use toru_core::{
     capture::{Capture, CaptureMode},
     export::save_capture,
@@ -44,6 +44,7 @@ pub(super) const FILE_GONE: &str = "Couldn't read that image. Its file may have 
 const AUTO_SAVE_FAILED: &str =
     "Couldn't auto-save. The capture is still here, unsaved. Check the Save to folder.";
 const SEVERAL_FAILED: &str = "Some captures failed while Toru was in the background";
+const EDITOR_KEPT: &str = "Capture added to the gallery. Your edits here are kept.";
 
 pub(super) type CopyResult = Result<(), Box<dyn Error + Send + Sync>>;
 
@@ -85,9 +86,15 @@ impl MainWindow {
                 this.update(cx, |this, cx| {
                     // "Open editor after capture" (DESIGN.md §5), once the card exists. A
                     // delayed capture minimized Toru for its countdown, and the editor is no
-                    // use in the taskbar, so the window comes back.
+                    // use in the taskbar, so the window comes back. An editor with annotations
+                    // on its picture, which a shortcut's capture would otherwise replace, stays
+                    // and the new capture waits in the gallery.
                     if let Some(id) = this.show_card(card, cx).filter(|_| open_editor) {
-                        this.open_editor(id, cx);
+                        if this.editor_has_edits(cx) {
+                            this.show_toast(Toast::new(EDITOR_KEPT), cx);
+                        } else {
+                            this.open_editor(id, cx);
+                        }
                         platform::show_main_window();
                     }
                 })
@@ -116,12 +123,22 @@ impl MainWindow {
 
     /// Captures the chosen display. Toru's own windows are taken out of what captures see for the
     /// moment it takes, without moving, so nothing flickers and there's nothing to bring back.
-    pub(super) fn capture_full_screen(&mut self, cx: &mut Context<Self>) {
+    /// `display` is a shortcut's own display (DESIGN.md §3); `None` captures the one the
+    /// toolbar's picker shows.
+    pub(super) fn capture_full_screen(
+        &mut self,
+        display: Option<DisplayId>,
+        cx: &mut Context<Self>,
+    ) {
         if self.capturing {
             return;
         }
         let (displays, chosen) = self.displays(cx);
-        let Some(display) = displays.get(chosen) else {
+        let display = match display {
+            Some(id) => displays.iter().find(|display| display.id == id),
+            None => displays.get(chosen),
+        };
+        let Some(display) = display else {
             self.report_failure(CAPTURE_FAILED, cx);
             return;
         };

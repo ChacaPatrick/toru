@@ -192,6 +192,11 @@ impl Editor {
         self.name.clone()
     }
 
+    /// Whether the picture has annotations, which closing the editor would lose.
+    pub fn is_edited(&self) -> bool {
+        self.document.is_edited()
+    }
+
     /// Why the store refused the name in the field, or `None` once it takes one. The main window
     /// keeps this in step with the card's.
     pub fn set_name_error(&mut self, error: Option<SharedString>, cx: &mut Context<Self>) {

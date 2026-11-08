@@ -22,7 +22,10 @@ use toru_core::{
     settings::{BUILT_IN_PALETTES, Look, OnClose, PaletteChoice, SaveFormat, Settings},
 };
 
-use super::{HINT_LEADING, MainWindow, act, custom_palette::look_name, retention};
+use super::{
+    HINT_LEADING, MainWindow, act, custom_palette::look_name, retention, shortcuts_dialog,
+};
+use crate::shortcuts::{Binding, Planned, Problem};
 use crate::theme::{ActiveTheme, Theme, ThemedText, custom_palette, set_theme};
 use crate::ui::{
     BUTTON_SMALL_HEIGHT, Button, Icon, MIN_TARGET, RadioGroup, Segmented, TextField, Toggle,
@@ -145,26 +148,33 @@ pub fn settings_column(
             group(theme, "Shortcuts")
                 .child(shortcut(
                     theme,
-                    settings.region_shortcut.as_deref(),
+                    this.planned(&Binding::Region),
                     "Region (default)",
                 ))
+                .child(shortcut(theme, this.planned(&Binding::Window), "Window"))
                 .child(shortcut(
                     theme,
-                    settings.window_shortcut.as_deref(),
-                    "Window",
-                ))
-                .child(shortcut(
-                    theme,
-                    settings.full_screen_shortcut.as_deref(),
+                    this.planned(&Binding::FullScreen),
                     "Full screen",
                 ))
-                // Rebinding arrives in 6.2. The row keeps the button at its own width, as the
-                // mockups' `align-self: flex-start` does.
+                // Delayed and the displays only have rows here once they have shortcuts; the
+                // dialog lists them all.
+                .children(
+                    this.planned(&Binding::Delayed)
+                        .filter(|row| row.text.is_some())
+                        .map(|row| shortcut(theme, Some(row), "Delayed")),
+                )
+                .children(
+                    shortcuts_dialog::column_note(&this.shortcuts)
+                        .map(|note| hint(theme, note).text_color(c.text)),
+                )
+                // The row keeps the button at its own width, as the mockups'
+                // `align-self: flex-start` does.
                 .child(
                     div().flex().child(
                         Button::new("edit-shortcuts", "Edit shortcuts…")
                             .small()
-                            .on_click(|_, _| {}),
+                            .on_click(act(cx, |this, cx| this.open_shortcuts_dialog(cx))),
                     ),
                 ),
         )
@@ -440,14 +450,24 @@ fn toggle(
         )
 }
 
-/// A shortcut row: the keys, or "Not set", with what they capture at the right.
-fn shortcut(theme: &Theme, keys: Option<&str>, action: &'static str) -> Div {
-    let keys = keys.map_or_else(|| "Not set".to_string(), shortcut_text);
+/// A shortcut row: the keys, or "Not set", with what they capture at the right. A shortcut
+/// that isn't working says so in the text colour under its keys; the dialog says why.
+fn shortcut(theme: &Theme, planned: Option<&Planned>, action: &'static str) -> Div {
+    let keys = planned
+        .and_then(|row| row.text.as_deref())
+        .map_or_else(|| "Not set".to_string(), shortcut_text);
+    let broken =
+        planned.is_some_and(|row| !matches!(row.problem, None | Some(Problem::Disconnected)));
     row(theme)
         .child(
             div()
+                .flex()
+                .flex_col()
                 .type_style(theme, theme.type_scale.setting)
-                .child(keys),
+                .child(keys)
+                .when(broken, |keys| {
+                    keys.child(hint(theme, "Not working").text_color(theme.colors.text))
+                }),
         )
         .child(hint(theme, action).flex_none())
 }

@@ -92,12 +92,6 @@ pub fn toolbar(this: &MainWindow, cx: &Context<MainWindow>) -> Div {
         },
     );
 
-    let shortcuts: Vec<&str> = [&settings.region_shortcut, &settings.window_shortcut]
-        .into_iter()
-        .flatten()
-        .map(String::as_str)
-        .collect();
-
     div()
         .flex_none()
         .flex()
@@ -129,7 +123,7 @@ pub fn toolbar(this: &MainWindow, cx: &Context<MainWindow>) -> Div {
                 .type_style(theme, theme.type_scale.hint)
                 .text_color(c.muted)
                 .whitespace_nowrap()
-                .child(shortcuts.join(" · ")),
+                .child(this.toolbar_hint()),
         )
         .child(div().flex_1().min_w(px(40.)))
         .child(
