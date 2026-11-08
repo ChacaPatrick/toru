@@ -63,7 +63,7 @@ Drawn with `tiny-skia`, so the screen matches the saved file exactly.
 - [ ] 8.5 Save, Save as, Copy, Reset, updated thumbnail
 
 ## Phase 9: Appearance [Fable]
-- [ ] 9.1 Look and palette pickers in settings
+- [x] 9.1 Look and palette pickers in settings
 - [ ] 9.2 Custom fourth palette and background photo, with a contrast warning
 
 ## Phase 10: Finish and ship

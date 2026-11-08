@@ -21,7 +21,7 @@ use gpui::{
 };
 use gpui_platform::application;
 use toru_core::{
-    settings::{Look, PaletteChoice, Settings},
+    settings::{BUILT_IN_PALETTES, Look, PaletteChoice, Settings},
     store::{Store, StoreError},
 };
 
@@ -37,7 +37,7 @@ const MIN_WINDOW_SIZE: (f32, f32) = (900., 480.);
 /// `toru [japandi|pixel_art|neo_brutalism] [palette] [editor]` opens the window in that look and
 /// palette, and straight in the editor if asked, so each can be checked against the mockups
 /// without clicking through. It only changes what is shown, so the saved settings keep their own
-/// look.
+/// look until a look or palette is picked in settings, which saves what is shown.
 fn appearance_from_args(settings: &Settings) -> (Settings, bool) {
     let mut appearance = settings.clone();
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -50,7 +50,11 @@ fn appearance_from_args(settings: &Settings) -> (Settings, bool) {
         Some("neo_brutalism") => Look::NeoBrutalism,
         _ => appearance.look,
     };
-    if let Some(palette) = args.next().and_then(|arg| arg.parse().ok()) {
+    if let Some(palette) = args
+        .next()
+        .and_then(|arg| arg.parse().ok())
+        .filter(|palette| *palette < BUILT_IN_PALETTES)
+    {
         appearance.appearance_mut(appearance.look).palette = PaletteChoice::BuiltIn(palette);
     }
     (appearance, open_editor)

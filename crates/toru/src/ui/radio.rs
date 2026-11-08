@@ -2,13 +2,14 @@
 //! square looks, square) mark beside its label, taking the toggle's colours so a chosen option
 //! reads like a toggle that is on. One tab stop: focus sits on the chosen row, the arrow keys
 //! move the choice and focus together, and any row, the full width of the group and the minimum
-//! target tall (DESIGN.md §7), can be clicked.
+//! target tall (DESIGN.md §7), can be clicked. A row can carry a detail under its label, such as
+//! the palette picker's swatches, which is part of the same target.
 
 use std::{rc::Rc, sync::Arc};
 
 use gpui::{
-    AccessibleAction, App, ElementId, FocusHandle, KeyDownEvent, Role, SharedString, Toggled,
-    Window, div, prelude::*, px,
+    AccessibleAction, AnyElement, App, ElementId, FocusHandle, KeyDownEvent, Role, SharedString,
+    Toggled, Window, div, prelude::*, px,
 };
 
 use super::{MIN_TARGET, arrow_target, focus_marks, keyed_focus};
@@ -21,6 +22,9 @@ const DOT: f32 = 8.;
 /// Between rows, each already `MIN_TARGET` tall: the smallest gap §7 asks for between targets.
 const ROW_GAP: f32 = 6.;
 const MARK_GAP: f32 = 10.;
+/// Between a label and the detail under it, which sits closer to its own label than to the next
+/// row's.
+const DETAIL_GAP: f32 = 2.;
 
 #[derive(IntoElement)]
 pub struct RadioGroup {
@@ -28,6 +32,7 @@ pub struct RadioGroup {
     label: SharedString,
     options: Vec<SharedString>,
     selected: usize,
+    details: Vec<AnyElement>,
     on_change: Option<ChangeHandler>,
 }
 
@@ -44,8 +49,15 @@ impl RadioGroup {
             label: label.into(),
             options: options.into_iter().map(Into::into).collect(),
             selected,
+            details: Vec::new(),
             on_change: None,
         }
+    }
+
+    /// One element per option, drawn under its label and aligned with it.
+    pub fn details(mut self, details: impl IntoIterator<Item = AnyElement>) -> RadioGroup {
+        self.details = details.into_iter().collect();
+        self
     }
 
     pub fn on_change(
@@ -95,6 +107,7 @@ impl RenderOnce for RadioGroup {
             }
         };
 
+        let mut details = self.details.into_iter();
         let rows = self
             .options
             .iter()
@@ -102,6 +115,7 @@ impl RenderOnce for RadioGroup {
             .enumerate()
             .map(|(index, (option, focus))| {
                 let on = index == selected;
+                let detail = details.next();
                 let choose = on_change.clone();
                 let choose_a11y = on_change.clone();
                 let mark = div()
@@ -132,10 +146,9 @@ impl RenderOnce for RadioGroup {
                     .aria_label(option.clone())
                     .aria_toggled(if on { Toggled::True } else { Toggled::False })
                     .track_focus(focus)
-                    .min_h(px(MIN_TARGET))
                     .flex()
-                    .items_center()
-                    .gap(px(MARK_GAP))
+                    .flex_col()
+                    .gap(px(DETAIL_GAP))
                     .text_color(c.text)
                     .type_style(theme, font)
                     .cursor_pointer()
@@ -149,8 +162,18 @@ impl RenderOnce for RadioGroup {
                             handler(index, window, cx);
                         }
                     })
-                    .child(mark)
-                    .child(font.case.apply(option))
+                    .child(
+                        div()
+                            .min_h(px(MIN_TARGET))
+                            .flex()
+                            .items_center()
+                            .gap(px(MARK_GAP))
+                            .child(mark)
+                            .child(font.case.apply(option)),
+                    )
+                    .when_some(detail, |row, detail| {
+                        row.child(div().pl(px(MARK + MARK_GAP)).child(detail))
+                    })
             })
             .collect::<Vec<_>>();
 

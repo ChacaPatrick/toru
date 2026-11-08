@@ -1,21 +1,22 @@
 //! The settings column (DESIGN.md §2 with CLAUDE.md's overrides): Session, Capture, Shortcuts,
 //! Save to, Name pattern, Format and On close, each group a label over its controls, as the
-//! mockups' `.settings` lays them out. Every control shows what is in `Settings` and every change
+//! mockups' `.settings` lays them out, then Look and Palette (§8), which have no mockup and
+//! follow the Palettes boards. Every control shows what is in `Settings` and every change
 //! goes through `MainWindow::change_settings`. The column scrolls on its own when the window is
 //! short, and follows keyboard focus so a focused control always shows with its ring. Its hide
 //! button, at the right of the first label, collapses it; the toolbar's gear brings it back.
 
 use std::{path::PathBuf, sync::Arc};
 
-use gpui::{App, Context, Div, ElementId, SharedString, Window, div, point, prelude::*, px};
+use gpui::{App, Context, Div, ElementId, Hsla, SharedString, Window, div, point, prelude::*, px};
 use gpui_kit::component::scroll::ScrollableElement;
 use toru_core::{
     naming::NameError,
-    settings::{OnClose, SaveFormat, Settings},
+    settings::{Look, OnClose, PaletteChoice, SaveFormat, Settings},
 };
 
 use super::{MainWindow, act};
-use crate::theme::{ActiveTheme, Theme, ThemedText};
+use crate::theme::{ActiveTheme, Theme, ThemedText, set_theme};
 use crate::ui::{
     BUTTON_SMALL_HEIGHT, Button, Icon, MIN_TARGET, RadioGroup, Segmented, TextField, Toggle,
 };
@@ -36,8 +37,14 @@ const LABEL_ROW_HEIGHT: f32 = 16.;
 /// The least air between two click targets (DESIGN.md §7).
 const TARGET_GAP: f32 = 8.;
 
+/// The Palettes boards' `.swatches`: a strip of four, the width of its row.
+const SWATCH_HEIGHT: f32 = 26.;
+const SWATCH_GAP: f32 = 6.;
+
 const FORMATS: [SaveFormat; 3] = [SaveFormat::Png, SaveFormat::Jpg, SaveFormat::WebP];
 const ON_CLOSE: [OnClose; 3] = [OnClose::Ask, OnClose::Keep, OnClose::Discard];
+const LOOKS: [Look; 3] = [Look::Japandi, Look::PixelArt, Look::NeoBrutalism];
+const LOOK_NAMES: [&str; 3] = ["Japandi", "Pixel art", "Neo-brutalism"];
 
 pub fn settings_column(
     this: &mut MainWindow,
@@ -210,7 +217,24 @@ pub fn settings_column(
                     this.change_settings(cx, |settings| settings.on_close = ON_CLOSE[index])
                 })),
             ),
-        );
+        )
+        .child(
+            group(theme, "Look").child(
+                RadioGroup::new(
+                    "look",
+                    "Look",
+                    LOOK_NAMES,
+                    LOOKS
+                        .iter()
+                        .position(|look| *look == theme.look)
+                        .unwrap_or(0),
+                )
+                .on_change(act_with(cx, |this, cx, index| {
+                    this.change_appearance(cx, |settings, _| settings.look = LOOKS[index])
+                })),
+            ),
+        )
+        .child(group(theme, "Palette").child(palette_picker(theme, cx)));
 
     div()
         .relative()
@@ -232,6 +256,64 @@ pub fn settings_column(
                 .child(content),
         )
         .vertical_scrollbar(&this.settings_scroll)
+}
+
+impl MainWindow {
+    /// A change to the look or palette. The pickers show the active theme, which the start-up
+    /// arguments can set apart from the saved look, so `change` gets the theme's look and the
+    /// choice is saved under it; then every window takes the new theme.
+    fn change_appearance(
+        &mut self,
+        cx: &mut Context<Self>,
+        change: impl FnOnce(&mut Settings, Look),
+    ) {
+        let shown = cx.theme().look;
+        self.change_settings(cx, |settings| {
+            settings.look = shown;
+            change(settings, shown);
+        });
+        set_theme(Theme::from_settings(&self.settings), cx);
+    }
+}
+
+/// The active look's palettes, each row its name over its four colours. The look's choice is
+/// remembered when another look is shown. Section 9.2 adds the custom slot as a fourth row.
+fn palette_picker(theme: &Theme, cx: &Context<MainWindow>) -> RadioGroup {
+    let palettes = Theme::palettes(theme.look);
+    RadioGroup::new(
+        "palette",
+        "Palette",
+        palettes.iter().map(|palette| palette.name),
+        theme.palette,
+    )
+    .details(
+        palettes
+            .iter()
+            .map(|palette| swatches(theme, &palette.swatches).into_any_element()),
+    )
+    .on_change(act_with(cx, |this, cx, index| {
+        this.change_appearance(cx, |settings, look| {
+            settings.appearance_mut(look).palette = PaletteChoice::BuiltIn(index)
+        })
+    }))
+}
+
+/// `.swatches`: a palette's colours in equal boxes across the row, each edged like an input so
+/// the ones matching the surface still show.
+fn swatches(theme: &Theme, colors: &[Hsla; 4]) -> Div {
+    let border = theme.borders.input;
+    div()
+        .flex()
+        .gap(px(SWATCH_GAP))
+        .children(colors.iter().map(|&color| {
+            div()
+                .flex_1()
+                .h(px(SWATCH_HEIGHT))
+                .bg(color)
+                .border(border.width)
+                .border_color(border.color)
+                .rounded(theme.radii.sm)
+        }))
 }
 
 /// A handler that takes the control's value, such as the chosen index, along to the view.
