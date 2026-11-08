@@ -15,7 +15,7 @@ spec: Phase 5 onward, a section isn't done until every control it touches works 
 Results go in `docs/spikes.md`.
 - [ ] 1.1 Tray and global hotkeys alongside GPUI, and PrtScn with Snipping Tool's binding on and off
 - [x] 1.2 Capture overlay: a borderless topmost window per monitor showing a frozen image
-- [ ] 1.3 Name fields with real text editing, and smooth scrolling with 200 real thumbnails
+- [x] 1.3 Name fields with real text editing, and smooth scrolling with 200 real thumbnails
 - [ ] 1.4 Copy image and copy as files
 - [ ] 1.5 Narrator check
 

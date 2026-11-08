@@ -325,3 +325,192 @@ Ticked items passed in the checks above with synthesized input; the unticked one
 - [x] Run again, click the second monitor, and press Esc: both overlays close.
 - [x] Run again and press Esc without clicking: both overlays close. The second monitor's overlay had the foreground at
   launch, from a terminal launch.
+
+## 1.3 Text input and gallery scrolling
+
+**Answer:** yes to both. `gpui-kit`'s `Input` is a real editable field: click, typing, Backspace, arrows, Shift-selection,
+mouse-drag and double-click selection, Ctrl+A/C/V, Ctrl+Z, Tab, a Windows emoji-panel insertion and Unicode surrogate pairs
+all work with synthesized input. A gallery of 200 image cards in a virtual list scrolled with no render-to-render interval
+over 16.7 ms and render-to-paint work of 0.9–1.0 ms per frame on average; neither shows what reached the screen. **Real IME composition is unverified**: this machine has only the US keyboard
+layout, and no IME was installed. Everything else that needs a person is in the checklist below.
+
+Tested 2026-11-08 on Windows 11 build 26200, Rust 1.98.1, `gpui-pre` 0.3.11, `gpui-kit` 0.9.0, release build, on the
+primary monitor (2560x1440 at 240 Hz, scale 1), GPU AMD RX 7900 XTX. Code: `crates/toru/examples/spike_gallery.rs`.
+
+### Dependencies
+
+`gpui-kit` 0.9.0 pins `gpui-pre` and its macro and `sum-tree` crates to exactly `=0.3.11`, so it resolves to the
+workspace's GPUI with no conflict and no second copy. The widgets come from its `gpui-component` package, reached as
+`gpui_kit::component::...`; only `gpui-kit` is added, as a dev-dependency of `crates/toru`. `image` wasn't needed,
+because `xcap` re-exports it with PNG support.
+
+`Cargo.lock` gained 167 packages (710 to 877, counting non-Windows platforms). The crates that build on Windows with dev-dependencies went from
+289 to 413, so `gpui-kit` adds 124. Not used by this spike, but pulled in and compiled: `markdown`,
+`html5ever`, `notify`, `resvg` and `similar`. The `Input` itself needs `ropey` (text storage), `lsp-types` (positions) and
+`rust-i18n` (its menu labels), so those can't be trimmed. `tree-sitter` and `syntect` are off by
+default. A full release build of the dependencies took about 2 minutes here. Its GPUI feature flags `x11`, `wayland`,
+`font-kit` and `runtime_shaders` don't affect Windows.
+
+### Results
+
+The example has 200 cards in rows of 3, with a day-group header every 30 cards. Each thumbnail starts as a distinct
+1440x900 RGBA image, is PNG-encoded in memory, then decoded and shrunk on a background thread, so the path matches
+reading a PNG file. Three runs per width, `TORU_SPIKE_THUMB_WIDTH` of 280 (matching the card's width at scale 1, the
+default) and 560 (for 200% scale):
+
+| Measure | 280 px thumbnails | 560 px thumbnails |
+|---|---|---|
+| First frame painted, after `main` | 138–151 ms | 141–149 ms |
+| Create 200 `InputState`s | 1.1–1.3 ms | 1.1–1.2 ms |
+| Memory those 200 inputs add (private) | 2.3 MB, about 12 KB each | same |
+| All thumbnails decoded and ready, after `main` | 308–326 ms | 328–340 ms |
+| Decode and downscale, per image | 5.0–6.4 ms | 7.3–8.6 ms |
+| Thumbnail memory held for drawing, per image | 191 KB | 765 KB |
+| After all 200 uploaded: working set | 109 MB | 237 MB |
+| After all 200 uploaded: private bytes | 176 MB | 649 MB |
+| Dedicated GPU memory, peak | 88 MB | 433 MB |
+
+The sweep scrolls the whole list twice, 30 px per frame (about 7,200 px/s at 240 Hz), once every thumbnail is decoded,
+with `TORU_SPIKE_AUTOSCROLL=1`. The first pass uploads each thumbnail to the GPU on first sight and the second draws
+them from the atlas. "Interval" is the time between frames, measured at `render`, and "work" is `render` to the end of
+paint. Ranges cover all six runs (three per thumbnail width; the widths didn't differ), roughly 557 frames each:
+
+| Metric | Pass 1 | Pass 2 |
+|---|---|---|
+| Interval average | 4.26–4.30 ms | 4.19–4.28 ms |
+| Interval p99 | 6.9–7.4 ms | 6.9–7.3 ms |
+| Interval worst | 7.4–7.8 ms | 7.4–8.2 ms |
+| Intervals over 4.17 ms (240 Hz target) | 308–319 | 294–331 |
+| Intervals over 6.25 ms (1.5x target) | 33–42 | 24–40 |
+| Intervals over 16.7 ms | 0 | 0 |
+| Intervals over 33 ms | 0 | 0 |
+| Render-to-paint work, average | 0.92–1.04 ms | 0.87–0.95 ms |
+| Render-to-paint work, worst | 2.0–2.7 ms | 1.6–2.0 ms |
+
+Intervals over 4.17 ms hover around that value, as expected for a 240 Hz clock with jitter. Between 4% and 8% were over
+6.25 ms, but the averages leave room for only about 3–18 truly missed refreshes per pass, so most are probably late
+render callbacks that the next, shorter interval made up. Render-to-paint work never came close to these values, and the
+intervals only cover `render` calls, so they don't show what reached the screen. Pacing varies between runs: other runs of this sweep, on earlier builds and one on the final code,
+averaged 4.6 ms between frames with almost none over 6.25 ms, and still none over 16.7 ms.
+
+Wheel and scrollbar-drag runs (synthesized): render-to-paint work averaged 1.14–1.23 ms with a worst of 2.1 ms, which
+leaves out the renderer's own work and `Present`. Intervals in those runs follow the input events, not the display (Windows' timer
+limits the script's notches to about 15.6 ms apart). A few worst values of 216–452 ms are script pauses between bursts,
+counted because the run is one continuous interval series until 300 ms of quiet; they aren't hitches.
+
+| What was tested | Result | How it was checked |
+|---|---|---|
+| Click a field focuses it, typing appends | Works | `card 0 focused`, then a value event per key |
+| Backspace | Works | Value lost the last character |
+| Left/Right arrows, typing mid-string | Works | `hello woxrl` from the expected caret position |
+| Shift+arrow selection, copy, replace | Works | Clipboard held the 3 selected characters, typing replaced them, screenshot showed the highlight |
+| Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+Z | Works | Clipboard text and values; undo restored the previous value |
+| Mouse-drag selection, double-click word | Works | Clipboard held the dragged range; double-click gave `alpha` |
+| Tab, Shift+Tab | Works over rendered fields | `focused`/`blurred` events in field order |
+| Caret and selection drawing | Works | Screenshots of the window |
+| Focus ring | Visible | `ring`-coloured border with a soft halo when focused |
+| Unicode via `KEYEVENTF_UNICODE` (CJK, emoji) | Works | `日本語😀`, one value event per character, exact code points |
+| Backspace over an emoji | Removes the whole surrogate pair | Code points in the value |
+| Windows emoji panel (Win+.), Enter inserted one | Works | Value gained `🫡`; the panel left the example's window in the foreground |
+| Real IME composition | **Not tested** | No IME installed; see "Not verified" |
+| Wheel scrolling | Works | `manual scroll, now at -3120` |
+| Scrollbar thumb drag, top to bottom and back | Works | `manual scroll, now at -16722`, screenshot at the end of the list |
+
+### The approach that worked
+
+- **Setup:** call `gpui_kit::init(cx)` and open the window with `gpui_kit::open_window`. Its `Root` holds the Tab and
+  Shift+Tab bindings.
+- **List:** `v_virtual_list(view, id, Rc<Vec<Size>>, render_rows)` with a `VirtualListScrollHandle` and
+  `.vertical_scrollbar`. Row height is known up front (header or row of three cards). Only the visible rows plus one
+  extra below are built each frame. Rows must have `.w_full()`: the list sizes itself from its first row.
+- **Inputs:** one `Entity<InputState>` per card, created up front and rendered with `Input::new(&state)`. The element
+  only exists while its row is on screen, but the entity keeps the text.
+- **Thumbnails:** decode and shrink on the background executor, swap to BGRA, build `Arc<RenderImage>`, and draw with
+  `img(...).object_fit(ObjectFit::Cover)`.
+- **Field events:** subscribe to each state's `InputEvent` (`Change`, `Focus`, `Blur`, `PressEnter`).
+
+### Inputs: all live or created lazily?
+
+All 200 can hold a live `InputState` from the start. They cost about 12 KB and 6 µs each, and the expensive part
+(the element, its layout, focus and caret) only runs for the visible rows. For a history with thousands of cards,
+create a day's states when that day loads, the same way thumbnails are loaded.
+
+What that means:
+
+- **Edits are kept** across scrolling, including out and back, because the text lives in the entity. Checked with
+  `abc` typed, the card scrolled away and back, then `d` typed giving `abcd`.
+- **Focus follows the element.** Scrolling the focused card out of the rendered rows fires `Blur`; scrolling it back fires
+  `Focus` again. While it's off-screen, keystrokes go nowhere and nothing is lost or typed elsewhere (`zz` changed
+  nothing). Treat `Blur` from scrolling as distinct if a rename commits on blur, so that scrolling doesn't commit.
+- **Tab only reaches rendered fields.** It runs through the visible rows and the extra row below, onto cards that are off-screen,
+  then wraps to the top row, and it doesn't scroll the list. Shift+Tab wraps the other way. DESIGN.md §7's "Tab through
+  controls" needs the app to scroll the focused card into view on keyboard focus changes, with
+  `VirtualListScrollHandle::scroll_to_item` and its own handling at the edges. That wasn't built here.
+
+### DESIGN.md §7 support
+
+- **Visible focus:** the default `Input` shows a border in `theme.ring` plus a soft halo. It is a 1 px edge, not §7's 3 px ring
+  and halo, so section 3.2 will have to draw its own focus ring or restyle this one (`focus_bordered(false)` and theme
+  values). That's a styling job, not a blocker.
+- **Tab order:** the state's focus handle is a tab stop, and Tab follows render order, within the limit above.
+  `Input::tab_index` stores its value but nothing reads it in 0.9.0, so it can't set the order.
+- **`.role()` / `.aria_label()`:** `Input` has both. The role defaults to `TextInput`, and the example sets `aria_label`.
+  Whether a screen reader reads them on Windows belongs to section 1.5 and wasn't checked.
+
+### Limits
+
+- **GPU memory grows quickly with thumbnail size.** From the code, GPUI's atlas uses 1024x1024 textures and keeps each image
+  whole in one, and the numbers fit about 2 thumbnails to a texture at 560x350: 433 MB of GPU memory for about 150 MB of pixels. At
+  280x175 far more fit per texture, and all 200 used 88 MB. Make thumbnails no larger than needed: display width times
+  scale factor.
+- **The atlas never forgets on its own.** An uploaded thumbnail stays on the GPU until `window.drop_image` is called, so
+  a long history needs dropping as days scroll out of view or are collapsed. Not exercised here.
+- **Row heights must be known up front** for the list, so day-group Collapse has to rebuild the size list.
+- From the code, the list renders row 0 (the header here) once more every frame to measure width, so keep it cheap.
+
+### Hands-on checks
+
+Run 2026-11-08 by an agent on the owner's desktop, with no person watching. All input was synthesized with `SendInput`
+into the example's own window, with the foreground and the window under the pointer checked before every send. Window
+contents were checked from screenshots of the window alone, saved to the temp folder and deleted. The owner's clipboard
+text was saved first and restored afterwards.
+
+- Another app (`LGMonitorAppManager`) took the foreground once during a run. The foreground check stopped the script without
+  sending anything further, and the test was re-run; nothing typed reached that app.
+- The first run missed one copy: the shift-selection Ctrl+C left the clipboard unchanged. Later runs had 8 correct copies in
+  8 tries (selection, drag and double-click). The cause wasn't determined.
+- One of the 15 window screenshots came back fully black (mean brightness 0), in the first run; the other 14 weren't blank,
+  and the 4 of those viewed by eye showed the expected window. Cause not determined.
+- The emoji panel test ran on a build differing only by a tiny layout fix; the example's input path is unchanged. The panel
+  stayed open over the window after inserting, and closed when focus left; it was confirmed hidden afterwards.
+
+### Not verified
+
+- **IME composition.** No Japanese, Chinese or other IME is installed here, and none was installed. Code reading suggests it
+  should work: GPUI handles `WM_IME_COMPOSITION` and positions the candidate window from the caret, and `InputBaseState`
+  implements the marked-text input handler. It stays unverified.
+- Right-click context menu in the field. It's a native popup and wasn't opened.
+- Touch or pen drag scrolling, and any display scale other than 1. Thumbnails at 2x are measured but only displayed at 1x.
+- Frame timing at presentation. Intervals are between `render` calls and work stops at the end of paint, before the renderer's own CPU work and `Present`; GPU present time and what reaches
+  the screen weren't measured (no PresentMon here).
+- A second, slower GPU or the 60 Hz monitor. The second monitor is 60 Hz and the window ran on the 240 Hz primary.
+- Real screenshot PNGs read from disk. These synthetic captures average 85 KB; real ones are usually larger, so decode
+  will be slower.
+- Dropped-input cases: invalid filename characters and multi-line paste into a name field, which belong to section 5.5.
+- Screen reader behaviour (section 1.5).
+- How scrolling feels to a person.
+
+### Owner's manual checklist
+
+Run from PowerShell, with `%USERPROFILE%\.cargo\bin` on `PATH`: `cargo run --release -p toru --example spike_gallery`.
+Field events and scroll timings print to the console. Ticked items passed in the checks above with synthesized input;
+the unticked ones need a person.
+
+- [x] Fields accept typing, editing and selection with the keyboard and mouse.
+- [x] Ctrl+A, Ctrl+C, Ctrl+V and Ctrl+Z behave as in any text box.
+- [x] Tab moves between fields and the focus ring is visible.
+- [x] Wheel scrolling and dragging the scrollbar move through all 200 cards.
+- [ ] Scrolling feels smooth by hand, on both the 240 Hz and the 60 Hz monitor.
+- [ ] With a Japanese or other IME installed, composing text in a field: the preedit is underlined in the field, the
+  candidate window sits at the caret, and committing inserts the text once.
+- [ ] Right-click a field: the Cut/Copy/Paste menu appears and works.
