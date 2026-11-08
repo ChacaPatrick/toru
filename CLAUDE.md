@@ -45,6 +45,9 @@ Read `design/DESIGN.md` first for behaviour. `design/mockups/*.html`, `design/sc
   count as findings. Fix them and review again, for at most 3 rounds; anything still open after round 3 is listed for
   the owner and doesn't block the merge. If the same finding is disputed twice, ask the owner.
 - Whoever's PR conflicts with `main` rebases it and resolves the conflict, then re-runs the checks.
+- A PR that changes what the app looks like includes screenshots in its description, each with a caption saying what it
+  shows. They are of the application only, taken with a window-specific capture such as `PrintWindow`, from a throwaway
+  data folder with synthetic captures, and stored on the `pr-screenshots` branch under a folder named for the section.
 - Keep code straightforward. Don't over-engineer or repeat yourself unless needed.
 - Most coding: Opus 5.5, High, Fast. Graphics, design and UI work: Fable 5.1 only, Opus 5.5 if Fable is exhausted.
 - Sections may run in parallel, each in its own git worktree. Conflicts are resolved at merge time.
