@@ -20,7 +20,7 @@ Results go in `docs/spikes.md`.
 - [ ] 1.5 Narrator check (Windows UI Automation passed; the owner's listening test in `docs/spikes.md` is still open)
 
 ## Phase 2: Core logic, no UI
-- [ ] 2.1 Capture records and naming with `_2`/`_3` **[parallel with 2.3]**
+- [x] 2.1 Capture records and naming with `_2`/`_3` **[parallel with 2.3]**
 - [ ] 2.2 Temp storage and SQLite history
 - [ ] 2.3 Saved settings **[parallel with 2.1]**
 
