@@ -8,6 +8,8 @@
 //! bulk bar (§4) floats over the column's foot, the column ends with room for it, so the last
 //! control can be scrolled clear, and focus is kept clear of it too. Its hide button, at the
 //! right of the first label, collapses it; the toolbar's gear brings it back.
+//! The Palette group's fourth row is the custom palette (`custom_palette`), with a button that
+//! opens its editor.
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -17,11 +19,11 @@ use gpui::{
 use gpui_kit::component::scroll::ScrollableElement;
 use toru_core::{
     naming::NameError,
-    settings::{Look, OnClose, PaletteChoice, SaveFormat, Settings},
+    settings::{BUILT_IN_PALETTES, Look, OnClose, PaletteChoice, SaveFormat, Settings},
 };
 
-use super::{HINT_LEADING, MainWindow, act, retention};
-use crate::theme::{ActiveTheme, Theme, ThemedText, set_theme};
+use super::{HINT_LEADING, MainWindow, act, custom_palette::look_name, retention};
+use crate::theme::{ActiveTheme, Theme, ThemedText, custom_palette, set_theme};
 use crate::ui::{
     BUTTON_SMALL_HEIGHT, Button, Icon, MIN_TARGET, RadioGroup, Segmented, TextField, Toggle,
 };
@@ -47,7 +49,6 @@ const SWATCH_GAP: f32 = 6.;
 const FORMATS: [SaveFormat; 3] = [SaveFormat::Png, SaveFormat::Jpg, SaveFormat::WebP];
 const ON_CLOSE: [OnClose; 3] = [OnClose::Ask, OnClose::Keep, OnClose::Discard];
 const LOOKS: [Look; 3] = [Look::Japandi, Look::PixelArt, Look::NeoBrutalism];
-const LOOK_NAMES: [&str; 3] = ["Japandi", "Pixel art", "Neo-brutalism"];
 
 /// `bar`: how much of the column's foot the bulk bar covers, with its margin, while it shows.
 pub fn settings_column(
@@ -232,7 +233,7 @@ pub fn settings_column(
                 RadioGroup::new(
                     "look",
                     "Look",
-                    LOOK_NAMES,
+                    LOOKS.map(look_name),
                     LOOKS
                         .iter()
                         .position(|look| *look == theme.look)
@@ -243,7 +244,22 @@ pub fn settings_column(
                 })),
             ),
         )
-        .child(group(theme, "Palette").child(palette_picker(theme, cx)));
+        .child(
+            group(theme, "Palette")
+                .child(palette_picker(theme, settings, cx))
+                .child(
+                    div().flex().child(
+                        Button::new("edit-custom-palette", "Edit custom…")
+                            .small()
+                            .on_click({
+                                let view = cx.entity();
+                                move |window, cx| {
+                                    view.update(cx, |this, cx| this.open_custom_editor(window, cx))
+                                }
+                            }),
+                    ),
+                ),
+        );
 
     div()
         .relative()
@@ -271,7 +287,7 @@ impl MainWindow {
     /// A change to the look or palette. The pickers show the active theme, which the start-up
     /// arguments can set apart from the saved look, so `change` gets the theme's look and the
     /// choice is saved under it; then every window takes the new theme.
-    fn change_appearance(
+    pub(super) fn change_appearance(
         &mut self,
         cx: &mut Context<Self>,
         change: impl FnOnce(&mut Settings, Look),
@@ -285,24 +301,35 @@ impl MainWindow {
     }
 }
 
-/// The active look's palettes, each row its name over its four colours. The look's choice is
-/// remembered when another look is shown. Section 9.2 adds the custom slot as a fourth row.
-fn palette_picker(theme: &Theme, cx: &Context<MainWindow>) -> RadioGroup {
+/// The active look's palettes, each row its name over its four colours, then the custom one
+/// with the colours stored for it. The look's choice is remembered when another look is shown.
+fn palette_picker(theme: &Theme, settings: &Settings, cx: &Context<MainWindow>) -> RadioGroup {
     let palettes = Theme::palettes(theme.look);
+    let custom = custom_palette(theme.look, settings.appearance(theme.look));
     RadioGroup::new(
         "palette",
         "Palette",
-        palettes.iter().map(|palette| palette.name),
+        palettes
+            .iter()
+            .map(|palette| palette.name)
+            .chain(["Custom"]),
         theme.palette,
     )
     .details(
         palettes
             .iter()
-            .map(|palette| swatches(theme, &palette.swatches).into_any_element()),
+            .map(|palette| palette.swatches)
+            .chain([custom.swatches()])
+            .map(|colors| swatches(theme, &colors).into_any_element()),
     )
     .on_change(act_with(cx, |this, cx, index| {
+        let choice = if index < BUILT_IN_PALETTES {
+            PaletteChoice::BuiltIn(index)
+        } else {
+            PaletteChoice::Custom
+        };
         this.change_appearance(cx, |settings, look| {
-            settings.appearance_mut(look).palette = PaletteChoice::BuiltIn(index)
+            settings.appearance_mut(look).palette = choice
         })
     }))
 }

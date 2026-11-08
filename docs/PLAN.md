@@ -64,7 +64,7 @@ Drawn with `tiny-skia`, so the screen matches the saved file exactly.
 
 ## Phase 9: Appearance [Fable]
 - [x] 9.1 Look and palette pickers in settings
-- [ ] 9.2 Custom fourth palette and background photo, with a contrast warning
+- [x] 9.2 Custom fourth palette and background photo, with a contrast warning
 
 ## Phase 10: Finish and ship
 - [ ] 10.1 Keyboard, contrast and reduced-motion pass, plus idle memory

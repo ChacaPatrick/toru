@@ -14,7 +14,7 @@
 mod button;
 mod checkbox;
 mod chip;
-mod dialog;
+pub mod dialog;
 mod fill;
 mod flash;
 mod icons;
@@ -39,9 +39,9 @@ use gpui::{
 
 use crate::theme::Theme;
 
-#[cfg(test)]
-pub use button::SUB_OPACITY;
-pub use button::{BULK_HEIGHT as BULK_BUTTON_HEIGHT, Button, SMALL_HEIGHT as BUTTON_SMALL_HEIGHT};
+pub use button::{
+    BULK_HEIGHT as BULK_BUTTON_HEIGHT, Button, SMALL_HEIGHT as BUTTON_SMALL_HEIGHT, SUB_OPACITY,
+};
 pub use checkbox::SIZE as CHECKBOX_SIZE;
 pub use dialog::Dialog;
 pub use icons::Icon;

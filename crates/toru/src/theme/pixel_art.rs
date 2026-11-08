@@ -5,8 +5,8 @@ use gpui::FontWeight;
 use toru_core::settings::Look;
 
 use super::{
-    Border, Borders, Colors, DayDate, Fonts, Icons, Overlay, Palette, Radii, Shadows, Sizes,
-    Strings, Theme, TypeScale,
+    Border, Borders, CUSTOM_PALETTE, Colors, CustomPalette, DayDate, Fonts, Icons, Overlay,
+    Palette, Radii, Shadows, Sizes, Strings, Theme, TypeScale,
     css::{body, checker, display, hard_shadow, hex, hex_alpha, inset_shadow, mono},
 };
 
@@ -129,11 +129,55 @@ fn follow_palette(c: &mut Colors) {
     c.earlier_card_bg = c.surface;
 }
 
+/// PixelArt in the user's own colours. The look outlines everything in one ink; here that ink
+/// is the text colour, so the outlines show on the user's surfaces whatever their tone, and the
+/// hard drop shadows follow it. The inset bevels keep the look's own highlights.
+pub fn custom(palette: &CustomPalette) -> Theme {
+    let mut theme = base();
+    theme.palette = CUSTOM_PALETTE;
+    palette.apply(&mut theme.colors);
+    follow_palette(&mut theme.colors);
+    theme.colors.hair = palette.text;
+    let b = &mut theme.borders;
+    for border in [
+        &mut b.accent,
+        &mut b.hair,
+        &mut b.frame,
+        &mut b.button,
+        &mut b.card,
+        &mut b.input,
+        &mut b.chip,
+        &mut b.toggle,
+        &mut b.toast,
+        &mut b.pop,
+        &mut b.load,
+        &mut b.earlier_rule,
+    ] {
+        border.color = palette.text;
+    }
+    b.title_divider = b.hair;
+    let s = &mut theme.shadows;
+    for list in [
+        &mut s.accent,
+        &mut s.button,
+        &mut s.card,
+        &mut s.pop,
+        &mut s.shot,
+    ] {
+        for shadow in list.iter_mut().filter(|shadow| !shadow.inset) {
+            shadow.color = palette.text;
+        }
+    }
+    theme.overlay.edge.color = theme.colors.accent_bg;
+    theme
+}
+
 fn base() -> Theme {
     let ink = hex(0x0d0d18);
     Theme {
         look: Look::PixelArt,
         palette: 0,
+        background: None,
         colors: Colors {
             bg: hex(0x1b1b2f),
             surface: hex(0x2a2a45),

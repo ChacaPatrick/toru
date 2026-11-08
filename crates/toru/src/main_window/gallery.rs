@@ -1048,7 +1048,7 @@ impl Gallery {
                     plural(count, "capture"),
                     count - saved
                 ),
-                c.muted,
+                theme.window_muted(),
             ),
         };
         let titles = div()
@@ -1068,7 +1068,7 @@ impl Gallery {
                 div()
                     .min_w_0()
                     .type_style(theme, theme.type_scale.hint)
-                    .text_color(c.muted)
+                    .text_color(theme.window_muted())
                     .whitespace_nowrap()
                     .overflow_hidden()
                     .text_ellipsis()
@@ -1127,7 +1127,7 @@ impl Gallery {
                         .mt(px(SELECT_HINT_GAP))
                         .type_style(theme, hint_style)
                         .line_height(hint_style.size * HINT_LEADING)
-                        .text_color(c.muted)
+                        .text_color(theme.window_muted())
                         .whitespace_nowrap()
                         .overflow_hidden()
                         .text_ellipsis()
@@ -1331,7 +1331,7 @@ fn notice(
         .justify_center()
         .gap(px(10.))
         .bg(c.load_bg)
-        .text_color(c.muted)
+        .text_color(theme.window_muted())
         .border(border.width)
         .border_color(border.color)
         .when(border.dashed, |this| this.border_dashed())
@@ -1339,7 +1339,7 @@ fn notice(
         .type_style(theme, font)
         .line_height(font.natural_line_height(theme, cx))
         .whitespace_nowrap()
-        .children(icon.map(|icon| icon.render(theme, c.muted)))
+        .children(icon.map(|icon| icon.render(theme, theme.window_muted())))
         .child(text)
 }
 

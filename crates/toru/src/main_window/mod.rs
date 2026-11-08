@@ -8,11 +8,13 @@
 //! the retention setting (`retention`) at launch, at midnight and when the setting changes.
 
 mod actions;
+mod backdrop;
 mod bottom_bar;
 mod bulk_bar;
 mod captures;
 mod card;
 mod closing;
+mod custom_palette;
 mod delayed;
 mod gallery;
 mod history;
@@ -26,7 +28,7 @@ use std::{cell::Cell, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
 use gpui::{
     AnyWindowHandle, App, Context, DisplayId, Entity, FocusHandle, Focusable, KeyDownEvent, Pixels,
-    ScrollHandle, SharedString, Task, Window, div, prelude::*, px,
+    RenderImage, ScrollHandle, SharedString, Task, Window, div, prelude::*, px,
 };
 use gpui_kit::component::input::{InputEvent, InputState};
 use tiny_skia::Pixmap;
@@ -43,6 +45,8 @@ use crate::overlay;
 use crate::platform;
 use crate::theme::{ActiveTheme, ThemedText};
 use crate::ui::{Flash, FocusInView, Toast};
+use backdrop::Backdrop;
+use custom_palette::{BackgroundPicker, CustomEditor};
 use gallery::{Gallery, GalleryEvent};
 
 /// The window's title in the taskbar. The title bar Toru draws has its own (`MainWindow::title`).
@@ -113,6 +117,16 @@ pub struct MainWindow {
     quit_prompt: Option<usize>,
     /// The quit dialog's first action, focused when the dialog opens.
     dialog_focus: FocusHandle,
+    /// The custom palette editor, while it is open over the window.
+    custom_editor: Option<CustomEditor>,
+    /// The editor's file picker while it is open, one per window whatever the editor does.
+    background_picker: BackgroundPicker,
+    /// The theme's background photo, once asked for (`backdrop`).
+    backdrop: Option<Backdrop>,
+    /// The photo being read right now, so one change starts one read.
+    backdrop_loading: Option<PathBuf>,
+    /// Photos no longer shown, taken out of the GPU at the next frame.
+    stale_backdrops: Vec<Arc<RenderImage>>,
 }
 
 impl MainWindow {
@@ -237,6 +251,11 @@ impl MainWindow {
             has_tray: true,
             quit_prompt: None,
             dialog_focus: cx.focus_handle().tab_stop(true),
+            custom_editor: None,
+            background_picker: BackgroundPicker::default(),
+            backdrop: None,
+            backdrop_loading: None,
+            stale_backdrops: Vec::new(),
         }
     }
 
@@ -474,6 +493,7 @@ fn gallery_width(settings: &Settings, window: &Window) -> Pixels {
 
 impl Render for MainWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_backdrop(window, cx);
         let theme = cx.theme();
         let c = &theme.colors;
         let frame = div()
@@ -484,6 +504,8 @@ impl Render for MainWindow {
             .bg(c.bg)
             .text_color(c.text)
             .type_style(theme, theme.type_scale.body)
+            // First, so everything else paints over them.
+            .children(self.backdrop_layers(cx))
             .child(title_bar::title_bar(self.title(cx), window, cx));
         if let Some(editor) = &self.editor {
             return frame
@@ -531,6 +553,7 @@ impl Render for MainWindow {
             // Absolute, so showing it moves nothing (DESIGN.md §2).
             .children(self.toast.get().cloned())
             .children(self.retention_dialog(cx))
+            .children(self.custom_editor_view(window, cx))
             .children(
                 self.quit_prompt
                     .map(|unsaved| self.quit_dialog(unsaved, cx)),

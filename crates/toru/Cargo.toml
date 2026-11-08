@@ -16,6 +16,8 @@ toru-core = { path = "../toru-core" }
 # `xcap` re-exports the `image` crate, so Toru uses that rather than depending on it directly.
 xcap = "=0.9.8"
 clipboard-rs = "=0.3.5"
+# The system file picker for the custom palette's background photo (`docs/PLAN.md`).
+rfd = "0.18"
 tray-icon = "=0.26.1"
 
 [dev-dependencies]

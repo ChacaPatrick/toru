@@ -5,7 +5,8 @@
 //! hard-code a colour or size.
 
 pub mod contrast;
-mod css;
+pub mod css;
+pub mod custom;
 mod fonts;
 mod japandi;
 mod kit;
@@ -14,18 +15,26 @@ mod pixel_art;
 #[cfg(test)]
 mod test_support;
 
+use std::path::PathBuf;
+
 use gpui::{
     App, Background, BoxShadow, Font, FontWeight, Global, Hsla, Pixels, SharedString, Styled,
     TextRun, Window, font, px,
 };
-use toru_core::settings::{BUILT_IN_PALETTES, Look, PaletteChoice, Settings};
+use toru_core::settings::{BUILT_IN_PALETTES, Look, LookAppearance, PaletteChoice, Settings};
 
+pub use custom::CustomPalette;
 pub use fonts::install_fonts;
+
+/// `Theme::palette` when the custom palette is shown: one past the built-in ones.
+pub const CUSTOM_PALETTE: usize = BUILT_IN_PALETTES;
 
 pub struct Theme {
     pub look: Look,
-    /// Index into `Theme::palettes(look)`.
+    /// Index into `Theme::palettes(look)`, or `CUSTOM_PALETTE`.
     pub palette: usize,
+    /// The custom palette's background photo, drawn behind the main window under a scrim.
+    pub background: Option<PathBuf>,
     pub colors: Colors,
     pub borders: Borders,
     pub radii: Radii,
@@ -44,12 +53,21 @@ impl Theme {
     /// The theme for the look and palette chosen in `settings`.
     pub fn from_settings(settings: &Settings) -> Theme {
         let look = settings.look;
-        let palette = match settings.appearance(look).palette {
-            PaletteChoice::BuiltIn(index) => index,
-            // The custom slot arrives in Phase 9. Until then it shows the look's first palette.
-            PaletteChoice::Custom => 0,
-        };
-        Theme::new(look, palette)
+        let appearance = settings.appearance(look);
+        Theme::for_choice(look, appearance.palette, appearance)
+    }
+
+    /// The theme for `choice` in `look`; the custom palette reads its colours and photo from
+    /// `appearance`.
+    pub fn for_choice(look: Look, choice: PaletteChoice, appearance: &LookAppearance) -> Theme {
+        match choice {
+            PaletteChoice::BuiltIn(index) => Theme::new(look, index),
+            PaletteChoice::Custom => {
+                let mut theme = Theme::custom(look, &custom_palette(look, appearance));
+                theme.background = appearance.custom_background.clone();
+                theme
+            }
+        }
     }
 
     pub fn new(look: Look, palette: usize) -> Theme {
@@ -57,6 +75,30 @@ impl Theme {
             Look::Japandi => japandi::theme(palette),
             Look::PixelArt => pixel_art::theme(palette),
             Look::NeoBrutalism => neo_brutalism::theme(palette),
+        }
+    }
+
+    /// `look` in the user's own colours, without a background photo.
+    pub fn custom(look: Look, palette: &CustomPalette) -> Theme {
+        match look {
+            Look::Japandi => japandi::custom(palette),
+            Look::PixelArt => pixel_art::custom(palette),
+            Look::NeoBrutalism => neo_brutalism::custom(palette),
+        }
+    }
+
+    pub fn is_custom(&self) -> bool {
+        self.palette == CUSTOM_PALETTE
+    }
+
+    /// Muted text drawn straight on the window rather than on a surface: `muted`, or the text
+    /// colour while a background photo is behind it, since under the scrim a dark or light
+    /// picture can take `muted` below DESIGN.md §7's 4.5:1.
+    pub fn window_muted(&self) -> Hsla {
+        if self.background.is_some() {
+            self.colors.text
+        } else {
+            self.colors.muted
         }
     }
 
@@ -91,6 +133,27 @@ pub const SCRIM: f32 = 0.4;
 /// The backdrop behind a dialog, in a palette whose text colour is `text`.
 pub fn scrim(text: Hsla) -> Hsla {
     Hsla { a: SCRIM, ..text }
+}
+
+/// The custom colours `appearance` stores for `look`. Anything missing or malformed takes the
+/// look's first palette, so a theme can always be built from them.
+pub fn custom_palette(look: Look, appearance: &LookAppearance) -> CustomPalette {
+    let fallback = CustomPalette::from_theme(&Theme::new(look, 0));
+    CustomPalette::parse(&appearance.custom_palette, fallback)
+}
+
+/// How much of the background colour is laid over a background photo. Under it the picture
+/// still moves the window's colour towards black or white, so text drawn straight on the window
+/// is checked over both (`contrast::pairs`) and muted text there takes the text colour
+/// (`Theme::window_muted`).
+pub const BACKDROP_SCRIM: f32 = 0.8;
+
+/// The tint over a background photo, in a palette whose background is `bg`.
+pub fn backdrop_scrim(bg: Hsla) -> Hsla {
+    Hsla {
+        a: BACKDROP_SCRIM,
+        ..bg
+    }
 }
 
 /// Makes `theme` the active one and redraws every window with it.

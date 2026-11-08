@@ -34,8 +34,8 @@ const WINDOW_SIZE: (f32, f32) = (1280., 940.);
 /// Wide enough for three usable cards beside the open settings column; the toolbar wraps.
 const MIN_WINDOW_SIZE: (f32, f32) = (900., 480.);
 
-/// `toru [japandi|pixel_art|neo_brutalism] [palette] [editor]` opens the window in that look and
-/// palette, and straight in the editor if asked, so each can be checked against the mockups
+/// `toru [japandi|pixel_art|neo_brutalism] [palette|custom] [editor]` opens the window in that
+/// look and palette, and straight in the editor if asked, so each can be checked against the mockups
 /// without clicking through. It only changes what is shown, so the saved settings keep their own
 /// look until a look or palette is picked in settings, which saves what is shown.
 fn appearance_from_args(settings: &Settings) -> (Settings, bool) {
@@ -50,12 +50,17 @@ fn appearance_from_args(settings: &Settings) -> (Settings, bool) {
         Some("neo_brutalism") => Look::NeoBrutalism,
         _ => appearance.look,
     };
-    if let Some(palette) = args
-        .next()
-        .and_then(|arg| arg.parse().ok())
-        .filter(|palette| *palette < BUILT_IN_PALETTES)
-    {
-        appearance.appearance_mut(appearance.look).palette = PaletteChoice::BuiltIn(palette);
+    let palette = match args.next().as_deref() {
+        Some("custom") => Some(PaletteChoice::Custom),
+        Some(index) => index
+            .parse()
+            .ok()
+            .filter(|index| *index < BUILT_IN_PALETTES)
+            .map(PaletteChoice::BuiltIn),
+        None => None,
+    };
+    if let Some(palette) = palette {
+        appearance.appearance_mut(appearance.look).palette = palette;
     }
     (appearance, open_editor)
 }

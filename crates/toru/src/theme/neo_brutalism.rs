@@ -5,8 +5,8 @@ use gpui::FontWeight;
 use toru_core::settings::Look;
 
 use super::{
-    Border, Borders, Colors, DayDate, Fill, Fonts, Icons, Overlay, Palette, Radii, Shadows, Sizes,
-    Strings, Theme, TypeScale,
+    Border, Borders, CUSTOM_PALETTE, Colors, CustomPalette, DayDate, Fill, Fonts, Icons, Overlay,
+    Palette, Radii, Shadows, Sizes, Strings, Theme, TypeScale,
     css::{body, display, grid, hard_shadow, hex, hex_alpha, mono},
 };
 
@@ -135,6 +135,53 @@ pub fn theme(palette: usize) -> Theme {
     theme
 }
 
+/// NeoBrutalism in the user's own colours: the derived colours, with the look's heavy borders
+/// and hard shadows in the text colour, as the Black / acid / white palette draws them in white.
+pub fn custom(palette: &CustomPalette) -> Theme {
+    let mut theme = base();
+    theme.palette = CUSTOM_PALETTE;
+    palette.apply(&mut theme.colors);
+    let c = &mut theme.colors;
+    c.label = c.text;
+    c.hair = c.text;
+    c.tag_bg = c.text;
+    c.tag_text = c.bg;
+    let b = &mut theme.borders;
+    for border in [
+        &mut b.accent,
+        &mut b.hair,
+        &mut b.frame,
+        &mut b.button,
+        &mut b.card,
+        &mut b.input,
+        &mut b.chip,
+        &mut b.toggle,
+        &mut b.toast,
+        &mut b.pop,
+        &mut b.load,
+        &mut b.earlier_rule,
+        &mut b.thumb,
+        &mut b.title_divider,
+    ] {
+        border.color = palette.text;
+    }
+    let s = &mut theme.shadows;
+    for list in [
+        &mut s.accent,
+        &mut s.button,
+        &mut s.card,
+        &mut s.pop,
+        &mut s.shot,
+    ] {
+        for shadow in list.iter_mut() {
+            shadow.color = palette.text;
+        }
+    }
+    theme.overlay.edge_halo = palette.text;
+    theme.overlay.loupe.color = palette.text;
+    theme
+}
+
 fn base() -> Theme {
     let black = hex(0x000000);
     let white = hex(0xffffff);
@@ -142,6 +189,7 @@ fn base() -> Theme {
     Theme {
         look: Look::NeoBrutalism,
         palette: 0,
+        background: None,
         colors: Colors {
             bg: cream,
             surface: white,

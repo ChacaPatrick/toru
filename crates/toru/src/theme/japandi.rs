@@ -4,8 +4,8 @@ use gpui::{FontWeight, Hsla, px};
 use toru_core::settings::Look;
 
 use super::{
-    Border, Borders, Colors, DayDate, Fill, Fonts, Icons, Overlay, Palette, Radii, Shadows, Sizes,
-    Strings, Theme, TypeScale,
+    Border, Borders, CUSTOM_PALETTE, Colors, CustomPalette, DayDate, Fill, Fonts, Icons, Overlay,
+    Palette, Radii, Shadows, Sizes, Strings, Theme, TypeScale,
     css::{body, display, gradient, hex, hex_alpha, mono, soft_shadow},
 };
 
@@ -104,11 +104,38 @@ fn follow_palette(c: &mut Colors) {
     c.earlier_card_bg = c.surface;
 }
 
+/// Japandi in the user's own colours: the derived colours, then this look's palette rules, with
+/// every hairline border in the derived hairline and every control edge in the stronger line.
+pub fn custom(palette: &CustomPalette) -> Theme {
+    let mut theme = base();
+    theme.palette = CUSTOM_PALETTE;
+    palette.apply(&mut theme.colors);
+    follow_palette(&mut theme.colors);
+    let b = &mut theme.borders;
+    for border in [&mut b.hair, &mut b.card, &mut b.pop, &mut b.earlier_rule] {
+        border.color = palette.hair();
+    }
+    for border in [
+        &mut b.frame,
+        &mut b.button,
+        &mut b.input,
+        &mut b.chip,
+        &mut b.toggle,
+        &mut b.load,
+    ] {
+        border.color = palette.line();
+    }
+    b.accent.color = palette.accent;
+    b.title_divider = b.hair;
+    theme
+}
+
 fn base() -> Theme {
     let shadow_ink = 0x3c321e; // rgba(60,50,30,…)
     Theme {
         look: Look::Japandi,
         palette: 0,
+        background: None,
         colors: Colors {
             bg: hex(0xefe9df),
             surface: hex(0xfaf7f1),
