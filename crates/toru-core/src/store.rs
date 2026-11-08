@@ -18,6 +18,7 @@ use rusqlite::types::Type;
 use rusqlite::{Connection, Params, Row, params};
 
 use crate::capture::{Capture, CaptureMode};
+use crate::settings::Settings;
 use crate::time::{LocalDate, LocalDateTime};
 
 /// Ends the name of a file that `add_capture` hasn't finished with yet.
@@ -38,6 +39,7 @@ const SCHEMA: &str = "
         saved_path TEXT
     );
     CREATE INDEX IF NOT EXISTS captures_by_date ON captures (taken_date);
+    CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 ";
 
 #[derive(Debug)]
@@ -287,6 +289,36 @@ impl Store {
         )
     }
 
+    /// The saved settings. Anything missing or unreadable keeps its default.
+    pub fn load_settings(&self) -> Result<Settings> {
+        let db = self.db();
+        let mut statement = db.prepare("SELECT key, value FROM settings")?;
+        let mut rows = statement.query([])?;
+        let mut settings = Settings::default();
+        while let Some(row) = rows.next()? {
+            // A value that isn't valid text is one more malformed value, not a reason to fail.
+            if let (Ok(key), Ok(value)) = (row.get_ref(0)?.as_str(), row.get_ref(1)?.as_str()) {
+                settings.apply_stored(key, value);
+            }
+        }
+        Ok(settings)
+    }
+
+    /// Writes every setting, all or nothing.
+    pub fn save_settings(&self, settings: &Settings) -> Result<()> {
+        let values = settings.stored_values()?;
+        let mut db = self.db();
+        let transaction = db.transaction()?;
+        for (key, value) in values {
+            transaction.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+                params![key, value],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     // A panic can't leave the connection mid-change, since an open transaction rolls back when
     // dropped, so a poisoned lock is safe to take.
     fn db(&self) -> MutexGuard<'_, Connection> {
@@ -415,7 +447,7 @@ fn write_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 // Refused rather than stored lossily, which would leave the record pointing at another file.
-fn path_text(path: &Path) -> Result<&str> {
+pub(crate) fn path_text(path: &Path) -> Result<&str> {
     path.to_str().ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidInput, "path is not valid Unicode").into()
     })
@@ -433,7 +465,7 @@ fn date_from_number(number: i64) -> LocalDate {
     }
 }
 
-fn mode_text(mode: CaptureMode) -> &'static str {
+pub(crate) fn mode_text(mode: CaptureMode) -> &'static str {
     match mode {
         CaptureMode::Region => "region",
         CaptureMode::Window => "window",
@@ -441,19 +473,24 @@ fn mode_text(mode: CaptureMode) -> &'static str {
     }
 }
 
+pub(crate) fn mode_from_text(text: &str) -> Option<CaptureMode> {
+    match text {
+        "region" => Some(CaptureMode::Region),
+        "window" => Some(CaptureMode::Window),
+        "full_screen" => Some(CaptureMode::FullScreen),
+        _ => None,
+    }
+}
+
 fn stored_capture(row: &Row) -> rusqlite::Result<StoredCapture> {
-    let mode = match row.get_ref(2)?.as_str()? {
-        "region" => CaptureMode::Region,
-        "window" => CaptureMode::Window,
-        "full_screen" => CaptureMode::FullScreen,
-        other => {
-            let message = format!("unknown capture mode {other:?}");
-            return Err(rusqlite::Error::FromSqlConversionFailure(
-                2,
-                Type::Text,
-                message.into(),
-            ));
-        }
+    let text = row.get_ref(2)?.as_str()?;
+    let Some(mode) = mode_from_text(text) else {
+        let message = format!("unknown capture mode {text:?}");
+        return Err(rusqlite::Error::FromSqlConversionFailure(
+            2,
+            Type::Text,
+            message.into(),
+        ));
     };
     let minutes: i64 = row.get(6)?;
     let saved_path: Option<String> = row.get(7)?;
@@ -486,6 +523,7 @@ mod tests {
 
     use super::*;
     use crate::naming::{DEFAULT_PATTERN, next_free_name};
+    use crate::settings::tests::every_field_changed;
 
     const TODAY: LocalDate = date(2026, 11, 8);
     const THUMB: u32 = 2;
@@ -1230,6 +1268,139 @@ mod tests {
         expected.sort();
         assert_eq!(dir.temp_files(), expected);
         assert_eq!(store.session_captures(session).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_new_store_loads_the_default_settings() {
+        let dir = TestDir::new();
+        assert_eq!(dir.open().load_settings().unwrap(), Settings::default());
+    }
+
+    #[test]
+    fn a_database_from_before_settings_gets_the_table_on_open() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        store.db().execute_batch("DROP TABLE settings").unwrap();
+        drop(store);
+        assert_eq!(dir.open().load_settings().unwrap(), Settings::default());
+    }
+
+    #[test]
+    fn settings_survive_reopening() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        store.save_settings(&every_field_changed()).unwrap();
+        drop(store);
+        assert_eq!(dir.open().load_settings().unwrap(), every_field_changed());
+    }
+
+    #[test]
+    fn saving_settings_again_replaces_them() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        store.save_settings(&every_field_changed()).unwrap();
+        let cleared = Settings {
+            region_shortcut: None,
+            save_folder: None,
+            ..Settings::default()
+        };
+        store.save_settings(&cleared).unwrap();
+        assert_eq!(store.load_settings().unwrap(), cleared);
+    }
+
+    #[test]
+    fn a_missing_setting_takes_its_default_and_the_others_load() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        store.save_settings(&every_field_changed()).unwrap();
+        store
+            .db()
+            .execute("DELETE FROM settings WHERE key = 'look'", [])
+            .unwrap();
+        assert_eq!(
+            store.load_settings().unwrap(),
+            Settings {
+                look: Settings::default().look,
+                ..every_field_changed()
+            }
+        );
+    }
+
+    #[test]
+    fn a_malformed_setting_takes_its_default_and_the_others_load() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        store.save_settings(&every_field_changed()).unwrap();
+        store
+            .db()
+            .execute("UPDATE settings SET value = 'huh' WHERE key = 'format'", [])
+            .unwrap();
+        assert_eq!(
+            store.load_settings().unwrap(),
+            Settings {
+                format: Settings::default().format,
+                ..every_field_changed()
+            }
+        );
+    }
+
+    #[test]
+    fn stored_values_that_are_not_text_do_not_fail_the_load() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        store.save_settings(&every_field_changed()).unwrap();
+        store
+            .db()
+            .execute_batch(
+                "UPDATE settings SET value = x'00ff' WHERE key = 'on_close';
+                 UPDATE settings SET value = CAST(x'ff' AS TEXT) WHERE key = 'look';
+                 INSERT INTO settings (key, value) VALUES (x'ff', 'x');",
+            )
+            .unwrap();
+        let defaults = Settings::default();
+        assert_eq!(
+            store.load_settings().unwrap(),
+            Settings {
+                on_close: defaults.on_close,
+                look: defaults.look,
+                ..every_field_changed()
+            }
+        );
+    }
+
+    #[test]
+    fn a_failed_settings_save_changes_nothing() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        store
+            .db()
+            .execute_batch(
+                "CREATE TRIGGER refuse BEFORE INSERT ON settings
+                    WHEN NEW.key = 'settings_collapsed'
+                    BEGIN SELECT RAISE(ABORT, 'refused'); END",
+            )
+            .unwrap();
+
+        let result = store.save_settings(&every_field_changed());
+        assert!(matches!(result, Err(StoreError::Database(_))));
+        assert_eq!(store.load_settings().unwrap(), Settings::default());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_that_is_not_valid_unicode_is_refused() {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+
+        let dir = TestDir::new();
+        let store = dir.open();
+        let settings = Settings {
+            save_folder: Some(PathBuf::from(OsString::from_wide(&[0xD800]))),
+            ..every_field_changed()
+        };
+        let result = store.save_settings(&settings);
+        assert!(matches!(result, Err(StoreError::Io(_))));
+        assert_eq!(store.load_settings().unwrap(), Settings::default());
     }
 
     #[test]

@@ -2,5 +2,6 @@
 
 pub mod capture;
 pub mod naming;
+pub mod settings;
 pub mod store;
 pub mod time;

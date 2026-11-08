@@ -22,7 +22,7 @@ Results go in `docs/spikes.md`.
 ## Phase 2: Core logic, no UI
 - [x] 2.1 Capture records and naming with `_2`/`_3` **[parallel with 2.3]**
 - [x] 2.2 Temp storage and SQLite history
-- [ ] 2.3 Saved settings **[parallel with 2.1]**
+- [x] 2.3 Saved settings **[parallel with 2.1]**
 
 ## Phase 3: Look and controls [Fable]
 - [ ] 3.1 Theme loader, bundled fonts, and Japandi with its 3 palettes
@@ -46,7 +46,7 @@ Results go in `docs/spikes.md`.
 
 ## Phase 6: Tray and shortcuts
 - [ ] 6.1 Tray, keep running, On close options, and a second launch showing the running app
-- [ ] 6.2 Rebindable shortcuts and conflict messages **[Fable for the dialog]**
+- [ ] 6.2 Rebindable shortcuts, including per-display shortcuts and their setting, and conflict messages **[Fable for the dialog]**
 
 ## Phase 7: History
 - [ ] 7.1 Load a day at a time, plus the midnight reset
