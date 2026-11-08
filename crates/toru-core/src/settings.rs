@@ -21,6 +21,10 @@ pub enum SaveFormat {
 }
 
 impl SaveFormat {
+    pub fn extension(self) -> &'static str {
+        self.as_stored()
+    }
+
     fn as_stored(self) -> &'static str {
         match self {
             SaveFormat::Png => "png",

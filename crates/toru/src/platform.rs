@@ -1,7 +1,8 @@
 //! The little the app needs from the operating system that GPUI 0.3.11 doesn't offer: restoring
-//! a maximized window, a display's size in physical pixels, the local time, the app-data folder
-//! and keeping Toru's own windows out of a capture. Windows is done here; the other platforms get
-//! the fallbacks at the bottom until they are.
+//! a maximized window, a display's size in physical pixels, the local time, the app-data and
+//! default save folders, showing a file in the file manager and keeping Toru's own windows out of
+//! a capture. Windows is done here; the other platforms get the fallbacks at the bottom until
+//! they are.
 
 use std::{path::PathBuf, time::Duration};
 
@@ -11,8 +12,28 @@ use toru_core::time::LocalDateTime;
 
 #[cfg(windows)]
 mod windows {
+    use std::{
+        ffi::OsString,
+        io,
+        os::windows::{ffi::OsStringExt, process::CommandExt},
+        path::{Path, PathBuf},
+        process::Command,
+    };
+
     use gpui::{App, PlatformDisplay, Window};
     use toru_core::time::{LocalDate, LocalDateTime};
+
+    /// `GUID`.
+    #[repr(C)]
+    struct Guid(u32, u16, u16, [u8; 8]);
+
+    /// `FOLDERID_Pictures`.
+    const PICTURES: Guid = Guid(
+        0x33E2_8130,
+        0x4E1E,
+        0x4676,
+        [0x83, 0x5A, 0x98, 0x39, 0x5C, 0x3B, 0xC3, 0xBB],
+    );
 
     #[repr(C)]
     struct Rect {
@@ -69,6 +90,63 @@ mod windows {
     unsafe extern "system" {
         fn GetCurrentThreadId() -> u32;
         fn GetLocalTime(time: *mut SystemTime);
+    }
+
+    #[link(name = "shell32")]
+    unsafe extern "system" {
+        fn SHGetKnownFolderPath(
+            id: *const Guid,
+            flags: u32,
+            token: isize,
+            path: *mut *mut u16,
+        ) -> i32;
+    }
+
+    #[link(name = "ole32")]
+    unsafe extern "system" {
+        fn CoTaskMemFree(memory: *mut std::ffi::c_void);
+    }
+
+    /// Where the Pictures folder really is, which may have been moved or redirected to OneDrive.
+    fn pictures_folder() -> Option<PathBuf> {
+        let mut text = std::ptr::null_mut();
+        // SAFETY: `PICTURES` and `text` outlive the call.
+        let result = unsafe { SHGetKnownFolderPath(&PICTURES, 0, 0, &mut text) };
+        // SAFETY: on success `text` is a NUL-terminated string, and it is read before being freed.
+        let folder = (result == 0).then(|| unsafe {
+            let length = (0..).take_while(|&i| *text.add(i) != 0).count();
+            PathBuf::from(OsString::from_wide(std::slice::from_raw_parts(
+                text, length,
+            )))
+        });
+        // SAFETY: Windows allocated `text` for the caller to free, even on failure.
+        unsafe { CoTaskMemFree(text.cast()) };
+        folder
+    }
+
+    pub fn default_save_folder() -> Option<PathBuf> {
+        let pictures = pictures_folder().or_else(|| {
+            std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join("Pictures"))
+        })?;
+        Some(pictures.join("Screenshots"))
+    }
+
+    /// Explorer's own syntax for opening a folder with a file selected.
+    pub(super) fn select_argument(path: &Path) -> String {
+        format!("/select,\"{}\"", path.display())
+    }
+
+    /// Opens Explorer on the file's folder with the file selected, or just on the folder if the
+    /// file has gone, since `/select` on a missing file opens Documents instead.
+    pub fn reveal_file(path: &Path) -> io::Result<()> {
+        let mut explorer = Command::new("explorer");
+        if path.is_file() {
+            explorer.raw_arg(select_argument(path));
+        } else {
+            let folder = path.parent().filter(|folder| folder.is_dir());
+            explorer.arg(folder.ok_or(io::ErrorKind::NotFound)?);
+        }
+        explorer.spawn().map(drop)
     }
 
     /// What `find_maximized` looks for and what it found.
@@ -199,10 +277,24 @@ mod windows {
 pub const EXCLUDE_SETTLE: Duration = Duration::from_millis(50);
 
 #[cfg(windows)]
-pub use windows::{exclude_windows_from_capture, local_now, restore_window, show_startup_error};
+pub use windows::{
+    default_save_folder, exclude_windows_from_capture, local_now, restore_window, reveal_file,
+    show_startup_error,
+};
 
 #[cfg(not(windows))]
 pub fn restore_window(_window: &gpui::Window, _cx: &gpui::App) {}
+
+#[cfg(not(windows))]
+pub fn default_save_folder() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join("Pictures").join("Screenshots"))
+}
+
+#[cfg(not(windows))]
+pub fn reveal_file(_path: &std::path::Path) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
 
 #[cfg(not(windows))]
 pub fn exclude_windows_from_capture(_exclude: bool) {}
@@ -243,6 +335,8 @@ pub fn display_pixels(display: &dyn PlatformDisplay) -> (u32, u32) {
 
 #[cfg(all(test, windows))]
 mod tests {
+    use std::path::Path;
+
     use super::*;
 
     #[test]
@@ -252,5 +346,20 @@ mod tests {
         assert!((1..=12).contains(&now.date.month));
         assert!((1..=31).contains(&now.date.day));
         assert!(now.hour < 24 && now.minute < 60);
+    }
+
+    #[test]
+    fn the_default_save_folder_is_screenshots_under_an_absolute_pictures_folder() {
+        let folder = default_save_folder().unwrap();
+        assert!(folder.is_absolute(), "{folder:?}");
+        assert!(folder.ends_with("Screenshots"), "{folder:?}");
+    }
+
+    #[test]
+    fn explorer_selects_a_path_with_spaces_and_commas() {
+        assert_eq!(
+            windows::select_argument(Path::new(r"C:\My, Pictures\a shot.png")),
+            r#"/select,"C:\My, Pictures\a shot.png""#
+        );
     }
 }

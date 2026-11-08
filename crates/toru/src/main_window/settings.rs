@@ -5,7 +5,7 @@
 //! short, and follows keyboard focus so a focused control always shows with its ring. Its hide
 //! button, at the right of the first label, collapses it; the toolbar's gear brings it back.
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use gpui::{App, Context, Div, ElementId, SharedString, Window, div, point, prelude::*, px};
 use gpui_kit::component::scroll::ScrollableElement;
@@ -14,7 +14,7 @@ use toru_core::{
     settings::{OnClose, SaveFormat, Settings},
 };
 
-use super::{MainWindow, act, mock};
+use super::{MainWindow, act};
 use crate::theme::{ActiveTheme, Theme, ThemedText};
 use crate::ui::{
     BUTTON_SMALL_HEIGHT, Button, Icon, MIN_TARGET, RadioGroup, Segmented, TextField, Toggle,
@@ -157,7 +157,7 @@ pub fn settings_column(
                 div()
                     .flex()
                     .gap(px(8.))
-                    .child(folder_field(theme, settings))
+                    .child(folder_field(theme, this.save_folder()))
                     // The folder picker arrives in 5.6.
                     .child(
                         Button::new("change-folder", "Change")
@@ -354,10 +354,10 @@ fn hint(theme: &Theme, text: impl Into<SharedString>) -> Div {
 }
 
 /// `.field`: the save folder as one line of the field font, clipped at the right.
-fn folder_field(theme: &Theme, settings: &Settings) -> Div {
+fn folder_field(theme: &Theme, folder: Option<PathBuf>) -> Div {
     let border = theme.borders.input;
-    let path = settings.save_folder.as_deref().map_or_else(
-        || mock::SAVE_FOLDER.to_string(),
+    let path = folder.map_or_else(
+        || "Pictures folder not found".to_string(),
         |path| path.display().to_string(),
     );
     div()

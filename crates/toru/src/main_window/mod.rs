@@ -1,8 +1,9 @@
 //! The main window (DESIGN.md §2): title bar, capture toolbar, the body with the gallery and the
 //! settings column, then the bottom bar, with the toast above it. This session's captures are
-//! real (`captures`); the earlier groups are mock until 7.1. Each choice that is a setting reads
-//! and writes `Settings`, every write going through `change_settings` to the store.
+//! real (`captures`, `actions`); the earlier groups are mock until 7.1. Each choice that is a
+//! setting reads and writes `Settings`, every write going through `change_settings` to the store.
 
+mod actions;
 mod bottom_bar;
 mod captures;
 mod card;
@@ -12,7 +13,7 @@ mod settings;
 mod title_bar;
 mod toolbar;
 
-use std::{sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use gpui::{
     AnyWindowHandle, App, Context, DisplayId, Entity, FocusHandle, Pixels, ScrollHandle,
@@ -67,6 +68,8 @@ pub struct MainWindow {
     queue: Option<Task<()>>,
     /// A full-screen capture is under way, so a second press doesn't overlap it.
     capturing: bool,
+    /// `Pictures\Screenshots`, where captures go unless the Save to setting says otherwise.
+    default_save_folder: Option<PathBuf>,
 }
 
 impl MainWindow {
@@ -99,10 +102,12 @@ impl MainWindow {
         });
         cx.subscribe(&gallery, |this, _, event: &GalleryEvent, cx| match event {
             GalleryEvent::Copied => this.report_copy(Ok(()), cx),
-            GalleryEvent::Copy { card, image } => this.copy_card(*card, image.clone(), cx),
+            GalleryEvent::Copy { card, capture } => this.copy_card(*card, *capture, cx),
             GalleryEvent::Renamed { capture, name } => {
                 this.rename_capture(*capture, name.clone(), cx)
             }
+            GalleryEvent::Save { capture } => this.save_card(*capture, cx),
+            GalleryEvent::OpenFolder { file } => this.open_folder(file.clone(), cx),
         })
         .detach();
         let pattern =
@@ -135,6 +140,7 @@ impl MainWindow {
             window: window.window_handle(),
             queue: None,
             capturing: false,
+            default_save_folder: platform::default_save_folder(),
         }
     }
 

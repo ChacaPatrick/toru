@@ -15,9 +15,10 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use image::{ImageFormat, RgbaImage, imageops};
 use rusqlite::types::Type;
-use rusqlite::{Connection, Params, Row, params};
+use rusqlite::{Connection, OptionalExtension, Params, Row, params};
 
 use crate::capture::{Capture, CaptureMode};
+use crate::naming::{NameError, fold_case, validate_name};
 use crate::settings::Settings;
 use crate::time::{LocalDate, LocalDateTime};
 
@@ -53,6 +54,16 @@ pub enum StoreError {
     NotFound,
     /// The pixels are empty or differ from the record's size, or the thumbnail width is zero.
     BadDimensions,
+    /// That name can't be a file name.
+    InvalidName(NameError),
+    /// Another capture from the same day already has that name.
+    NameTaken,
+}
+
+impl From<NameError> for StoreError {
+    fn from(error: NameError) -> Self {
+        StoreError::InvalidName(error)
+    }
 }
 
 impl From<rusqlite::Error> for StoreError {
@@ -92,7 +103,9 @@ pub struct StoredCapture {
 pub struct Store {
     db: Mutex<Connection>,
     temp_dir: PathBuf,
+    copies_dir: PathBuf,
     next_partial: AtomicU64,
+    next_copy: AtomicU64,
     // Last, so the database has closed by the time another process can get in.
     _instance_lock: File,
 }
@@ -114,10 +127,18 @@ impl Store {
         })?;
         let db = Connection::open(app_data.join("history.sqlite3"))?;
         db.execute_batch(SCHEMA)?;
+        let copies_dir = app_data.join("copies");
+        let latest_copy = latest_copy_folder(&copies_dir);
+        // The newest set may still be on the clipboard, waiting to be pasted.
+        if let Some(number) = latest_copy {
+            remove_copy_folders_except(&copies_dir, &copies_dir.join(number.to_string()));
+        }
         let store = Store {
             db: Mutex::new(db),
             temp_dir,
+            copies_dir,
             next_partial: AtomicU64::new(0),
+            next_copy: AtomicU64::new(latest_copy.map_or(0, |number| number + 1)),
             _instance_lock: instance_lock,
         };
         store.remove_stray_files()?;
@@ -197,6 +218,34 @@ impl Store {
         self.temp_dir.join(format!("{}.thumb.png", id.0))
     }
 
+    /// A new empty folder for one Copy all's files. It lasts until a later set replaces it, even
+    /// across restarts, since a paste needs its files long after the copy.
+    pub fn new_copy_folder(&self) -> Result<PathBuf> {
+        let number = self.next_copy.fetch_add(1, Ordering::Relaxed);
+        let folder = self.copies_dir.join(number.to_string());
+        fs::create_dir_all(&folder)?;
+        Ok(folder)
+    }
+
+    /// Removes every Copy all folder but `keep`, once `keep`'s set has replaced them on the
+    /// clipboard. Anything that can't be removed goes with the next set.
+    pub fn remove_other_copy_folders(&self, keep: &Path) {
+        remove_copy_folders_except(&self.copies_dir, keep);
+    }
+
+    /// Where the capture's full image is now: the file it was saved to, or else its temp copy.
+    pub fn full_image_path(&self, id: CaptureId) -> Result<PathBuf> {
+        let saved = self.capture(id)?.saved_path;
+        Ok(saved.unwrap_or_else(|| self.image_path(id)))
+    }
+
+    pub fn capture(&self, id: CaptureId) -> Result<Capture> {
+        let found = self.select("id = ?1", [id.0])?.pop();
+        found
+            .map(|stored| stored.capture)
+            .ok_or(StoreError::NotFound)
+    }
+
     /// The session's captures, newest first.
     pub fn session_captures(&self, session: SessionId) -> Result<Vec<StoredCapture>> {
         self.select("session = ?1", [session.0])
@@ -256,15 +305,33 @@ impl Store {
         Ok(())
     }
 
-    /// Changes the capture's name in the record. A saved file keeps its own name.
+    /// Changes the capture's name in the record, if it can be a file name and no other capture
+    /// from that day has it. A saved file keeps its own name: it is the user's, and may have been
+    /// moved or be in use.
     pub fn rename(&self, id: CaptureId, name: &str) -> Result<()> {
-        let changed = self.db().execute(
+        validate_name(name)?;
+        // One lock around the check and the change, so two renames can't both take a name.
+        let db = self.db();
+        let date: i64 = db
+            .query_row(
+                "SELECT taken_date FROM captures WHERE id = ?1",
+                [id.0],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound)?;
+        let wanted = fold_case(name);
+        let mut others =
+            db.prepare("SELECT name FROM captures WHERE taken_date = ?1 AND id <> ?2")?;
+        for other in others.query_map([date, id.0], |row| row.get::<_, String>(0))? {
+            if fold_case(&other?) == wanted {
+                return Err(StoreError::NameTaken);
+            }
+        }
+        db.execute(
             "UPDATE captures SET name = ?1 WHERE id = ?2",
             params![name, id.0],
         )?;
-        if changed == 0 {
-            return Err(StoreError::NotFound);
-        }
         Ok(())
     }
 
@@ -417,6 +484,27 @@ impl Store {
             }
         }
         Ok(())
+    }
+}
+
+/// The highest number among the Copy all folders, which is the set made last.
+fn latest_copy_folder(copies_dir: &Path) -> Option<u64> {
+    fs::read_dir(copies_dir)
+        .ok()?
+        .flatten()
+        .filter_map(|entry| entry.file_name().to_str()?.parse().ok())
+        .max()
+}
+
+// Failures are ignored: the next sweep tries again.
+fn remove_copy_folders_except(copies_dir: &Path, keep: &Path) {
+    let Ok(entries) = fs::read_dir(copies_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.path() != keep {
+            let _ = fs::remove_dir_all(entry.path());
+        }
     }
 }
 
@@ -1023,6 +1111,119 @@ mod tests {
             names(&store.session_captures(session).unwrap()),
             ["new name", "keep"]
         );
+    }
+
+    #[test]
+    fn rename_refuses_a_name_another_capture_that_day_has() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        let session = store.new_session().unwrap();
+        add(&store, session, "Taken", TODAY, (9, 0));
+        let id = add(&store, session, "mine", TODAY, (10, 0));
+
+        for name in ["Taken", "TAKEN", "taken"] {
+            assert!(matches!(store.rename(id, name), Err(StoreError::NameTaken)));
+        }
+        assert_eq!(store.capture(id).unwrap().name, "mine");
+    }
+
+    #[test]
+    fn rename_allows_a_name_used_on_another_day_and_its_own_name_in_a_new_case() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        let session = store.new_session().unwrap();
+        add(&store, session, "shot", date(2026, 11, 7), (9, 0));
+        let id = add(&store, session, "mine", TODAY, (10, 0));
+
+        store.rename(id, "shot").unwrap();
+        store.rename(id, "SHOT").unwrap();
+        assert_eq!(store.capture(id).unwrap().name, "SHOT");
+    }
+
+    #[test]
+    fn rename_refuses_what_cannot_be_a_file_name() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "mine", TODAY, (10, 0));
+
+        for name in ["", "a:b", "ends with a dot.", "con"] {
+            assert!(matches!(
+                store.rename(id, name),
+                Err(StoreError::InvalidName(_))
+            ));
+        }
+        assert_eq!(store.capture(id).unwrap().name, "mine");
+    }
+
+    #[test]
+    fn renaming_a_saved_capture_leaves_its_file_alone() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "old", TODAY, (10, 0));
+        let path = saved_copy(&store, id, &dir, "old.png");
+
+        store.rename(id, "new").unwrap();
+
+        let capture = store.capture(id).unwrap();
+        assert_eq!(capture.name, "new");
+        assert_eq!(capture.saved_path, Some(path.clone()));
+        assert_eq!(fs::read(path).unwrap(), b"the user's file");
+    }
+
+    #[test]
+    fn open_keeps_only_the_latest_copy_folder_for_a_paste_after_a_restart() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        let older = store.new_copy_folder().unwrap();
+        let latest = store.new_copy_folder().unwrap();
+        fs::write(latest.join("shot.png"), b"copied").unwrap();
+        drop(store);
+
+        let store = dir.open();
+        assert!(!older.exists());
+        assert_eq!(fs::read(latest.join("shot.png")).unwrap(), b"copied");
+
+        let next = store.new_copy_folder().unwrap();
+        assert_ne!(next, latest, "a new set must not land in the kept one");
+    }
+
+    #[test]
+    fn a_later_copy_folder_replaces_the_one_kept_from_the_last_run() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        let kept = store.new_copy_folder().unwrap();
+        drop(store);
+
+        let store = dir.open();
+        let next = store.new_copy_folder().unwrap();
+        store.remove_other_copy_folders(&next);
+        assert!(!kept.exists());
+        assert!(next.is_dir());
+    }
+
+    #[test]
+    fn open_without_copy_folders_starts_numbering_them_at_zero() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        assert!(store.new_copy_folder().unwrap().ends_with("0"));
+    }
+
+    #[test]
+    fn the_full_image_is_the_saved_file_once_there_is_one() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot", TODAY, (9, 0));
+        assert_eq!(store.full_image_path(id).unwrap(), store.image_path(id));
+
+        let path = saved_copy(&store, id, &dir, "shot.png");
+        assert_eq!(store.full_image_path(id).unwrap(), path);
+        assert!(matches!(
+            store.full_image_path(CaptureId(42)),
+            Err(StoreError::NotFound)
+        ));
     }
 
     #[test]

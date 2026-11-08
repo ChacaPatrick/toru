@@ -1,6 +1,6 @@
 //! `.bottom` (DESIGN.md §2): this session's counts, then Clear unsaved, Copy all and Save all,
-//! which skips what is already saved. The actions are mock until 5.5; the counts are real.
-//! Select mode's bulk bar (4.5) takes this bar's place while anything is selected.
+//! which skips what is already saved. Select mode's bulk bar (4.5) takes this bar's place while
+//! anything is selected.
 
 use gpui::{Context, Div, div, prelude::*, px};
 
@@ -42,15 +42,18 @@ pub fn bottom_bar(this: &MainWindow, cx: &Context<MainWindow>) -> Div {
                 .flex_none()
                 .flex()
                 .gap(px(8.))
-                .child(Button::new("clear-unsaved", "Clear unsaved").on_click(|_, _| {}))
+                .child(
+                    Button::new("clear-unsaved", "Clear unsaved")
+                        .on_click(act(cx, |this, cx| this.clear_unsaved(cx))),
+                )
                 .child(
                     Button::new("copy-all", "Copy all")
-                        .on_click(act(cx, |this, cx| this.report_copy(Ok(()), cx))),
+                        .on_click(act(cx, |this, cx| this.copy_all(cx))),
                 )
                 .child(
                     Button::new("save-all", format!("Save all ({unsaved} new)"))
                         .primary()
-                        .on_click(|_, _| {}),
+                        .on_click(act(cx, |this, cx| this.save_all(cx))),
                 ),
         )
 }

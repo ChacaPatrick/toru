@@ -146,6 +146,7 @@ pub fn render(
     let id = card.id;
     let copy = act(cx, move |this, cx| this.copy(id, cx));
     let make_current = act(cx, move |this, cx| this.set_current(id, cx));
+    let save_or_open = act(cx, move |this, cx| this.save_or_open(id, cx));
     let rename = {
         let name = card.name.clone();
         move |window: &mut Window, cx: &mut gpui::App| {
@@ -170,12 +171,11 @@ pub fn render(
     .item("Delete", |_, _| {})
     .align_right();
 
-    let second = if saved {
-        Button::new("open-folder", "Open folder").small()
-    } else {
-        Button::new("save", "Save").small().primary()
-    }
-    .tab_stop(active);
+    // Save and Open folder share an id, so keyboard focus stays on the button when a save finishes.
+    let second = Button::new("save-or-open", if saved { "Open folder" } else { "Save" })
+        .small()
+        .tab_stop(active);
+    let second = if saved { second } else { second.primary() };
     let actions = div()
         .flex()
         .flex_wrap()
@@ -188,7 +188,7 @@ pub fn render(
                 .tab_stop(active)
                 .on_click(copy),
         )
-        .child(second.on_click(|_, _| {}))
+        .child(second.on_click(save_or_open))
         .child(menu);
     let status = div()
         .flex()
@@ -322,7 +322,13 @@ fn thumbnail(
                         .whitespace_nowrap()
                         .overflow_hidden()
                         .text_ellipsis()
-                        .child(card.capture.caption(today)),
+                        // A refused name is said here, right above its field, so the card keeps
+                        // its shape (DESIGN.md §2).
+                        .child(
+                            card.name_error
+                                .clone()
+                                .unwrap_or_else(|| card.capture.caption(today).into()),
+                        ),
                 ),
         )
 }

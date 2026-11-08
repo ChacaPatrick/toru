@@ -95,7 +95,7 @@ fn expand_pattern(pattern: &str, date: LocalDate) -> String {
 
 // Uppercase, because `str::to_lowercase` gives a final Greek sigma its own form and two names that
 // are the same file on Windows could then compare as different.
-fn fold_case(name: &str) -> String {
+pub(crate) fn fold_case(name: &str) -> String {
     name.to_uppercase()
 }
 

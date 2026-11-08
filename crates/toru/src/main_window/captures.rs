@@ -14,8 +14,10 @@ use clipboard_rs::{
 use gpui::{AsyncApp, Context, SharedString, WeakEntity, prelude::*};
 use toru_core::{
     capture::{Capture, CaptureMode},
-    naming::next_free_name,
-    store::{CaptureId, Result as StoreResult, SessionId, Store},
+    export::save_capture,
+    naming::{NameError, next_free_name},
+    settings::SaveFormat,
+    store::{CaptureId, Result as StoreResult, SessionId, Store, StoreError},
     time::LocalDateTime,
 };
 use xcap::{
@@ -26,6 +28,7 @@ use xcap::{
 use super::{
     MainWindow,
     gallery::{CardFiles, NewCard},
+    settings::pattern_message,
 };
 use crate::platform;
 use crate::theme::ActiveTheme;
@@ -33,10 +36,13 @@ use crate::ui::Toast;
 
 const CAPTURE_FAILED: &str = "Couldn't capture that display";
 const STORE_FAILED: &str = "Couldn't store that capture";
-const COPY_FAILED: &str = "Couldn't copy to the clipboard. Another app may be using it.";
+pub(super) const COPY_FAILED: &str = "Couldn't copy to the clipboard. Another app may be using it.";
 const RENAME_FAILED: &str = "Couldn't rename that capture";
+const FILE_GONE: &str = "Couldn't read that image. Its file may have moved.";
+const AUTO_SAVE_FAILED: &str =
+    "Couldn't auto-save. The capture is still here, unsaved. Check the Save to folder.";
 
-type CopyResult = Result<(), Box<dyn Error + Send + Sync>>;
+pub(super) type CopyResult = Result<(), Box<dyn Error + Send + Sync>>;
 
 impl MainWindow {
     /// Where every capture enters the app, whichever way it was taken.
@@ -44,29 +50,39 @@ impl MainWindow {
         let taken_at = platform::local_now();
         let pattern = self.settings.name_pattern.clone();
         let copy = self.settings.copy_on_capture;
+        let auto_save = self.auto_save_target();
         let store = self.store.clone();
         let session = self.session;
         let thumbnail_width = self.gallery.read(cx).thumbnail_width();
         self.enqueue(cx, async move |this, cx| {
-            let (stored, image) = cx
+            let (stored, auto_saved, image) = cx
                 .background_spawn(async move {
                     let shot = Shot {
                         mode,
                         taken_at,
                         thumbnail_width,
                     };
-                    let stored = store_capture(&store, session, &image, shot, &pattern);
-                    (stored, image)
+                    let mut stored = store_capture(&store, session, &image, shot, &pattern);
+                    let auto_saved = match (&mut stored, auto_save) {
+                        (Ok(card), Some(target)) => auto_save_card(&store, card, target),
+                        _ => Ok(()),
+                    };
+                    (stored, auto_saved, image)
                 })
                 .await;
-            let kept = stored.is_ok();
-            this.update(cx, |this, cx| match stored {
-                Ok(card) => this.show_card(card, cx),
-                Err(_) => this.show_toast(Toast::failed(STORE_FAILED), cx),
+            let kept = stored.is_ok() && auto_saved.is_ok();
+            this.update(cx, |this, cx| {
+                match stored {
+                    Ok(card) => this.show_card(card, cx),
+                    Err(_) => this.show_toast(Toast::failed(STORE_FAILED), cx),
+                }
+                if auto_saved.is_err() {
+                    this.show_toast(Toast::failed(AUTO_SAVE_FAILED), cx);
+                }
             })
             .ok();
             // The clipboard doesn't depend on the store, so a capture that couldn't be kept can
-            // still be pasted. The store's failure stays up unless the copy failed too.
+            // still be pasted. A failure from above stays up unless the copy failed too.
             if copy {
                 let copied = cx.background_spawn(async move { copy_image(image) }).await;
                 if kept || copied.is_err() {
@@ -112,13 +128,22 @@ impl MainWindow {
         .detach();
     }
 
-    /// A card's Copy: the full image, read back from where it is kept, on the clipboard.
-    pub(super) fn copy_card(&mut self, card: usize, image: PathBuf, cx: &mut Context<Self>) {
+    /// A card's Copy: the full image, read back from where it is kept, on the clipboard. Where
+    /// that is gets asked when the job runs, since a Save queued ahead of it moves the image.
+    pub(super) fn copy_card(&mut self, card: usize, capture: CaptureId, cx: &mut Context<Self>) {
+        let store = self.store.clone();
         self.enqueue(cx, async move |this, cx| {
-            let copied: CopyResult = cx
-                .background_spawn(async move { copy_image(image::open(image)?.to_rgba8()) })
+            let copied = cx
+                .background_spawn(async move {
+                    let image = image::open(store.full_image_path(capture).ok()?).ok()?;
+                    Some(copy_image(image.to_rgba8()))
+                })
                 .await;
             this.update(cx, |this, cx| {
+                let Some(copied) = copied else {
+                    this.show_toast(Toast::failed(FILE_GONE), cx);
+                    return;
+                };
                 if copied.is_ok() {
                     this.gallery
                         .update(cx, |gallery, cx| gallery.show_copied(card, cx));
@@ -129,13 +154,58 @@ impl MainWindow {
         });
     }
 
+    /// Takes a typed name to the store, which refuses anything invalid or already used.
     pub(super) fn rename_capture(
         &mut self,
         capture: CaptureId,
         name: String,
         cx: &mut Context<Self>,
     ) {
-        self.write_store(RENAME_FAILED, cx, move |store| store.rename(capture, &name));
+        let store = self.store.clone();
+        self.enqueue(cx, async move |this, cx| {
+            let wanted = name.clone();
+            let renamed = cx
+                .background_spawn(async move { store.rename(capture, &wanted) })
+                .await;
+            this.update(cx, |this, cx| {
+                this.finish_rename(capture, name, renamed, cx)
+            })
+            .ok();
+        });
+    }
+
+    fn finish_rename(
+        &mut self,
+        capture: CaptureId,
+        name: String,
+        renamed: StoreResult<()>,
+        cx: &mut Context<Self>,
+    ) {
+        let gallery = self.gallery.clone();
+        match renamed {
+            Ok(()) => {
+                let saved =
+                    gallery.update(cx, |gallery, cx| gallery.accept_name(capture, name, cx));
+                if saved {
+                    self.show_toast(
+                        Toast::new("Renamed here. The saved file keeps its name."),
+                        cx,
+                    );
+                }
+            }
+            Err(error) => match refusal(&error) {
+                Some(message) => {
+                    self.window
+                        .update(cx, |_, window, cx| {
+                            gallery.update(cx, |gallery, cx| {
+                                gallery.refuse_name(capture, message, window, cx)
+                            })
+                        })
+                        .ok();
+                }
+                None => self.show_toast(Toast::failed(RENAME_FAILED), cx),
+            },
+        }
     }
 
     /// Queues a change to the store that only needs mentioning if it fails.
@@ -164,8 +234,15 @@ impl MainWindow {
         self.show_toast(toast, cx);
     }
 
+    fn auto_save_target(&self) -> Option<AutoSave> {
+        self.settings.auto_save.then(|| AutoSave {
+            folder: self.save_folder(),
+            format: self.settings.format,
+        })
+    }
+
     /// Runs `job` once everything queued before it has finished.
-    fn enqueue(
+    pub(super) fn enqueue(
         &mut self,
         cx: &mut Context<Self>,
         job: impl AsyncFnOnce(WeakEntity<Self>, &mut AsyncApp) + 'static,
@@ -195,6 +272,36 @@ struct Shot {
     thumbnail_width: u32,
 }
 
+/// Where the Auto-save setting sends a new capture. No folder means Windows can't say where
+/// Pictures is, which fails like any other unreachable folder.
+struct AutoSave {
+    folder: Option<PathBuf>,
+    format: SaveFormat,
+}
+
+/// Saves a capture the moment it is stored. On failure the capture stays stored and unsaved.
+fn auto_save_card(store: &Store, card: &mut NewCard, target: AutoSave) -> StoreResult<()> {
+    let folder = target
+        .folder
+        .ok_or_else(|| StoreError::Io(std::io::ErrorKind::NotFound.into()))?;
+    if let Some(file) = save_capture(store, card.files.id, &folder, target.format)? {
+        card.bytes = file.bytes;
+        card.capture.saved_path = Some(file.path);
+    }
+    Ok(())
+}
+
+/// What to tell the user about a name the store turned down, shown on the card. `None` for a
+/// failure that has nothing to do with the name.
+fn refusal(error: &StoreError) -> Option<String> {
+    match error {
+        StoreError::InvalidName(NameError::Empty) => Some("Type a name.".to_string()),
+        StoreError::InvalidName(error) => Some(pattern_message(error)),
+        StoreError::NameTaken => Some("Another capture that day has this name.".to_string()),
+        _ => None,
+    }
+}
+
 /// Names the capture and stores it. Must only run from the queue, so that the name it picks can't
 /// be taken before the capture is in the store.
 fn store_capture(
@@ -216,12 +323,10 @@ fn store_capture(
         saved_path: None,
     };
     let id = store.add_capture(session, image, &capture, shot.thumbnail_width)?;
-    let image_path = store.image_path(id);
-    let bytes = fs::metadata(&image_path)?.len();
+    let bytes = fs::metadata(store.image_path(id))?.len();
     Ok(NewCard {
         files: CardFiles {
             id,
-            image: image_path,
             thumbnail: store.thumbnail_path(id),
         },
         capture,
@@ -247,7 +352,7 @@ fn copy_image(image: RgbaImage) -> CopyResult {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::{env, path::Path, process};
 
     use toru_core::{
@@ -271,14 +376,14 @@ mod tests {
     const THUMBNAIL_WIDTH: u32 = 32;
     const BASE: &str = "screenshot_11_08_2026";
 
-    struct TestDir(PathBuf);
+    pub(in super::super) struct TestDir(pub(in super::super) PathBuf);
 
     impl TestDir {
-        fn new(name: &str) -> TestDir {
+        pub(in super::super) fn new(name: &str) -> TestDir {
             TestDir(env::temp_dir().join(format!("toru-captures-{}-{name}", process::id())))
         }
 
-        fn store(&self) -> Store {
+        pub(in super::super) fn store(&self) -> Store {
             Store::open(&self.0).unwrap()
         }
     }
@@ -301,7 +406,11 @@ mod tests {
         }
     }
 
-    fn add(store: &Store, session: SessionId, pattern: &str) -> StoreResult<NewCard> {
+    pub(in super::super) fn add(
+        store: &Store,
+        session: SessionId,
+        pattern: &str,
+    ) -> StoreResult<NewCard> {
         store_capture(store, session, &frame(), shot(), pattern)
     }
 
@@ -321,8 +430,9 @@ mod tests {
         assert_eq!(card.capture.name, BASE);
         assert_eq!(card.capture.mode, CaptureMode::FullScreen);
         assert_eq!((card.capture.width, card.capture.height), (64, 40));
-        assert_eq!(card.bytes, fs::metadata(&card.files.image).unwrap().len());
-        assert_eq!(image::open(&card.files.image).unwrap().to_rgba8(), frame());
+        let image_path = store.image_path(card.files.id);
+        assert_eq!(card.bytes, fs::metadata(&image_path).unwrap().len());
+        assert_eq!(image::open(&image_path).unwrap().to_rgba8(), frame());
         assert_eq!(png_dimensions(&card.files.thumbnail), (32, 20));
 
         let listed = store.session_captures(session).unwrap();
@@ -360,6 +470,68 @@ mod tests {
         let session = store.new_session().unwrap();
         let card = add(&store, session, "shot-{yyyy}").unwrap();
         assert_eq!(card.capture.name, "shot-2026");
+    }
+
+    fn target(folder: Option<PathBuf>) -> AutoSave {
+        AutoSave {
+            folder,
+            format: SaveFormat::Png,
+        }
+    }
+
+    #[test]
+    fn auto_save_writes_the_file_and_the_card_starts_saved() {
+        let dir = TestDir::new("auto");
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let folder = dir.0.join("Screenshots");
+        let mut card = add(&store, session, DEFAULT_PATTERN).unwrap();
+
+        auto_save_card(&store, &mut card, target(Some(folder.clone()))).unwrap();
+
+        let path = folder.join(format!("{BASE}.png"));
+        assert_eq!(card.capture.saved_path, Some(path.clone()));
+        assert_eq!(card.bytes, fs::metadata(&path).unwrap().len());
+        assert_eq!(image::open(path).unwrap().to_rgba8(), frame());
+    }
+
+    #[test]
+    fn a_failed_auto_save_keeps_the_capture_unsaved() {
+        let dir = TestDir::new("auto-failed");
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let blocker = dir.0.join("blocker");
+        fs::write(&blocker, b"not a folder").unwrap();
+        let mut card = add(&store, session, DEFAULT_PATTERN).unwrap();
+
+        assert!(auto_save_card(&store, &mut card, target(Some(blocker.join("x")))).is_err());
+        assert!(auto_save_card(&store, &mut card, target(None)).is_err());
+
+        assert_eq!(card.capture.saved_path, None);
+        assert!(store.image_path(card.files.id).is_file());
+        assert_eq!(
+            store.session_captures(session).unwrap()[0].capture,
+            card.capture
+        );
+    }
+
+    #[test]
+    fn refused_names_get_a_message_and_other_failures_do_not() {
+        for (error, message) in [
+            (NameError::Empty, "Type a name."),
+            (NameError::ReservedCharacter(':'), "Can't use : in a name."),
+            (
+                NameError::ReservedDeviceName,
+                "That's a reserved Windows name.",
+            ),
+        ] {
+            assert_eq!(refusal(&StoreError::InvalidName(error)).unwrap(), message);
+        }
+        assert_eq!(
+            refusal(&StoreError::NameTaken).unwrap(),
+            "Another capture that day has this name."
+        );
+        assert_eq!(refusal(&StoreError::NotFound), None);
     }
 
     #[test]

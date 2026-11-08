@@ -21,8 +21,8 @@
 use std::{ops::Range, path::PathBuf, rc::Rc, time::Duration};
 
 use gpui::{
-    AnyElement, Context, Entity, EventEmitter, KeyDownEvent, Pixels, Render, Role, ScrollStrategy,
-    SharedString, Size, Window, accesskit::Live, div, point, prelude::*, px, size,
+    AnyElement, Context, Entity, EventEmitter, Focusable, KeyDownEvent, Pixels, Render, Role,
+    ScrollStrategy, SharedString, Size, Window, accesskit::Live, div, point, prelude::*, px, size,
 };
 use gpui_kit::component::{
     VirtualListScrollHandle,
@@ -30,7 +30,7 @@ use gpui_kit::component::{
     scroll::ScrollableElement,
     v_virtual_list,
 };
-use toru_core::{capture::Capture, naming::validate_name, store::CaptureId, time::LocalDate};
+use toru_core::{capture::Capture, export::SavedFile, store::CaptureId, time::LocalDate};
 
 use super::{act, card, mock};
 use crate::theme::{ActiveTheme, DayDate, Theme, ThemedText};
@@ -78,12 +78,13 @@ pub struct Card {
     pub name: Entity<InputState>,
     /// The card itself, which the arrow keys move between.
     pub focus: gpui::FocusHandle,
+    /// Why the name being typed wasn't accepted. The record keeps the last good name.
+    pub name_error: Option<SharedString>,
 }
 
 /// Where a real capture lives in the store.
 pub struct CardFiles {
     pub id: CaptureId,
-    pub image: PathBuf,
     pub thumbnail: PathBuf,
 }
 
@@ -117,11 +118,17 @@ pub enum GalleryEvent {
     /// A real card's Copy, which the main window carries out.
     Copy {
         card: usize,
-        image: PathBuf,
+        capture: CaptureId,
     },
     Renamed {
         capture: CaptureId,
         name: String,
+    },
+    Save {
+        capture: CaptureId,
+    },
+    OpenFolder {
+        file: PathBuf,
     },
 }
 
@@ -231,14 +238,103 @@ impl Gallery {
         cx.notify();
     }
 
-    fn set_card_name(&mut self, capture: CaptureId, name: String) {
-        let card = self.groups[0]
+    fn session_card(&mut self, capture: CaptureId) -> Option<&mut Card> {
+        self.groups[0]
             .cards
             .iter_mut()
-            .find(|card| card.files.as_ref().is_some_and(|files| files.id == capture));
-        if let Some(card) = card {
-            card.capture.name = name;
+            .find(|card| card.files.as_ref().is_some_and(|files| files.id == capture))
+    }
+
+    /// The store took the name. Returns whether the capture is saved, as its file keeps its name.
+    pub fn accept_name(
+        &mut self,
+        capture: CaptureId,
+        name: String,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(card) = self.session_card(capture) else {
+            return false;
+        };
+        card.capture.name = name;
+        card.name_error = None;
+        let saved = card.capture.is_saved();
+        cx.notify();
+        saved
+    }
+
+    /// Says on the card why the store turned the name down. If the user has already left the
+    /// field there is nothing more to type, so the name goes back at once.
+    pub fn refuse_name(
+        &mut self,
+        capture: CaptureId,
+        message: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(card) = self.session_card(capture) else {
+            return;
+        };
+        card.name_error = Some(message.into());
+        let focused = card.name.read(cx).focus_handle(cx).is_focused(window);
+        if !focused {
+            self.restore_refused_name(capture, window, cx);
         }
+        cx.notify();
+    }
+
+    fn restore_refused_name(
+        &mut self,
+        capture: CaptureId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(card) = self.session_card(capture) else {
+            return;
+        };
+        if card.name_error.take().is_some() {
+            let name = card.capture.name.clone();
+            card.name
+                .update(cx, |field, cx| field.set_value(name, window, cx));
+            cx.notify();
+        }
+    }
+
+    /// Turns a card to Saved once its file is written.
+    pub fn mark_saved(&mut self, capture: CaptureId, file: SavedFile, cx: &mut Context<Self>) {
+        if let Some(card) = self.session_card(capture) {
+            card.capture.saved_path = Some(file.path);
+            card.bytes = file.bytes;
+            cx.notify();
+        }
+    }
+
+    /// This session's captures and how many of them are saved, for the bottom bar.
+    pub fn session_counts(&self) -> (usize, usize) {
+        let cards = &self.groups[0].cards;
+        let saved = cards.iter().filter(|c| c.capture.is_saved()).count();
+        (cards.len(), saved)
+    }
+
+    /// The session's unsaved captures, for Save all.
+    pub fn unsaved_captures(&self) -> Vec<CaptureId> {
+        self.groups[0]
+            .cards
+            .iter()
+            .filter(|card| !card.capture.is_saved())
+            .filter_map(|card| card.files.as_ref().map(|files| files.id))
+            .collect()
+    }
+
+    /// Takes the session's unsaved cards away and returns how many there were. A focused card
+    /// that goes with them stops being rendered, which the main window answers by refocusing.
+    pub fn remove_unsaved(&mut self, cx: &mut Context<Self>) -> usize {
+        let cards = &mut self.groups[0].cards;
+        let before = cards.len();
+        cards.retain(|card| card.capture.is_saved());
+        let removed = before - cards.len();
+        self.rebuild_rows(cx);
+        cx.notify();
+        removed
     }
 
     /// Lists or drops the groups before this session. A focused card that goes with them stops
@@ -250,13 +346,6 @@ impl Gallery {
         }
     }
 
-    /// This session's captures and how many of them are saved, for the bottom bar.
-    pub fn session_counts(&self) -> (usize, usize) {
-        let session = &self.groups[0].cards;
-        let saved = session.iter().filter(|c| c.capture.is_saved()).count();
-        (session.len(), saved)
-    }
-
     fn toggle_collapsed(&mut self, group: usize, cx: &mut Context<Self>) {
         self.groups[group].collapsed = !self.groups[group].collapsed;
         self.rebuild_rows(cx);
@@ -264,26 +353,27 @@ impl Gallery {
     }
 
     pub fn copy(&mut self, id: usize, cx: &mut Context<Self>) {
-        let image = self
-            .groups
-            .iter()
-            .flat_map(|group| &group.cards)
-            .find(|card| card.id == id)
-            .and_then(|card| {
-                let files = card.files.as_ref()?;
-                Some(
-                    card.capture
-                        .saved_path
-                        .clone()
-                        .unwrap_or(files.image.clone()),
-                )
-            });
-        match image {
-            Some(image) => cx.emit(GalleryEvent::Copy { card: id, image }),
+        let capture = self.card(id).and_then(|card| Some(card.files.as_ref()?.id));
+        match capture {
+            Some(capture) => cx.emit(GalleryEvent::Copy { card: id, capture }),
             None => {
                 self.show_copied(id, cx);
                 cx.emit(GalleryEvent::Copied);
             }
+        }
+    }
+
+    /// A card's Save, or its Open folder once saved. A mock card has nothing to do either with.
+    pub fn save_or_open(&mut self, id: usize, cx: &mut Context<Self>) {
+        let Some(card) = self.card(id) else {
+            return;
+        };
+        let Some(files) = &card.files else {
+            return;
+        };
+        match card.capture.saved_path.clone() {
+            Some(file) => cx.emit(GalleryEvent::OpenFolder { file }),
+            None => cx.emit(GalleryEvent::Save { capture: files.id }),
         }
     }
 
@@ -737,8 +827,9 @@ impl Render for Gallery {
 }
 
 /// A card for `capture`, with its name field. The field's `Window` is why the main window passes
-/// one into `add_session_card`. A real card's name goes to the store as it is typed; a renamed
-/// card must also still be found by its new name, so a search filters it again afterwards.
+/// one into `add_session_card`. A real card's name goes to the store as it is typed, and the store
+/// refuses what it can't take; a renamed card must also still be found by its new name, so a
+/// search filters it again afterwards.
 fn new_card(
     id: usize,
     files: Option<CardFiles>,
@@ -755,25 +846,26 @@ fn new_card(
         window,
         move |this, name, event: &InputEvent, window, cx| match event {
             InputEvent::Change => {
-                // Anything that isn't a valid file name isn't kept; 5.5 says so on the card.
-                let typed = name.read(cx).value().to_string();
-                if let Some(capture) = stored
-                    && validate_name(&typed).is_ok()
-                {
-                    this.set_card_name(capture, typed.clone());
+                if let Some(capture) = stored {
                     cx.emit(GalleryEvent::Renamed {
                         capture,
-                        name: typed,
+                        name: name.read(cx).value().to_string(),
                     });
                 }
             }
-            // Filtering a renamed card as it is typed would drop it from the list mid-edit, taking
-            // the rest of the typing with it, so it is filtered once the edit is over. The field
-            // also blurs when the window is deactivated, though the edit isn't over: it keeps
-            // focus and blurs again, with the window active, when the user does leave it.
-            InputEvent::Blur if !this.query.is_empty() && window.is_window_active() => {
-                this.rebuild_rows(cx);
-                cx.notify();
+            // The field also blurs when the window is deactivated, though the edit isn't over: it
+            // keeps focus and blurs again, with the window active, when the user does leave it.
+            InputEvent::Blur if window.is_window_active() => {
+                // Leaving the field gives up on a name that wasn't accepted.
+                if let Some(capture) = stored {
+                    this.restore_refused_name(capture, window, cx);
+                }
+                // Filtering a renamed card as it is typed would drop it from the list mid-edit,
+                // taking the rest of the typing with it, so it is filtered once the edit is over.
+                if !this.query.is_empty() {
+                    this.rebuild_rows(cx);
+                    cx.notify();
+                }
             }
             _ => {}
         },
@@ -786,6 +878,7 @@ fn new_card(
         bytes,
         name,
         focus: cx.focus_handle(),
+        name_error: None,
     }
 }
 
