@@ -82,6 +82,7 @@ Drawn with `tiny-skia`, so the screen matches the saved file exactly.
 | Clipboard with file lists | `clipboard-rs` 0.3.5 |
 | Encoding | `image` 0.25, `webp` 0.3 |
 | Editor drawing | `tiny-skia` 0.12 |
+| Editor text outlines | `ttf-parser` 0.25 (already used by GPUI) |
 | History | `rusqlite` 0.41.1 |
 | Folder picker | `rfd` 0.18 |
 
