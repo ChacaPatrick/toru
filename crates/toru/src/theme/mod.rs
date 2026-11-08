@@ -35,6 +35,7 @@ pub struct Theme {
     pub fonts: Fonts,
     pub type_scale: TypeScale,
     pub strings: Strings,
+    pub overlay: Overlay,
 }
 
 impl Global for Theme {}
@@ -447,6 +448,8 @@ pub struct TypeScale {
     pub corner: TypeStyle,
     pub anno_text: TypeStyle,
     pub anno_number: TypeStyle,
+    /// The overlay's size readout, in the mono face so the digits hold still as they change.
+    pub readout: TypeStyle,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -462,6 +465,22 @@ impl Case {
             Case::Upper => text.to_uppercase(),
         }
     }
+}
+
+/// The capture overlay (DESIGN.md §6), which has no mockup: each look derives these from its own
+/// palette. The readout and magnifier panel borrows the toast's colours, border and type, since
+/// the toast is the one surface every look already sets to stand out from anything.
+pub struct Overlay {
+    /// Laid over the frozen screen everywhere but inside the selection.
+    pub dim: Hsla,
+    /// Around the selection, just outside the selected pixels.
+    pub edge: Border,
+    /// A one-pixel line outside `edge`, in a contrasting colour, so the edge shows on any content.
+    pub edge_halo: Hsla,
+    /// Around the magnifier inside the panel.
+    pub loupe: Border,
+    /// The lines marking the pixel under the pointer in the magnifier.
+    pub crosshair: Hsla,
 }
 
 /// The strings whose tone changes with the look. Dates go where the caller puts them.

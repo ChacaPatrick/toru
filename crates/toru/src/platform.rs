@@ -3,7 +3,7 @@
 //! and keeping Toru's own windows out of a capture. Windows is done here; the other platforms get
 //! the fallbacks at the bottom until they are.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use gpui::PlatformDisplay;
 #[cfg(not(windows))]
@@ -192,6 +192,11 @@ mod windows {
         }
     }
 }
+
+/// How long a capture waits after `exclude_windows_from_capture(true)`. Exclusion took effect with
+/// no wait in every trial (`docs/spikes.md` §5.1); this is a margin of a few frames that nobody
+/// will notice.
+pub const EXCLUDE_SETTLE: Duration = Duration::from_millis(50);
 
 #[cfg(windows)]
 pub use windows::{exclude_windows_from_capture, local_now, restore_window, show_startup_error};

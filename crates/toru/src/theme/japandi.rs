@@ -4,8 +4,8 @@ use gpui::{FontWeight, Hsla, px};
 use toru_core::settings::Look;
 
 use super::{
-    Border, Borders, Colors, DayDate, Fill, Fonts, Icons, Palette, Radii, Shadows, Sizes, Strings,
-    Theme, TypeScale,
+    Border, Borders, Colors, DayDate, Fill, Fonts, Icons, Overlay, Palette, Radii, Shadows, Sizes,
+    Strings, Theme, TypeScale,
     css::{body, display, gradient, hex, hex_alpha, mono, soft_shadow},
 };
 
@@ -242,6 +242,7 @@ fn base() -> Theme {
             corner: body(13., FontWeight::NORMAL),
             anno_text: body(16., FontWeight::BOLD),
             anno_number: body(14., FontWeight::BOLD),
+            readout: mono(14., FontWeight::SEMIBOLD),
         },
         strings: Strings {
             loading: ("Fetching ", " …"),
@@ -251,6 +252,15 @@ fn base() -> Theme {
             earlier_today: "Earlier today",
             session: "This session",
             day_date: DayDate::Long,
+        },
+        // Ink over the screen, a paper line with an ink halo around the selection, and the
+        // walnut accent for the crosshair, as the palettes' own inks and papers all read close.
+        overlay: Overlay {
+            dim: hex_alpha(0x2b2a26, 0.55),
+            edge: Border::solid(1., hex(0xfaf7f1)),
+            edge_halo: hex_alpha(0x2b2a26, 0.6),
+            loupe: Border::solid(1., hex_alpha(0xfaf7f1, 0.3)),
+            crosshair: hex(0xc4855a),
         },
     }
 }

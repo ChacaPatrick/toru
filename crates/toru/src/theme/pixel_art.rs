@@ -5,8 +5,8 @@ use gpui::FontWeight;
 use toru_core::settings::Look;
 
 use super::{
-    Border, Borders, Colors, DayDate, Fonts, Icons, Palette, Radii, Shadows, Sizes, Strings, Theme,
-    TypeScale,
+    Border, Borders, Colors, DayDate, Fonts, Icons, Overlay, Palette, Radii, Shadows, Sizes,
+    Strings, Theme, TypeScale,
     css::{body, checker, display, hard_shadow, hex, hex_alpha, inset_shadow, mono},
 };
 
@@ -114,6 +114,8 @@ pub fn theme(palette: usize) -> Theme {
         _ => {}
     }
     theme.borders.title_divider = theme.borders.hair;
+    // The selection edge is the palette's accent on its ink, like the title bar.
+    theme.overlay.edge.color = theme.colors.accent_bg;
     theme
 }
 
@@ -274,6 +276,7 @@ fn base() -> Theme {
             corner: body(17., FontWeight::NORMAL),
             anno_text: display(11., FontWeight::NORMAL),
             anno_number: body(14., FontWeight::NORMAL),
+            readout: mono(20., FontWeight::NORMAL),
         },
         strings: Strings {
             loading: ("LOADING ", " ▮▮▮▯▯▯"),
@@ -283,6 +286,16 @@ fn base() -> Theme {
             earlier_today: "EARLIER TODAY",
             session: "THIS SESSION",
             day_date: DayDate::ShortUpper,
+        },
+        // Thick ink around everything, as the look's controls have; `theme` swaps in each
+        // palette's accent for the edge. The crosshair is the annotation pink, which no palette's
+        // screen is likely to be.
+        overlay: Overlay {
+            dim: hex_alpha(0x0d0d18, 0.6),
+            edge: Border::solid(3., hex(0xffd23f)),
+            edge_halo: ink,
+            loupe: Border::solid(3., ink),
+            crosshair: hex(0xff6b97),
         },
     }
 }

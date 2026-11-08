@@ -3,6 +3,7 @@
 // The theme carries the values for the cards, gallery and editor, and the controls include the
 // card, settings and bottom bar ones; the sections that use them follow (Phases 4 and 8).
 mod main_window;
+mod overlay;
 mod platform;
 #[allow(dead_code)]
 mod theme;

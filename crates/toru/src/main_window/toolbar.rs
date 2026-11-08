@@ -100,7 +100,7 @@ pub fn toolbar(this: &MainWindow, cx: &Context<MainWindow>) -> Div {
                 .icon(Icon::Region)
                 .primary()
                 .track_focus(&this.first)
-                .on_click(|_, _| {}),
+                .on_click(act(cx, |this, cx| this.capture_region(cx))),
         )
         .child(
             Button::new("window", "Window")

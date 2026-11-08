@@ -39,7 +39,7 @@ Results go in `docs/spikes.md`.
 ## Phase 5: Real capture
 The local date and time come from `GetLocalTime` in `crates/toru/src/platform.rs`, so no date library is needed.
 - [x] 5.1 Full screen capture, copy on capture, real cards in the gallery
-- [ ] 5.2 Region overlay with size readout and magnifier **[Fable for visuals]**
+- [x] 5.2 Region overlay with size readout and magnifier **[Fable for visuals]**
 - [ ] 5.3 Window capture, with the overlay highlighting the window under the cursor **[Fable for visuals]**
 - [ ] 5.4 Delayed capture with mode choice
 - [ ] 5.5 Card Copy and Save, Save all, Copy all, Clear unsaved, Open folder, formats, name pattern, rename, auto-save

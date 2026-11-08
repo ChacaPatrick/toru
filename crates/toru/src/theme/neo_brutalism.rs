@@ -5,9 +5,9 @@ use gpui::FontWeight;
 use toru_core::settings::Look;
 
 use super::{
-    Border, Borders, Colors, DayDate, Fill, Fonts, Icons, Palette, Radii, Shadows, Sizes, Strings,
-    Theme, TypeScale,
-    css::{body, display, grid, hard_shadow, hex, mono},
+    Border, Borders, Colors, DayDate, Fill, Fonts, Icons, Overlay, Palette, Radii, Shadows, Sizes,
+    Strings, Theme, TypeScale,
+    css::{body, display, grid, hard_shadow, hex, hex_alpha, mono},
 };
 
 pub fn palettes() -> [Palette; 3] {
@@ -33,6 +33,7 @@ pub fn theme(palette: usize) -> Theme {
     let c = &mut theme.colors;
     let b = &mut theme.borders;
     let s = &mut theme.shadows;
+    let o = &mut theme.overlay;
     match palette {
         1 => {
             c.bg = hex(0xfffdf5);
@@ -116,6 +117,8 @@ pub fn theme(palette: usize) -> Theme {
             }
             // `.thumb{border:3px solid #000}` is pinned for the look, so `b.thumb` stays black.
             b.chip = Border::solid(2., white);
+            o.edge_halo = white;
+            o.loupe = Border::solid(3., white);
             b.load = Border::dashed(3., white);
             for shadow in [
                 &mut s.accent,
@@ -276,6 +279,7 @@ fn base() -> Theme {
             corner: body(13., FontWeight::MEDIUM),
             anno_text: display(16., FontWeight::NORMAL).upper(),
             anno_number: body(14., FontWeight::BOLD),
+            readout: mono(15., FontWeight::BOLD),
         },
         strings: Strings {
             loading: ("LOADING ", " →"),
@@ -285,6 +289,15 @@ fn base() -> Theme {
             earlier_today: "EARLIER TODAY",
             session: "THIS SESSION",
             day_date: DayDate::LongUpper,
+        },
+        // The look's yellow block in a black 3px line; the dark palette turns the halo and loupe
+        // white with its other borders.
+        overlay: Overlay {
+            dim: hex_alpha(0x000000, 0.6),
+            edge: Border::solid(3., hex(0xffde59)),
+            edge_halo: black,
+            loupe: Border::solid(3., black),
+            crosshair: hex(0x4d7cff),
         },
     }
 }

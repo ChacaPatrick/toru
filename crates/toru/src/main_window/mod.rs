@@ -24,6 +24,7 @@ use toru_core::{
     store::{SessionId, Store},
 };
 
+use crate::overlay;
 use crate::platform;
 use crate::theme::{ActiveTheme, ThemedText};
 use crate::ui::{Flash, FocusInView, Toast};
@@ -149,6 +150,14 @@ impl MainWindow {
             .or_else(|| position(cx.primary_display().map(|d| d.id())))
             .unwrap_or(0);
         (displays, chosen)
+    }
+
+    /// Opens the region overlay (DESIGN.md §6); its crop arrives in `add_capture`.
+    fn capture_region(&mut self, cx: &mut Context<Self>) {
+        let this = cx.entity();
+        overlay::start_region(cx, move |image, mode, cx| {
+            this.update(cx, |this, cx| this.add_capture(image, mode, cx));
+        });
     }
 
     fn title(&self) -> SharedString {

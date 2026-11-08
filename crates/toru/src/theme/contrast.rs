@@ -116,6 +116,7 @@ mod tests {
             );
         }
         text("saved chip", c.chip_saved_text, c.chip_saved_bg);
+        // The overlay's readout panel borrows the toast's colours, so this covers it too.
         text("toast", c.toast_text, c.toast_bg);
         text("bulk bar", c.bulk_text, c.bulk_bg);
         text(

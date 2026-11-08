@@ -5,7 +5,7 @@
 //! (`enqueue`): names are chosen one at a time so two captures can't get the same `_2`, and
 //! clipboard writes can't overlap and mix formats (`docs/spikes.md` §1.4).
 
-use std::{error::Error, fs, path::PathBuf, time::Duration};
+use std::{error::Error, fs, path::PathBuf};
 
 use clipboard_rs::{
     Clipboard, ClipboardContext,
@@ -30,10 +30,6 @@ use super::{
 use crate::platform;
 use crate::theme::ActiveTheme;
 use crate::ui::Toast;
-
-/// Exclusion took effect with no wait in every trial (`docs/spikes.md` §5.1). This is a margin of
-/// a few frames that nobody will notice.
-const EXCLUDE_SETTLE: Duration = Duration::from_millis(50);
 
 const CAPTURE_FAILED: &str = "Couldn't capture that display";
 const STORE_FAILED: &str = "Couldn't store that capture";
@@ -97,7 +93,9 @@ impl MainWindow {
         self.capturing = true;
         platform::exclude_windows_from_capture(true);
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(EXCLUDE_SETTLE).await;
+            cx.background_executor()
+                .timer(platform::EXCLUDE_SETTLE)
+                .await;
             let frame = cx
                 .background_spawn(async move { capture_monitor(monitor_id) })
                 .await;
