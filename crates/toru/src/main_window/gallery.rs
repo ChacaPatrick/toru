@@ -7,10 +7,16 @@
 //! has somewhere to go.
 //!
 //! The list is `gpui-kit`'s virtual list (`docs/spikes.md` §1.3): it needs every row's height
-//! up front, so the rows are rebuilt when a group collapses or expands, the earlier groups are
-//! shown or hidden, or the search changes, and the card height comes from `card::height` at the
-//! gallery's current width. Each name field's text lives in its `InputState`, so edits survive
-//! scrolling out of view and back.
+//! up front, so the rows are rebuilt when a group collapses or expands, a day arrives, the earlier
+//! groups are shown or hidden, or the search changes, and the card height comes from
+//! `card::height` at the gallery's current width. Each name field's text lives in its
+//! `InputState`, so edits survive scrolling out of view and back.
+//!
+//! Earlier days come from the store a day at a time (`history`), off the main thread, once the
+//! list is nearly scrolled to its end. A search only looks through what is loaded and doesn't pull
+//! in more days, which the row at the bottom says. Thumbnails take up GPU memory for as long as
+//! they are held, so a group's are let go once it is far from the view or collapsed, and load
+//! again when it comes back.
 //!
 //! Keyboard (DESIGN.md §7): the cards are a roving tab stop. Tab enters the grid at the current
 //! card, the arrow keys move between cards, Enter opens one, and only the current card's own
@@ -29,12 +35,12 @@
 //! view. Esc or Done leaves, clearing the selection. The main window draws the bulk bar from
 //! `selection_counts` and routes Esc and Ctrl+A here from anywhere in the window.
 
-use std::{ops::Range, path::PathBuf, rc::Rc, time::Duration};
+use std::{ops::Range, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
 use gpui::{
     AnyElement, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyDownEvent,
-    Modifiers, Pixels, Render, Role, ScrollStrategy, SharedString, Size, Window, accesskit::Live,
-    div, point, prelude::*, px, size,
+    Modifiers, Pixels, Render, Resource, RetainAllImageCache, Role, ScrollStrategy, SharedString,
+    Size, Task, Window, accesskit::Live, div, point, prelude::*, px, size,
 };
 use gpui_kit::component::{
     VirtualListScrollHandle,
@@ -42,10 +48,16 @@ use gpui_kit::component::{
     scroll::ScrollableElement,
     v_virtual_list,
 };
-use toru_core::{capture::Capture, export::SavedFile, store::CaptureId, time::LocalDate};
+use toru_core::{
+    capture::Capture,
+    export::SavedFile,
+    store::{CaptureId, SessionId, Store},
+    time::LocalDate,
+};
 
 use super::{
-    HINT_LEADING, act, bulk_bar, card, mock,
+    HINT_LEADING, act, bulk_bar, card,
+    history::{self, Next, Page},
     selection::{Counts, Selection, enters_select_mode},
 };
 use crate::theme::{ActiveTheme, DayDate, Theme, ThemedText};
@@ -75,11 +87,17 @@ const NOTICE_HEIGHT: f32 = 44.;
 /// The return pill's distance from the top of the gallery.
 const PILL_TOP: f32 = 18.;
 const COPIED_FOR: Duration = Duration::from_millis(1500);
+/// How far below the view the next day is fetched.
+const FETCH_AHEAD: Pixels = px(1200.);
+/// How many views' heights above and below the view a group keeps its thumbnails, so scrolling a
+/// little and back doesn't reload them.
+const KEEP_VIEWS: f32 = 1.;
+const RETRY_FETCH_AFTER: Duration = Duration::from_secs(5);
 
+#[derive(Clone, Copy)]
 pub enum GroupKind {
     Session,
-    /// Today's captures from sessions that have ended.
-    EarlierToday,
+    /// A day's captures from sessions that have ended, titled "Earlier today" if that's today.
     Day(LocalDate),
 }
 
@@ -87,13 +105,14 @@ pub struct Group {
     pub kind: GroupKind,
     pub cards: Vec<Card>,
     pub collapsed: bool,
+    /// Whether any of its thumbnails may be held, so they need letting go.
+    pub drawn: bool,
 }
 
 pub struct Card {
     /// Unique among the gallery's cards; element ids are built from it.
     pub id: usize,
-    /// `None` on a mock card: the earlier groups stay mock until 7.1.
-    pub files: Option<CardFiles>,
+    pub files: CardFiles,
     pub capture: Capture,
     pub bytes: u64,
     pub name: Entity<InputState>,
@@ -103,13 +122,15 @@ pub struct Card {
     pub name_error: Option<SharedString>,
 }
 
-/// Where a real capture lives in the store.
+/// Where a capture lives in the store.
+#[derive(Debug)]
 pub struct CardFiles {
     pub id: CaptureId,
     pub thumbnail: PathBuf,
 }
 
-/// A capture the store has just taken in, on its way to becoming a card.
+/// A capture from the store on its way to becoming a card.
+#[derive(Debug)]
 pub struct NewCard {
     pub files: CardFiles,
     pub capture: Capture,
@@ -128,15 +149,14 @@ enum Row {
     NoMatch {
         elsewhere: bool,
     },
-    /// The next day being fetched (a mock until 7.1).
-    Loading,
+    /// The next day to come from the store. `None`: a first fetch has failed, so which day that
+    /// is isn't known.
+    NextDay(Option<LocalDate>),
     Footer,
 }
 
 pub enum GalleryEvent {
-    /// A mock card's Copy: nothing to copy, only the feedback.
-    Copied,
-    /// A real card's Copy, which the main window carries out.
+    /// A card's Copy, which the main window carries out.
     Copy {
         card: usize,
         capture: CaptureId,
@@ -156,11 +176,22 @@ pub enum GalleryEvent {
 }
 
 pub struct Gallery {
+    store: Arc<Store>,
+    /// The running session, whose captures earlier today's group leaves out.
+    session: SessionId,
     groups: Vec<Group>,
     rows: Vec<Row>,
     /// The "Show previous screenshots" setting: whether any group but the session's is listed.
     show_previous: bool,
     today: LocalDate,
+    next: Next,
+    /// The fetch under way. Dropping it abandons the fetch.
+    fetch: Option<Task<()>>,
+    fetch_failed: bool,
+    /// Holds the thumbnails, and lets them go from the GPU's atlas when asked.
+    thumbnails: Entity<RetainAllImageCache>,
+    /// Cards taken away since the last render, whose thumbnails it then lets go of.
+    cleared: Vec<Card>,
     /// The width the main window gives the gallery, from which the card width follows.
     width: Pixels,
     scale: f32,
@@ -185,25 +216,19 @@ pub struct Gallery {
 impl EventEmitter<GalleryEvent> for Gallery {}
 
 impl Gallery {
-    pub fn new(today: LocalDate, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut next_card = 0;
-        let session = Group {
+    pub fn new(
+        store: Arc<Store>,
+        session: SessionId,
+        today: LocalDate,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let groups = vec![Group {
             kind: GroupKind::Session,
             cards: Vec::new(),
             collapsed: false,
-        };
-        let earlier = mock::groups().into_iter().map(|(kind, captures)| Group {
-            kind,
-            cards: captures
-                .into_iter()
-                .map(|mock| {
-                    next_card += 1;
-                    new_card(next_card, None, mock.capture, mock.bytes, window, cx)
-                })
-                .collect(),
-            collapsed: false,
-        });
-        let groups = std::iter::once(session).chain(earlier).collect::<Vec<_>>();
+            drawn: false,
+        }];
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search names…"));
         cx.subscribe(&search, |this, search, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
@@ -214,15 +239,22 @@ impl Gallery {
         })
         .detach();
         let mut gallery = Gallery {
+            store,
+            session,
             rows: Vec::new(),
-            current: groups.iter().flat_map(|g| &g.cards).next().map(|c| c.id),
+            current: None,
             groups,
             show_previous: true,
             today,
+            next: Next::Unknown,
+            fetch: None,
+            fetch_failed: false,
+            thumbnails: RetainAllImageCache::new(cx),
+            cleared: Vec::new(),
             width: px(0.),
             scale: 1.,
             card_height: px(0.),
-            next_card,
+            next_card: 0,
             scroll: VirtualListScrollHandle::new(),
             copied: Flash::new(),
             search,
@@ -266,16 +298,7 @@ impl Gallery {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> usize {
-        self.today = new.capture.taken_at.date;
-        self.next_card += 1;
-        let card = new_card(
-            self.next_card,
-            Some(new.files),
-            new.capture,
-            new.bytes,
-            window,
-            cx,
-        );
+        let card = self.new_card(new, window, cx);
         let id = card.id;
         self.groups[0].cards.insert(0, card);
         self.rebuild_rows(cx);
@@ -283,11 +306,159 @@ impl Gallery {
         id
     }
 
-    fn session_card(&mut self, capture: CaptureId) -> Option<&mut Card> {
-        self.groups[0]
-            .cards
+    fn new_card(&mut self, new: NewCard, window: &mut Window, cx: &mut Context<Self>) -> Card {
+        self.next_card += 1;
+        new_card(self.next_card, new, window, cx)
+    }
+
+    /// Ends the session: its cards go down into their day's group, and `session` starts empty on
+    /// `today`. A card from a day not fetched yet is dropped, as it will come from the store with
+    /// the rest of that day.
+    pub fn end_session(
+        &mut self,
+        session: SessionId,
+        today: LocalDate,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.session = session;
+        self.today = today;
+        // Asked for by the old session, so it may list what is about to move.
+        self.fetch = None;
+        self.fetch_failed = false;
+        for card in std::mem::take(&mut self.groups[0].cards).into_iter().rev() {
+            let day = card.capture.taken_at.date;
+            if !self.next.has_fetched(day) {
+                self.release_thumbnail(&card, window, cx);
+                continue;
+            }
+            let days: Vec<LocalDate> = self.groups[1..]
+                .iter()
+                .filter_map(|group| match group.kind {
+                    GroupKind::Day(day) => Some(day),
+                    GroupKind::Session => None,
+                })
+                .collect();
+            let (slot, exists) = history::day_slot(&days, day);
+            let index = slot + 1;
+            if !exists {
+                self.groups.insert(
+                    index,
+                    Group {
+                        kind: GroupKind::Day(day),
+                        cards: Vec::new(),
+                        collapsed: false,
+                        drawn: false,
+                    },
+                );
+            }
+            self.groups[index].cards.insert(0, card);
+            self.groups[index].drawn = true;
+        }
+        self.groups[0].drawn = false;
+        self.rebuild_rows(cx);
+        cx.notify();
+    }
+
+    fn release_thumbnail(&self, card: &Card, window: &mut Window, cx: &mut Context<Self>) {
+        let source = Resource::from(card.files.thumbnail.clone());
+        self.thumbnails
+            .update(cx, |thumbnails, cx| thumbnails.remove(&source, window, cx));
+    }
+
+    /// Lets go of the thumbnails of every group with none of its cards near the view.
+    fn release_far_thumbnails(
+        &mut self,
+        near: &[bool],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for (index, near) in near.iter().enumerate() {
+            if self.groups[index].drawn && !near {
+                self.groups[index].drawn = false;
+                for card in &self.groups[index].cards {
+                    self.release_thumbnail(card, window, cx);
+                }
+            }
+        }
+    }
+
+    /// Starts fetching the next day if the list is close to running out and nothing holds it back.
+    /// Called each frame, so days keep coming until the view has filled.
+    fn fetch_when_near_bottom(
+        &mut self,
+        content: Pixels,
+        scrolled: Pixels,
+        viewport: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.show_previous
+            || !self.query.is_empty()
+            || self.fetch.is_some()
+            || self.next == Next::End
+        {
+            return;
+        }
+        if !history::near_bottom(content, scrolled, viewport, FETCH_AHEAD) {
+            return;
+        }
+        let (store, session, today, next) =
+            (self.store.clone(), self.session, self.today, self.next);
+        self.fetch = Some(cx.spawn_in(window, async move |this, cx| {
+            let page = cx
+                .background_spawn(async move { history::fetch_page(&store, session, today, next) })
+                .await;
+            match page {
+                Ok(page) => {
+                    this.update_in(cx, |this, window, cx| this.show_page(page, window, cx))
+                        .ok();
+                }
+                Err(_) => {
+                    this.update(cx, |this, cx| {
+                        this.fetch_failed = true;
+                        this.rebuild_rows(cx);
+                        cx.notify();
+                    })
+                    .ok();
+                    cx.background_executor().timer(RETRY_FETCH_AFTER).await;
+                    this.update(cx, |this, cx| {
+                        this.fetch = None;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        }));
+    }
+
+    /// Adds a fetched day below the groups listed so far, unless it holds nothing to list.
+    fn show_page(&mut self, page: Option<Page>, window: &mut Window, cx: &mut Context<Self>) {
+        self.fetch = None;
+        self.fetch_failed = false;
+        self.next = page.as_ref().map_or(Next::End, |page| page.next);
+        if let Some(page) = page.filter(|page| !page.cards.is_empty()) {
+            let cards = page
+                .cards
+                .into_iter()
+                .map(|new| self.new_card(new, window, cx))
+                .collect();
+            self.groups.push(Group {
+                kind: GroupKind::Day(page.day),
+                cards,
+                collapsed: false,
+                drawn: false,
+            });
+        }
+        self.rebuild_rows(cx);
+        cx.notify();
+    }
+
+    fn stored_card(&mut self, capture: CaptureId) -> Option<&mut Card> {
+        self.groups
             .iter_mut()
-            .find(|card| card.files.as_ref().is_some_and(|files| files.id == capture))
+            .flat_map(|group| &mut group.cards)
+            .find(|card| card.files.id == capture)
     }
 
     /// The store took the name. Returns whether the capture is saved, as its file keeps its name.
@@ -297,7 +468,7 @@ impl Gallery {
         name: String,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(card) = self.session_card(capture) else {
+        let Some(card) = self.stored_card(capture) else {
             return false;
         };
         card.capture.name = name;
@@ -316,7 +487,7 @@ impl Gallery {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(card) = self.session_card(capture) else {
+        let Some(card) = self.stored_card(capture) else {
             return;
         };
         card.name_error = Some(message.into());
@@ -333,7 +504,7 @@ impl Gallery {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(card) = self.session_card(capture) else {
+        let Some(card) = self.stored_card(capture) else {
             return;
         };
         if card.name_error.take().is_some() {
@@ -346,7 +517,7 @@ impl Gallery {
 
     /// Turns a card to Saved once its file is written.
     pub fn mark_saved(&mut self, capture: CaptureId, file: SavedFile, cx: &mut Context<Self>) {
-        if let Some(card) = self.session_card(capture) {
+        if let Some(card) = self.stored_card(capture) {
             card.capture.saved_path = Some(file.path);
             card.bytes = file.bytes;
             cx.notify();
@@ -366,17 +537,19 @@ impl Gallery {
             .cards
             .iter()
             .filter(|card| !card.capture.is_saved())
-            .filter_map(|card| card.files.as_ref().map(|files| files.id))
+            .map(|card| card.files.id)
             .collect()
     }
 
     /// Takes the session's unsaved cards away and returns how many there were. A focused card
     /// that goes with them stops being rendered, which the main window answers by refocusing.
     pub fn remove_unsaved(&mut self, cx: &mut Context<Self>) -> usize {
-        let cards = &mut self.groups[0].cards;
-        let before = cards.len();
-        cards.retain(|card| card.capture.is_saved());
-        let removed = before - cards.len();
+        let (kept, cleared): (Vec<Card>, Vec<Card>) = std::mem::take(&mut self.groups[0].cards)
+            .into_iter()
+            .partition(|card| card.capture.is_saved());
+        self.groups[0].cards = kept;
+        let removed = cleared.len();
+        self.cleared.extend(cleared);
         self.rebuild_rows(cx);
         cx.notify();
         removed
@@ -473,27 +646,21 @@ impl Gallery {
     }
 
     pub fn copy(&mut self, id: usize, cx: &mut Context<Self>) {
-        let capture = self.card(id).and_then(|card| Some(card.files.as_ref()?.id));
-        match capture {
-            Some(capture) => cx.emit(GalleryEvent::Copy { card: id, capture }),
-            None => {
-                self.show_copied(id, cx);
-                cx.emit(GalleryEvent::Copied);
-            }
+        if let Some(capture) = self.card(id).map(|card| card.files.id) {
+            cx.emit(GalleryEvent::Copy { card: id, capture });
         }
     }
 
-    /// A card's Save, or its Open folder once saved. A mock card has nothing to do either with.
+    /// A card's Save, or its Open folder once saved.
     pub fn save_or_open(&mut self, id: usize, cx: &mut Context<Self>) {
         let Some(card) = self.card(id) else {
             return;
         };
-        let Some(files) = &card.files else {
-            return;
-        };
         match card.capture.saved_path.clone() {
             Some(file) => cx.emit(GalleryEvent::OpenFolder { file }),
-            None => cx.emit(GalleryEvent::Save { capture: files.id }),
+            None => cx.emit(GalleryEvent::Save {
+                capture: card.files.id,
+            }),
         }
     }
 
@@ -521,7 +688,7 @@ impl Gallery {
     }
 
     /// The list's rows: each listed group's header, then its matching cards three to a row
-    /// unless it is collapsed, the loading row while earlier groups are listed, then the bottom
+    /// unless it is collapsed, the row for the next day while there is one, then the bottom
     /// padding. Only the session group is listed unless `show_previous`, and a search drops
     /// every other group it leaves empty.
     fn rebuild_rows(&mut self, cx: &gpui::App) {
@@ -564,7 +731,11 @@ impl Gallery {
             }
         }
         if self.show_previous {
-            rows.push(Row::Loading);
+            match self.next {
+                Next::Day(day) => rows.push(Row::NextDay(Some(day))),
+                Next::Unknown if self.fetch_failed => rows.push(Row::NextDay(None)),
+                _ => {}
+            }
         }
         rows.push(Row::Footer);
         self.rows = rows;
@@ -681,7 +852,7 @@ impl Gallery {
                     + theme.borders.earlier_rule.width
             }
             Row::Cards { .. } => self.card_height + px(GAP),
-            Row::NoMatch { .. } | Row::Loading => px(NOTICE_HEIGHT + GAP),
+            Row::NoMatch { .. } | Row::NextDay(_) => px(NOTICE_HEIGHT + GAP),
             Row::Footer if self.selection.is_empty() => px(PADDING_BOTTOM - GAP),
             Row::Footer => px(BULK_PADDING_BOTTOM - GAP),
         }
@@ -722,6 +893,11 @@ impl Gallery {
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         self.rendered = range.clone();
+        for row in range.clone() {
+            if let Row::Cards { group, .. } = self.rows[row] {
+                self.groups[group].drawn = true;
+            }
+        }
         let shown = self.shown();
         let current_rendered = shown
             .iter()
@@ -761,6 +937,7 @@ impl Gallery {
                                 select_mode: self.select_mode,
                                 selected: self.selection.contains(card.id),
                             },
+                            &self.thumbnails,
                             window,
                             cx,
                         )
@@ -774,16 +951,25 @@ impl Gallery {
                 theme,
                 cx,
             )),
-            Row::Loading => {
+            Row::NextDay(day) => {
                 let strings = &theme.strings;
-                let text = format!(
-                    "{}{}{}",
-                    strings.loading.0,
-                    day_date(mock::LOADING_DAY, strings.day_date),
-                    strings.loading.1
+                let date = day.map_or_else(
+                    || "earlier days".to_string(),
+                    |day| day_date(day, strings.day_date),
                 );
+                let (text, icon) = if !self.query.is_empty() {
+                    (
+                        format!("Searching loaded days only · {date} and earlier not loaded"),
+                        None,
+                    )
+                } else if self.fetch_failed {
+                    (format!("Couldn't load {date}. Trying again…"), None)
+                } else {
+                    let (before, after) = strings.loading;
+                    (format!("{before}{date}{after}"), Some(Icon::Spinner))
+                };
                 base.pb(px(GAP))
-                    .child(notice("loading", text, Some(Icon::Spinner), theme, cx))
+                    .child(notice("next-day", text, icon, theme, cx))
             }
             Row::Footer => base,
         }
@@ -814,12 +1000,11 @@ impl Gallery {
                 ),
                 c.text,
             ),
-            ref kind => (
-                match kind {
-                    GroupKind::Day(date) => {
-                        format!("{}{}", strings.earlier, day_date(*date, strings.day_date))
-                    }
-                    _ => strings.earlier_today.to_string(),
+            GroupKind::Day(date) => (
+                if date == self.today {
+                    strings.earlier_today.to_string()
+                } else {
+                    format!("{}{}", strings.earlier, day_date(date, strings.day_date))
                 },
                 format!(
                     "{} · {} unsaved · shown because “Show previous” is on",
@@ -965,12 +1150,32 @@ impl Render for Gallery {
                 .map(|row| size(px(1.), self.row_height(row, theme)))
                 .collect(),
         );
+        let content = sizes.iter().fold(px(0.), |sum, row| sum + row.height);
+        let rows = self.rows.iter().zip(sizes.iter()).map(|(row, size)| {
+            let group = match row {
+                Row::Cards { group, .. } => Some(*group),
+                _ => None,
+            };
+            (group, size.height)
+        });
+        let scrolled = -self.scroll.offset().y;
+        let viewport = self.scroll.bounds().size.height;
+        let near = history::groups_near(
+            rows,
+            scrolled - viewport * KEEP_VIEWS..scrolled + viewport * (1. + KEEP_VIEWS),
+            self.groups.len(),
+        );
         let list = v_virtual_list(cx.entity(), "gallery", sizes, |this, range, window, cx| {
             this.render_rows(range, window, cx)
         })
         .track_scroll(&self.scroll);
         let jump = theme.strings.back_to_session;
         let gallery = cx.entity();
+        for card in std::mem::take(&mut self.cleared) {
+            self.release_thumbnail(&card, window, cx);
+        }
+        self.release_far_thumbnails(&near, window, cx);
+        self.fetch_when_near_bottom(content, scrolled, viewport, window, cx);
         div()
             .relative()
             .size_full()
@@ -1014,40 +1219,32 @@ impl Render for Gallery {
     }
 }
 
-/// A card for `capture`, with its name field. The field's `Window` is why the main window passes
-/// one into `add_session_card`. A real card's name goes to the store as it is typed, and the store
-/// refuses what it can't take; a renamed card must also still be found by its new name, so a
-/// search filters it again afterwards.
-fn new_card(
-    id: usize,
-    files: Option<CardFiles>,
-    capture: Capture,
-    bytes: u64,
-    window: &mut Window,
-    cx: &mut Context<Gallery>,
-) -> Card {
+/// A card for a capture, with its name field. The field's `Window` is why the main window passes
+/// one into `add_session_card`. The name goes to the store as it is typed, and the store refuses
+/// what it can't take; a renamed card must also still be found by its new name, so a search
+/// filters it again afterwards.
+fn new_card(id: usize, new: NewCard, window: &mut Window, cx: &mut Context<Gallery>) -> Card {
+    let NewCard {
+        files,
+        capture,
+        bytes,
+    } = new;
     let text = capture.name.clone();
     let name = cx.new(|cx| InputState::new(window, cx).default_value(text));
-    let stored = files.as_ref().map(|files| files.id);
+    let stored = files.id;
     cx.subscribe_in(
         &name,
         window,
         move |this, name, event: &InputEvent, window, cx| match event {
-            InputEvent::Change => {
-                if let Some(capture) = stored {
-                    cx.emit(GalleryEvent::Renamed {
-                        capture,
-                        name: name.read(cx).value().to_string(),
-                    });
-                }
-            }
+            InputEvent::Change => cx.emit(GalleryEvent::Renamed {
+                capture: stored,
+                name: name.read(cx).value().to_string(),
+            }),
             // The field also blurs when the window is deactivated, though the edit isn't over: it
             // keeps focus and blurs again, with the window active, when the user does leave it.
             InputEvent::Blur if window.is_window_active() => {
                 // Leaving the field gives up on a name that wasn't accepted.
-                if let Some(capture) = stored {
-                    this.restore_refused_name(capture, window, cx);
-                }
+                this.restore_refused_name(stored, window, cx);
                 // Filtering a renamed card as it is typed would drop it from the list mid-edit,
                 // taking the rest of the typing with it, so it is filtered once the edit is over.
                 if !this.query.is_empty() {

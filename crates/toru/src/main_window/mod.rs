@@ -1,9 +1,10 @@
 //! The main window (DESIGN.md §2): title bar, capture toolbar, the body with the gallery and the
 //! settings column, then the bottom bar, with the toast above it. While anything is selected the
 //! bulk bar (§4) floats over the gallery's foot in the bottom bar's place. Opening a card in the
-//! editor (§5) replaces everything under the title bar with it. This session's captures are real
-//! (`captures`, `actions`); the earlier groups are mock until 7.1. Each choice that is a
-//! setting reads and writes `Settings`, every write going through `change_settings` to the store.
+//! editor (§5) replaces everything under the title bar with it. Captures come in through
+//! `captures`, the gallery's buttons act on them in `actions`, and the gallery pages through
+//! earlier days itself (`history`). Each choice that is a setting reads and writes `Settings`,
+//! every write going through `change_settings` to the store.
 
 mod actions;
 mod bottom_bar;
@@ -13,7 +14,7 @@ mod card;
 mod closing;
 mod delayed;
 mod gallery;
-mod mock;
+mod history;
 mod selection;
 mod settings;
 mod title_bar;
@@ -32,6 +33,7 @@ use toru_core::{
     naming::{NameError, validate_pattern},
     settings::Settings,
     store::{SessionId, Store},
+    time::{LocalDate, LocalDateTime},
 };
 
 use crate::editor::{Editor, EditorEvent, document};
@@ -47,6 +49,9 @@ pub const WINDOW_TITLE: &str = "Toru";
 const TOAST_FOR: Duration = Duration::from_secs(2);
 /// `.hint`'s `line-height: 1.45`.
 const HINT_LEADING: f32 = 1.45;
+/// How often the date is looked at. A timer set for midnight would be wrong after a sleep or a
+/// changed clock, so the date itself is checked often, whatever the window is doing.
+const DAY_CHECK_EVERY: Duration = Duration::from_secs(10);
 
 /// A display Full screen can capture, as the picker shows it.
 struct Display {
@@ -58,6 +63,9 @@ struct Display {
 pub struct MainWindow {
     store: Arc<Store>,
     session: SessionId,
+    /// The date this session is for. It moves on as soon as a change of date is seen, ahead of
+    /// `session`, which follows on the queue.
+    day: LocalDate,
     settings: Settings,
     /// The Region button, focused when the window opens so Tab works from the start (spike 1.5).
     first: FocusHandle,
@@ -148,12 +156,11 @@ impl MainWindow {
         });
         let now = platform::local_now();
         let gallery = cx.new(|cx| {
-            let mut gallery = Gallery::new(now.date, window, cx);
+            let mut gallery = Gallery::new(store.clone(), session, now.date, window, cx);
             gallery.set_width(gallery_width(&settings, window), window.scale_factor());
             gallery
         });
         cx.subscribe(&gallery, |this, _, event: &GalleryEvent, cx| match event {
-            GalleryEvent::Copied => this.report_copy(Ok(()), cx),
             GalleryEvent::Copy { card, capture } => this.copy_card(*card, *capture, cx),
             GalleryEvent::Renamed { capture, name } => {
                 this.rename_capture(*capture, name.clone(), cx)
@@ -176,9 +183,20 @@ impl MainWindow {
             }
         })
         .detach();
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(DAY_CHECK_EVERY).await;
+                let checked = this.update(cx, |this, cx| this.check_day(platform::local_now(), cx));
+                if checked.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
         MainWindow {
             store,
             session,
+            day: now.date,
             settings,
             first,
             gear: cx.focus_handle().tab_stop(true),
@@ -206,32 +224,62 @@ impl MainWindow {
         }
     }
 
-    /// Opens the card with `id` in the editor. A real card's picture is read back from where the
-    /// store keeps it, on the capture queue, since a Save queued ahead moves it; if it can't be
-    /// read the editor doesn't open and a toast says so, as Copy does. A mock card gets the
-    /// mockups' stand-in picture. "Open editor after capture" calls this with the new card's id.
+    /// Ends the session and starts another if the date is no longer the session's. It goes on the
+    /// queue so that captures already on their way land in the session they were taken in.
+    fn check_day(&mut self, now: LocalDateTime, cx: &mut Context<Self>) {
+        if now.date == self.day {
+            return;
+        }
+        let previous = std::mem::replace(&mut self.day, now.date);
+        let store = self.store.clone();
+        self.enqueue(cx, async move |this, cx| {
+            let session = cx
+                .background_spawn(async move { store.new_session() })
+                .await;
+            this.update(cx, |this, cx| match session {
+                Ok(session) => this.start_session(session, now, cx),
+                // The next check tries again.
+                Err(_) => this.day = previous,
+            })
+            .ok();
+        });
+    }
+
+    fn start_session(&mut self, session: SessionId, now: LocalDateTime, cx: &mut Context<Self>) {
+        self.session = session;
+        self.session_started = now.clock().into();
+        let gallery = self.gallery.clone();
+        self.window
+            .update(cx, |_, window, cx| {
+                gallery.update(cx, |gallery, cx| {
+                    gallery.end_session(session, now.date, window, cx)
+                })
+            })
+            .ok();
+        cx.notify();
+    }
+
+    /// Opens the card with `id` in the editor. Its picture is read back from where the store
+    /// keeps it, on the capture queue, since a Save queued ahead moves it; if it can't be read
+    /// the editor doesn't open and a toast says so, as Copy does. "Open editor after capture"
+    /// calls this with the new card's id.
     pub fn open_editor(&mut self, id: usize, cx: &mut Context<Self>) {
-        let Some((capture, name, files)) = self.gallery.read(cx).card(id).map(|card| {
-            let files = card.files.as_ref().map(|files| files.id);
-            (card.capture.clone(), card.name.clone(), files)
-        }) else {
+        let Some((capture, name, stored)) = self
+            .gallery
+            .read(cx)
+            .card(id)
+            .map(|card| (card.capture.clone(), card.name.clone(), card.files.id))
+        else {
             return;
         };
-        let mock = files
-            .is_none()
-            .then(|| mock::image(capture.width, capture.height, cx.theme()));
         let store = self.store.clone();
         let window = self.window;
         self.enqueue(cx, async move |this, cx| {
-            let picture = match (files, mock) {
-                (Some(capture), _) => {
-                    cx.background_spawn(async move {
-                        document::load_picture(&store.full_image_path(capture).ok()?)
-                    })
-                    .await
-                }
-                (None, mock) => mock,
-            };
+            let picture = cx
+                .background_spawn(async move {
+                    document::load_picture(&store.full_image_path(stored).ok()?)
+                })
+                .await;
             cx.update_window(window, |_, window, cx| {
                 this.update(cx, |this, cx| match picture {
                     Some(base) => this.show_editor(capture, name, base, window, cx),

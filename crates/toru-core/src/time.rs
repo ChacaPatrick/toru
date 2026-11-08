@@ -5,8 +5,9 @@ const MONTHS: [&str; 12] = [
 ];
 const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-/// A date in local time. `month` is 1 to 12 and `day` is 1 to 31.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A date in local time. `month` is 1 to 12 and `day` is 1 to 31. Dates order from earliest to
+/// latest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LocalDate {
     pub year: u16,
     pub month: u8,
@@ -14,6 +15,13 @@ pub struct LocalDate {
 }
 
 impl LocalDate {
+    /// After every date the store can hold.
+    pub const LATEST: LocalDate = LocalDate {
+        year: u16::MAX,
+        month: 12,
+        day: 31,
+    };
+
     /// "Nov", or "???" for a month outside 1 to 12, which a date read back from a damaged
     /// database may have.
     pub fn month_short(self) -> &'static str {

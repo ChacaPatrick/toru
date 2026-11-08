@@ -51,14 +51,19 @@ impl MainWindow {
     /// Where every capture enters the app, whichever way it was taken.
     pub fn add_capture(&mut self, image: RgbaImage, mode: CaptureMode, cx: &mut Context<Self>) {
         let taken_at = platform::local_now();
+        // A capture just after midnight mustn't wait for the next check to land in the new day.
+        self.check_day(taken_at, cx);
         let pattern = self.settings.name_pattern.clone();
         let copy = self.settings.copy_on_capture;
         let open_editor = self.settings.open_editor_after_capture;
         let auto_save = self.auto_save_target();
         let store = self.store.clone();
-        let session = self.session;
         let thumbnail_width = self.gallery.read(cx).thumbnail_width();
         self.enqueue(cx, async move |this, cx| {
+            // Asked here, as a change of session queued ahead of this has only now finished.
+            let Ok(session) = this.read_with(cx, |this, _| this.session) else {
+                return;
+            };
             let (stored, auto_saved, image) = cx
                 .background_spawn(async move {
                     let shot = Shot {

@@ -5,8 +5,8 @@
 
 use std::{path::Path, sync::Arc};
 
-use gpui::{Hsla, RenderImage, Rgba, Size, size};
-use tiny_skia::{Color, IntSize, Pixmap};
+use gpui::{RenderImage, Size, size};
+use tiny_skia::{IntSize, Pixmap};
 use xcap::image::{Frame, RgbaImage};
 
 /// Undo and redo over a value: every edit keeps the value before it.
@@ -170,14 +170,10 @@ fn pixmap_from_rgba(image: RgbaImage) -> Option<Pixmap> {
     Pixmap::from_vec(data, size)
 }
 
-/// A theme colour as `tiny-skia` takes it.
-pub fn skia_color(color: Hsla) -> Color {
-    let Rgba { r, g, b, a } = color.into();
-    Color::from_rgba(r, g, b, a).expect("GPUI colours are within 0..=1")
-}
-
 #[cfg(test)]
 mod tests {
+    use tiny_skia::Color;
+
     use super::*;
 
     #[test]
@@ -253,14 +249,5 @@ mod tests {
         assert_eq!((pixmap.width(), pixmap.height()), (2, 1));
         assert_eq!(pixmap.data(), [0, 20, 30, 255, 1, 20, 30, 255]);
         assert!(pixmap_from_rgba(RgbaImage::new(0, 0)).is_none());
-    }
-
-    #[test]
-    fn theme_colours_convert_channel_for_channel() {
-        let color = skia_color(gpui::rgb(0x2b2a26).into());
-        let rgba: Rgba = gpui::Hsla::from(gpui::rgb(0x2b2a26)).into();
-        assert!((color.red() - rgba.r).abs() < 1e-6);
-        assert!((color.blue() - rgba.b).abs() < 1e-6);
-        assert_eq!(color.alpha(), 1.);
     }
 }

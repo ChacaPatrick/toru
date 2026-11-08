@@ -96,9 +96,11 @@ impl MainWindow {
     /// Puts this session's captures on the clipboard as files.
     pub(super) fn copy_all(&mut self, cx: &mut Context<Self>) {
         let store = self.store.clone();
-        let session = self.session;
         let format = self.settings.format;
         self.enqueue(cx, async move |this, cx| {
+            let Ok(session) = this.read_with(cx, |this, _| this.session) else {
+                return;
+            };
             let copied = cx
                 .background_spawn(async move { copy_session(&store, session, format, copy_files) })
                 .await;
@@ -127,8 +129,10 @@ impl MainWindow {
     /// with the rest, and a Save already asked for is finished first.
     pub(super) fn clear_unsaved(&mut self, cx: &mut Context<Self>) {
         let store = self.store.clone();
-        let session = self.session;
         self.enqueue(cx, async move |this, cx| {
+            let Ok(session) = this.read_with(cx, |this, _| this.session) else {
+                return;
+            };
             let cleared = cx
                 .background_spawn(async move { store.discard_unsaved(session) })
                 .await;

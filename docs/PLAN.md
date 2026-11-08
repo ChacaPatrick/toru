@@ -50,7 +50,7 @@ The local date and time come from `GetLocalTime` in `crates/toru/src/platform.rs
 - [ ] 6.2 Rebindable shortcuts, including per-display shortcuts and their setting, and conflict messages **[Fable for the dialog]**
 
 ## Phase 7: History
-- [ ] 7.1 Load a day at a time, plus the midnight reset
+- [x] 7.1 Load a day at a time, plus the midnight reset
 - [ ] 7.2 "Delete unsaved after" setting and cleanup
 
 ## Phase 8: Editor [Fable]

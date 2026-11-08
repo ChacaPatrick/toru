@@ -18,8 +18,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Context, Div, MouseButton, ObjectFit, Pixels, Role, Stateful, Window, div,
-    img, linear_color_stop, linear_gradient, prelude::*, px,
+    AnyElement, App, Context, Div, Entity, MouseButton, ObjectFit, Pixels, RetainAllImageCache,
+    Role, Stateful, Window, div, img, linear_color_stop, linear_gradient, prelude::*, px,
 };
 use toru_core::time::LocalDate;
 
@@ -117,7 +117,10 @@ pub fn height(card_width: Pixels, theme: &Theme, window: &Window, cx: &gpui::App
 pub fn file_size(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = KB * KB;
-    if bytes >= MB {
+    if bytes == 0 {
+        // History couldn't read the file, so the size isn't known.
+        "Size unknown".to_string()
+    } else if bytes >= MB {
         format!("{:.1} MB", bytes as f64 / MB as f64)
     } else {
         format!("{} KB", bytes.div_ceil(KB))
@@ -142,6 +145,7 @@ pub fn render(
     position: usize,
     today: LocalDate,
     state: State,
+    thumbnails: &Entity<RetainAllImageCache>,
     window: &Window,
     cx: &Context<Gallery>,
 ) -> AnyElement {
@@ -293,12 +297,14 @@ pub fn render(
             // A double-click on the thumbnail opens the editor (DESIGN.md §5), outside select
             // mode, where every click is a press (§4) and Enter opens (§7). Any other click
             // goes on to the card.
-            thumbnail(card, position, today, size, theme, cx).on_click(move |event, window, cx| {
-                if event.click_count() == 2 && !select_mode {
-                    cx.stop_propagation();
-                    open_editor_by_click(window, cx);
-                }
-            }),
+            thumbnail(card, position, today, size, thumbnails, theme, cx).on_click(
+                move |event, window, cx| {
+                    if event.click_count() == 2 && !select_mode {
+                        cx.stop_propagation();
+                        open_editor_by_click(window, cx);
+                    }
+                },
+            ),
         )
         .child(
             TextField::new(&card.name, "Screenshot name")
@@ -332,13 +338,14 @@ pub fn empty_slot(theme: &Theme) -> impl IntoElement {
         .border(theme.borders.card.width)
 }
 
-/// The theme's fill with the capture's thumbnail over it, under the caption tag. A mock card, or
-/// one whose file hasn't loaded, shows the fill alone.
+/// The theme's fill with the capture's thumbnail over it, under the caption tag. A thumbnail not
+/// loaded yet, or whose file has gone, leaves the fill showing.
 fn thumbnail(
     card: &Card,
     position: usize,
     today: LocalDate,
     size: String,
+    thumbnails: &Entity<RetainAllImageCache>,
     theme: &Theme,
     cx: &App,
 ) -> Stateful<Div> {
@@ -360,14 +367,13 @@ fn thumbnail(
         linear_color_stop(c.thumb_shade, 1.),
     );
     let tag = theme.type_scale.tag;
-    let image = card.files.as_ref().map(|files| {
-        img(files.thumbnail.clone())
-            .absolute()
-            .inset_0()
-            .size_full()
-            .rounded(radius)
-            .object_fit(ObjectFit::Cover)
-    });
+    let image = img(card.files.thumbnail.clone())
+        .image_cache(thumbnails)
+        .absolute()
+        .inset_0()
+        .size_full()
+        .rounded(radius)
+        .object_fit(ObjectFit::Cover);
 
     div()
         .id("thumb")
@@ -380,7 +386,7 @@ fn thumbnail(
         .border_color(border.color)
         .tooltip(Tooltip::build(size))
         .child(fill(fill_choice, radius))
-        .children(image)
+        .child(image)
         .child(div().absolute().inset_0().rounded(radius).bg(shade))
         .child(
             div()
@@ -419,6 +425,7 @@ mod tests {
 
     #[test]
     fn file_sizes_read_like_a_file_manager() {
+        assert_eq!(file_size(0), "Size unknown");
         assert_eq!(file_size(500), "1 KB");
         assert_eq!(file_size(412 * 1024), "412 KB");
         assert_eq!(file_size(1_468_006), "1.4 MB");
