@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Selection mode – bulk actions</title>
+
+</head>
+<body>
+
+
+<style>
+body{margin:0;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:#222;background:#fff}
+a{color:#444}a:hover{color:#111}
+.btn{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 14px;border:2px solid #444;border-radius:6px;background:#fff;font:inherit;font-size:14px;color:#222;cursor:pointer;white-space:nowrap}
+.btn.primary{background:#444;color:#fff;border-color:#444}
+.btn.sm{height:32px;padding:0 10px;font-size:13px}
+.btn.ghost{border-color:transparent}
+.btn.danger{border-color:#444;color:#222}
+.btn[disabled]{opacity:.45;cursor:default}
+.card{border:2px solid #444;border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:8px;background:#fff;min-width:0;position:relative}
+.card.sel{outline:3px solid #444;outline-offset:3px;background:#f3f3f3}
+.thumb{height:140px;border:2px dashed #888;border-radius:4px;position:relative;background:#f3f3f3;overflow:hidden}
+.thumb svg{position:absolute;inset:0;width:100%;height:100%}
+.thumb .tag{position:absolute;left:8px;bottom:6px;font-size:11px;color:#555;background:#fff;padding:1px 6px;border-radius:4px}
+.check{position:absolute;left:18px;top:18px;width:26px;height:26px;border:2px solid #444;border-radius:6px;background:#fff;display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;color:#fff}
+.check.on{background:#444}
+.name{height:34px;border:2px solid #444;border-radius:6px;padding:0 10px;font:inherit;font-size:13px;width:100%;box-sizing:border-box;color:#222;background:#fff}
+.chip{font-size:11px;padding:2px 8px;border:1.5px solid #666;border-radius:999px;color:#444;white-space:nowrap}
+.chip.saved{background:#444;color:#fff;border-color:#444}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.hint{font-size:12px;color:#555;line-height:1.4}
+.tab{height:38px;padding:0 16px;border:0;border-bottom:3px solid transparent;background:none;font:inherit;font-size:15px;color:#555;cursor:pointer}
+.tab.on{color:#222;font-weight:600;border-bottom-color:#333}
+.bulk{position:absolute;left:50%;transform:translateX(-50%);bottom:20px;display:flex;align-items:center;gap:6px;padding:8px 10px;border-radius:12px;background:#333;color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.25);white-space:nowrap}
+.bulk button{height:36px;padding:0 12px;border:0;border-radius:7px;background:transparent;color:#fff;font:inherit;font-size:14px;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+.bulk button.main{background:#fff;color:#222}
+.bulk button[disabled]{opacity:.4;cursor:default}
+.bulk .vsep{width:2px;height:24px;background:#666;margin:0 4px}
+</style>
+
+
+<div style="width: 100%; min-height: 700px; display: flex; flex-direction: column; box-sizing: border-box; border: 2px solid #333; position: relative; overflow: hidden">
+
+  <!-- Gallery header: tabs + Select mode on -->
+  <div style="padding: 0 16px; display: flex; flex-direction: column; gap: 16px; flex: 1 1 auto">
+
+    <div class="row" style="border-bottom: 2px solid #ddd">
+      <div style="display: flex" role="tablist">
+        <button class="tab on" role="tab" aria-selected="true">This session (6)</button>
+        <button class="tab" role="tab" aria-selected="false">History</button>
+      </div>
+      <div style="display: flex; gap: 8px; padding-bottom: 6px; align-items: center">
+        <span class="hint">Select mode · click cards, Shift-click for a range, Ctrl+A for all</span>
+        <button class="btn sm">Select all</button>
+        <button class="btn sm primary">Done</button>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; padding-bottom: 90px">
+
+      <div class="card sel">
+        <button class="check on" aria-label="Selected" aria-pressed="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>
+        </button>
+        <div class="thumb">
+          <svg viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true"><path d="M0 0L100 60M100 0L0 60" stroke="#bbb" stroke-width="0.6"/></svg>
+          <span class="tag">1440×900 · Region · 2:31 PM</span>
+        </div>
+        <input class="name" value="screenshot_11_07_2026_6" aria-label="Screenshot name">
+        <div class="row"><span class="chip">Unsaved</span><span class="hint">no path yet</span></div>
+      </div>
+
+      <div class="card sel">
+        <button class="check on" aria-label="Selected" aria-pressed="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>
+        </button>
+        <div class="thumb">
+          <svg viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true"><path d="M0 0L100 60M100 0L0 60" stroke="#bbb" stroke-width="0.6"/></svg>
+          <span class="tag">820×610 · Window · 2:22 PM</span>
+        </div>
+        <input class="name" value="login-bug-repro" aria-label="Screenshot name">
+        <div class="row"><span class="chip saved">Saved ✓</span><span class="hint">…\Screenshots\login-bug-repro.png</span></div>
+      </div>
+
+      <div class="card">
+        <button class="check" aria-label="Not selected" aria-pressed="false"></button>
+        <div class="thumb">
+          <svg viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true"><path d="M0 0L100 60M100 0L0 60" stroke="#bbb" stroke-width="0.6"/></svg>
+          <span class="tag">2560×1440 · Full screen · 2:15 PM</span>
+        </div>
+        <input class="name" value="screenshot_11_07_2026_4" aria-label="Screenshot name">
+        <div class="row"><span class="chip">Unsaved</span></div>
+      </div>
+
+      <div class="card sel">
+        <button class="check on" aria-label="Selected" aria-pressed="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>
+        </button>
+        <div class="thumb">
+          <svg viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true"><path d="M0 0L100 60M100 0L0 60" stroke="#bbb" stroke-width="0.6"/></svg>
+          <span class="tag">1200×700 · Region · 2:14 PM</span>
+        </div>
+        <input class="name" value="screenshot_11_07_2026_3" aria-label="Screenshot name">
+        <div class="row"><span class="chip saved">Saved ✓</span><span class="hint">…\Screenshots\screenshot_11_07_2026_3.png</span></div>
+      </div>
+
+      <div class="card">
+        <button class="check" aria-label="Not selected" aria-pressed="false"></button>
+        <div class="thumb">
+          <svg viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true"><path d="M0 0L100 60M100 0L0 60" stroke="#bbb" stroke-width="0.6"/></svg>
+          <span class="tag">900×600 · Window · 2:12 PM</span>
+        </div>
+        <input class="name" value="screenshot_11_07_2026_2" aria-label="Screenshot name">
+        <div class="row"><span class="chip">Unsaved</span></div>
+      </div>
+
+      <div class="card">
+        <button class="check" aria-label="Not selected" aria-pressed="false"></button>
+        <div class="thumb">
+          <svg viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true"><path d="M0 0L100 60M100 0L0 60" stroke="#bbb" stroke-width="0.6"/></svg>
+          <span class="tag">640×420 · Region · 2:10 PM</span>
+        </div>
+        <input class="name" value="screenshot_11_07_2026" aria-label="Screenshot name">
+        <div class="row"><span class="chip">Unsaved</span></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Floating bulk action bar: replaces the normal bottom bar while anything is selected -->
+  <div class="bulk" role="toolbar" aria-label="Bulk actions">
+    <span style="font-size: 14px; padding: 0 8px; font-weight: 600">3 selected</span>
+    <span class="hint" style="color: #ccc; padding-right: 6px">2 saved · 1 unsaved</span>
+    <div class="vsep"></div>
+    <button class="main">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5h10"/></svg>
+      Copy as files
+    </button>
+    <button>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      Copy paths
+      <span style="font-size: 11px; color: #ccc">(2)</span>
+    </button>
+    <button>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2zM17 21v-8H7v8M7 3v5h8"/></svg>
+      Save
+      <span style="font-size: 11px; color: #ccc">(1 new)</span>
+    </button>
+    <button>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 7l9 6 9-6M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7M3 7l9-4 9 4"/></svg>
+      Merge ▾
+    </button>
+    <div class="vsep"></div>
+    <button>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg>
+      Delete
+    </button>
+    <button aria-label="Clear selection" style="padding: 0 10px">✕</button>
+  </div>
+
+</div>
+
+
+</body>
+</html>

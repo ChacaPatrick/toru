@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Main window – History tab</title>
+
+</head>
+<body>
+
+
+<style>
+body{margin:0;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:#222;background:#fff}
+a{color:#444}a:hover{color:#111}
+.btn{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 14px;border:2px solid #444;border-radius:6px;background:#fff;font:inherit;font-size:14px;color:#222;cursor:pointer;white-space:nowrap}
+.btn.primary{background:#444;color:#fff;border-color:#444}
+.btn.sm{height:32px;padding:0 10px;font-size:13px}
+.btn.icon{width:32px;padding:0;justify-content:center}
+.card{border:2px solid #444;border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:8px;background:#fff;min-width:0}
+.thumb{height:140px;border:2px dashed #888;border-radius:4px;position:relative;background:#f3f3f3;overflow:hidden}
+.thumb svg{position:absolute;inset:0;width:100%;height:100%}
+.thumb .tag{position:absolute;left:8px;bottom:6px;font-size:11px;color:#555;background:#fff;padding:1px 6px;border-radius:4px}
+.name{height:34px;border:2px solid #444;border-radius:6px;padding:0 10px;font:inherit;font-size:13px;width:100%;box-sizing:border-box;color:#222;background:#fff}
+.chip{font-size:11px;padding:2px 8px;border:1.5px solid #666;border-radius:999px;color:#444;white-space:nowrap}
+.chip.saved{background:#444;color:#fff;border-color:#444}
+.toggle{width:44px;height:24px;border:2px solid #444;border-radius:999px;position:relative;flex:none;background:#fff;padding:0;cursor:pointer}
+.toggle::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#444}
+.toggle.on{background:#444}.toggle.on::after{left:23px;background:#fff}
+.label{font-size:12px;color:#555;text-transform:uppercase;letter-spacing:.04em}
+.field{height:36px;border:2px solid #444;border-radius:6px;padding:0 10px;display:flex;align-items:center;font-size:13px;color:#333;overflow:hidden;white-space:nowrap;background:#fff;min-width:0}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.hint{font-size:12px;color:#555;line-height:1.4}
+.radio{width:18px;height:18px;border:2px solid #444;border-radius:50%;flex:none;position:relative;background:#fff;padding:0}
+.radio.on::after{content:"";position:absolute;inset:3px;border-radius:50%;background:#444}
+.seg{display:flex;border:2px solid #444;border-radius:6px;overflow:hidden}
+.seg button{flex:1;height:32px;border:0;background:#fff;font:inherit;font-size:13px;color:#222;cursor:pointer}
+.seg button.on{background:#444;color:#fff}
+.tab{height:38px;padding:0 16px;border:0;border-bottom:3px solid transparent;background:none;font:inherit;font-size:15px;color:#555;cursor:pointer}
+.tab.on{color:#222;font-weight:600;border-bottom-color:#333}
+.day{display:flex;align-items:center;gap:10px;margin-top:4px}
+.day h3{margin:0;font-size:14px;font-weight:600;color:#444}
+.day span{font-size:12px;color:#555}
+.day::after{content:"";flex:1;height:2px;background:#ddd}
+.btn.done{background:#fff;border-color:#444;color:#222}
+.toast{position:absolute;left:50%;transform:translateX(-50%);bottom:76px;display:flex;align-items:center;gap:8px;height:40px;padding:0 16px;border-radius:8px;background:#333;color:#fff;font-size:14px;box-shadow:0 4px 14px rgba(0,0,0,.18);white-space:nowrap}
+</style>
+
+
+<div style="width: 100%; min-height: 820px; display: flex; flex-direction: column; box-sizing: border-box; border: 2px solid #333; position: relative">
+
+  <!-- Window title bar -->
+  <div style="height: 36px; display: flex; align-items: center; justify-content: space-between; padding: 0 0 0 14px; border-bottom: 2px solid #333; background: #f7f7f7">
+    <div style="display: flex; align-items: center; gap: 10px; font-size: 13px; color: #333">
+      <div style="width: 16px; height: 16px; border: 2px solid #444; border-radius: 3px" aria-hidden="true"></div>
+      <span>Snapshot — session started 2:14 PM</span>
+    </div>
+    <div style="display: flex" aria-hidden="true">
+      <div style="width: 46px; height: 36px; border-left: 2px solid #333; display: flex; align-items: center; justify-content: center; font-size: 14px">–</div>
+      <div style="width: 46px; height: 36px; border-left: 2px solid #333; display: flex; align-items: center; justify-content: center; font-size: 14px">▢</div>
+      <div style="width: 46px; height: 36px; border-left: 2px solid #333; display: flex; align-items: center; justify-content: center; font-size: 14px">✕</div>
+    </div>
+  </div>
+
+  <!-- Capture toolbar -->
+  <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 2px solid #333">
+    <button class="btn primary">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4"/></svg>
+      Region
+    </button>
+    <button class="btn">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg>
+      Window
+    </button>
+    <button class="btn">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+      Full screen
+      <span style="font-size: 12px; color: #555; border-left: 1px solid #888; padding-left: 8px">Display 1 ▾</span>
+    </button>
+    <button class="btn">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+      Delayed
+      <span style="font-size: 12px; color: #555; border-left: 1px solid #888; padding-left: 8px">5 s ▾</span>
+    </button>
+    <span class="hint" style="margin-left: 4px">Shortcut: PrtScn · Ctrl+Shift+S</span>
+    <div style="flex: 1 1 40px"></div>
+    <button class="btn">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      New session
+    </button>
+    <button class="btn icon" aria-label="Settings">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.5-2.3 1a7 7 0 0 0-1.7-1L14.5 3h-5l-.4 2.6a7 7 0 0 0-1.7 1l-2.3-1-2 3.5 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.5 2.3-1a7 7 0 0 0 1.7 1l.4 2.6h5l.4-2.6a7 7 0 0 0 1.7-1l2.3 1 2-3.5-2-1.5c.1-.3.1-.7.1-1z"/></svg>
+    </button>
+  </div>
+
+  <!-- Body: gallery + settings -->
+  <div style="display: flex; flex-wrap: wrap; flex: 1 1 auto; min-height: 0">
+
+    <!-- Gallery with tabs -->
+    <div style="flex: 999 1 560px; min-width: 0; padding: 0 16px 16px; display: flex; flex-direction: column; gap: 16px">
+
+      <div class="row" style="border-bottom: 2px solid #ddd">
+        <div style="display: flex" role="tablist">
+          <button class="tab" role="tab" aria-selected="false">This session (3)</button>
+          <button class="tab on" role="tab" aria-selected="true">History</button>
+        </div>
+        <div style="display: flex; gap: 8px; padding-bottom: 6px">
+          <div class="field" style="height: 32px; width: 200px; color: #777">Search names…</div>
+          <button class="btn sm">Unsaved only</button>
+        </div>
+      </div>
+
+      <p class="hint" style="margin: 0">Everything captured before this session, newest first. Loads a day at a time as you scroll — nothing older is read until you get there.</p>
+
+      <div class="day"><h3>Thu, Nov 6</h3><span>3 captures · 1 saved</span></div>
+      <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px">
+
+        <div class="card">
+          <div class="thumb">
+            <svg viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true"><path d="M0 0L100 60M100 0L0 60" stroke="#bbb" stroke-width="0.6"/></svg>
+            <span class="tag">1200×700 · Region · 4:48 PM</span>
+          </div>
+          <input class="name" value="screenshot_11_06_2026_3" aria-label="Screenshot name">
+          <div class="row">
+            <span class="chip">Unsaved</span>
+            <div style="display: flex; gap: 6px">
+              <button class="btn sm done" aria-label="Copied" style="width: 58px; justify-content: center">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>
+              </button>
+              <button class="btn sm primary">Save</button>
+              <button class="btn sm icon" aria-label="More">⋯</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="thumb">
+            <svg viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true"><path d="M0 0L100 60M100 0L0 60" stroke="#bbb" stroke-width="0.6"/></svg>
+            <span class="tag">640×420 · Window · 4:40 PM</span>
+          </div>
+          <input class="name" value="invoice-total-wrong" aria-label="Screenshot name">
+          <div class="row">
+            <span class="chip saved">Saved ✓</span>
+            <div style="display: flex; gap: 6px">
+              <button class="btn sm">Copy</button>
+              <button class="btn sm">Open folder</button>
+              <button class="btn sm icon" aria-label="More">⋯</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="thumb">
+            <svg viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true"><path d="M0 0L100 60M100 0L0 60" stroke="#bbb" stroke-width="0.6"/></svg>
+            <span class="tag">2560×1440 · Full screen · 9:02 AM</span>
+          </div>
+          <input class="name" value="screenshot_11_06_2026" aria-label="Screenshot name">
+          <div class="row">
+            <span class="chip">Unsaved</span>
+            <div style="display: flex; gap: 6px">
+              <button class="btn sm">Copy</button>
+              <button class="btn sm primary">Save</button>
+              <button class="btn sm icon" aria-label="More">⋯</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="day"><h3>Tue, Nov 4</h3><span>1 capture · saved</span></div>
+      <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px">
+
+        <div class="card">
+          <div class="thumb">
+            <svg viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true"><path d="M0 0L100 60M100 0L0 60" stroke="#bbb" stroke-width="0.6"/></svg>
+            <span class="tag">900×600 · Region · 11:15 AM</span>
+          </div>
+          <input class="name" value="screenshot_11_04_2026" aria-label="Screenshot name">
+          <div class="row">
+            <span class="chip saved">Saved ✓</span>
+            <div style="display: flex; gap: 6px">
+              <button class="btn sm">Copy</button>
+              <button class="btn sm">Open folder</button>
+              <button class="btn sm icon" aria-label="More">⋯</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Lazy-load marker: appears while the next day group is being read -->
+      <div style="display: flex; align-items: center; justify-content: center; gap: 10px; height: 44px; border: 2px dashed #bbb; border-radius: 8px; color: #555; font-size: 13px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/></svg>
+        Loading Mon, Nov 3 …
+      </div>
+
+    </div>
+
+    <!-- Settings column (no "Show previous" toggle here — History tab replaces it) -->
+    <div style="flex: 0 1 300px; min-width: 0; border-left: 2px solid #333; padding: 16px; display: flex; flex-direction: column; gap: 22px; background: #fafafa">
+
+      <div style="display: flex; flex-direction: column; gap: 12px">
+        <span class="label">Capture</span>
+        <div class="row">
+          <label for="t-clip" style="font-size: 14px">Copy to clipboard on capture</label>
+          <button id="t-clip" class="toggle on" role="switch" aria-checked="true" aria-label="Copy to clipboard on capture"></button>
+        </div>
+        <div class="row">
+          <label for="t-auto" style="font-size: 14px">Auto-save every capture</label>
+          <button id="t-auto" class="toggle" role="switch" aria-checked="false" aria-label="Auto-save every capture"></button>
+        </div>
+        <div class="row">
+          <label for="t-tray" style="font-size: 14px">Keep running in the tray</label>
+          <button id="t-tray" class="toggle on" role="switch" aria-checked="true" aria-label="Keep running in the tray"></button>
+        </div>
+        <div class="row">
+          <label for="t-edit" style="font-size: 14px">Open editor after capture</label>
+          <button id="t-edit" class="toggle" role="switch" aria-checked="false" aria-label="Open editor after capture"></button>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <span class="label">Shortcuts</span>
+        <div class="row"><span style="font-size: 13px">PrtScn</span><span class="hint">Region (default)</span></div>
+        <div class="row"><span style="font-size: 13px">Ctrl + Shift + W</span><span class="hint">Window</span></div>
+        <div class="row"><span style="font-size: 13px">Ctrl + Shift + F</span><span class="hint">Full screen</span></div>
+        <button class="btn sm" style="align-self: flex-start">Edit shortcuts…</button>
+        <p class="hint" style="margin: 0">Shortcuts work while the window is minimized to the tray; each uses these settings and copies to the clipboard.</p>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <span class="label">Save to</span>
+        <div style="display: flex; gap: 8px">
+          <div class="field" style="flex: 1 1 0">C:\Users\Pat\Pictures\Screenshots</div>
+          <button class="btn sm">Change</button>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <label class="label" for="pattern">Name pattern</label>
+        <input id="pattern" class="name" value="screenshot_{mm}_{dd}_{yyyy}">
+        <p class="hint" style="margin: 0">Same-day captures get _2, _3 … appended. Renaming a shot never changes others.</p>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <span class="label">Format</span>
+        <div class="seg" role="group" aria-label="Image format">
+          <button class="on">PNG</button>
+          <button>JPG</button>
+          <button>WebP</button>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <span class="label">History</span>
+        <div class="row">
+          <span style="font-size: 14px">Keep unsaved captures for</span>
+          <button class="btn sm">7 days ▾</button>
+        </div>
+        <p class="hint" style="margin: 0">After that, unsaved shots are removed. Saved ones stay in your folder.</p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Toast: shows ~2 s after a capture or Copy, then fades. Cards never change shape. -->
+  <div class="toast" role="status">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>
+    Copied to clipboard
+  </div>
+
+  <!-- Bottom action bar -->
+  <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-top: 2px solid #333; background: #f7f7f7">
+    <span class="hint">History: 4 shown · 2 saved · 2 unsaved — Save all skips anything already saved.</span>
+    <div style="display: flex; gap: 8px">
+      <button class="btn">Clear unsaved</button>
+      <button class="btn">Copy all</button>
+      <button class="btn primary">Save all (2 new)</button>
+    </div>
+  </div>
+
+</div>
+
+
+</body>
+</html>

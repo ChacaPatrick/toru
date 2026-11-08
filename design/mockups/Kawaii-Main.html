@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Kawaii — Main window (A)</title>
+
+</head>
+<body>
+
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Nunito:wght@500;700&display=swap">
+<style>
+:root{--display:Fredoka,sans-serif;--body:Nunito,sans-serif;--mono:Nunito,sans-serif;
+--bg:#fff1f6;--surface:#ffffff;--surface-2:#fff7fa;--surface-sel:#ffe6ef;--text:#4b2a3b;--muted:#8d6478;
+--accent:#c42a68;--accent-bg:#c42a68;--accent-text:#fff;--accent-border:2px solid #c42a68;--accent-shadow:0 4px 0 #8f1d4b;
+--hair-w:2px;--hair-c:#ffd3e2;--hair:2px solid #ffd3e2;--frame-border:3px solid #ffc2d8;--frame-radius:26px;
+--radius-sm:10px;--radius:14px;--radius-lg:22px;--radius-pill:999px;--dot-radius:50%;
+--btn-border:2px solid #ffc2d8;--btn-bg:#fff;--btn-text:#4b2a3b;--btn-shadow:0 4px 0 #ffc2d8;
+--card-border:2px solid #ffd3e2;--card-shadow:0 6px 0 #ffd3e2;--thumb:linear-gradient(135deg,#ffd6e7,#d9f0ff 55%,#fff5c2);
+--tag-bg:#fff;--tag-text:#8d6478;--input-border:2px solid #ffd3e2;--input-bg:#fffafc;
+--chip-border:2px solid #ffd3e2;--chip-bg:#fff;--chip-text:#8d6478;
+--toggle-border:2px solid #ffc2d8;--toggle-off:#ffe6ef;--toggle-knob:#c42a68;
+--title-bg:#ffd6e7;--title-text:#4b2a3b;--label-case:none;--label-track:0;
+--toast-bg:#a3dcff;--toast-text:#1f3f55;--toast-border:2px solid #6fbcee;--pop-shadow:0 8px 0 #ffd3e2;--pop-border:2px solid #ffd3e2;
+--canvas:radial-gradient(#ffd3e2 1.5px,transparent 1.5px) 0 0/22px 22px,#fff7fa;--shot-bg:#fff;--shot-line:#ffd3e2;--shot-fill:#fff7fa;--shot-shadow:0 10px 0 #ffd3e2;
+--bulk-bg:#fff;--bulk-text:#4b2a3b;--bulk-sep:#ffd3e2;--focus:#c42a68;--focus-halo:rgba(196,42,104,.25);--sticker:#ffe08a;--sticker-line:#4b2a3b;--anno:#c42a68;--load-border:2px dashed #ffc2d8;--load-bg:#fff;--earlier-rule:2px dashed #ffd3e2;--dim-opacity:1;}
+
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--body);font-size:14px}
+a{color:var(--text)}a:hover{color:var(--accent)}
+.app{width:100%;min-height:820px;display:flex;flex-direction:column;position:relative;overflow:hidden;isolation:isolate;background:var(--bg);border:var(--frame-border);border-radius:var(--frame-radius)}
+.titlebar{height:38px;display:flex;align-items:center;justify-content:space-between;padding:0 0 0 14px;background:var(--title-bg);color:var(--title-text);border-bottom:var(--hair);font-size:13px}
+.titlebar .dot{width:14px;height:14px;border-radius:var(--dot-radius);background:var(--accent)}
+.titlebar .win{display:flex}
+.titlebar .win span{width:46px;height:38px;display:flex;align-items:center;justify-content:center;border-left:var(--hair)}
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 16px;border-bottom:var(--hair);background:var(--surface-2)}
+.btn{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 16px;border:var(--btn-border);border-radius:var(--radius);background:var(--btn-bg);color:var(--btn-text);font-family:var(--body);font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap;box-shadow:var(--btn-shadow);text-decoration:none}
+.btn.primary{background:var(--accent-bg);color:var(--accent-text);border:var(--accent-border);box-shadow:var(--accent-shadow)}
+.btn.sm{height:32px;padding:0 12px;font-size:13px}
+.btn.icon{width:40px;padding:0;justify-content:center}
+.btn.icon.sm{width:32px}
+.btn .sub{font-size:12px;opacity:.75;border-left:1px solid currentColor;padding-left:8px;font-weight:400}
+.hint{font-size:12px;color:var(--muted);line-height:1.45}
+.body{display:flex;flex-wrap:wrap;flex:1 1 auto;min-height:0}
+.gallery{flex:999 1 560px;min-width:0;padding:0 18px 18px;display:flex;flex-direction:column;gap:16px}
+.tabs{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:var(--hair)}
+.tab{height:42px;padding:0 16px;border:0;border-bottom:3px solid transparent;background:none;font-family:var(--display);font-size:15px;color:var(--muted);cursor:pointer}
+.tab.on{color:var(--text);border-bottom-color:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.card{border:var(--card-border);border-radius:var(--radius-lg);padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--surface);box-shadow:var(--card-shadow);min-width:0;position:relative}
+.thumb{height:140px;border-radius:var(--radius);position:relative;overflow:hidden;background:var(--thumb)}
+.thumb .tag{position:absolute;left:8px;bottom:6px;font-size:11px;color:var(--tag-text);background:var(--tag-bg);padding:2px 7px;border-radius:var(--radius-sm)}
+.name{height:34px;border:var(--input-border);border-radius:var(--radius);padding:0 10px;font-family:var(--mono,var(--body));font-size:13px;width:100%;color:var(--text);background:var(--input-bg)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.chip{font-size:11px;font-weight:600;padding:3px 9px;border:var(--chip-border);border-radius:var(--radius-pill);color:var(--chip-text);background:var(--chip-bg);white-space:nowrap}
+.chip.saved{background:var(--accent-bg);color:var(--accent-text);border:var(--accent-border)}
+.day{display:flex;align-items:center;gap:10px;margin-top:4px}
+.day h3{margin:0;font-family:var(--display);font-size:14px;font-weight:600;color:var(--text)}
+.day span{font-size:12px;color:var(--muted)}
+.day::after{content:"";flex:1;height:var(--hair-w);background:var(--hair-c)}
+.settings{flex:0 1 300px;min-width:0;border-left:var(--hair);padding:18px;display:flex;flex-direction:column;gap:22px;background:var(--surface-2)}
+.group{display:flex;flex-direction:column;gap:11px}
+.label{font-family:var(--display);font-size:12px;color:var(--muted);text-transform:var(--label-case);letter-spacing:var(--label-track)}
+.toggle{width:44px;height:24px;border:var(--toggle-border);border-radius:var(--radius-pill);position:relative;flex:none;background:var(--toggle-off);padding:0;cursor:pointer}
+.toggle::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:var(--radius-pill);background:var(--toggle-knob)}
+.toggle.on{background:var(--accent-bg)}.toggle.on::after{left:23px;background:var(--accent-text)}
+.field{height:36px;border:var(--input-border);border-radius:var(--radius);padding:0 10px;display:flex;align-items:center;font-size:13px;overflow:hidden;white-space:nowrap;background:var(--input-bg);min-width:0;font-family:var(--mono,var(--body))}
+.seg{display:flex;border:var(--input-border);border-radius:var(--radius);overflow:hidden;background:var(--input-bg)}
+.seg button{flex:1;height:32px;border:0;background:transparent;font-family:var(--body);font-size:13px;color:var(--text);cursor:pointer}
+.seg button.on{background:var(--accent-bg);color:var(--accent-text)}
+.bottom{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:12px 18px;border-top:var(--hair);background:var(--surface-2)}
+.toast{position:absolute;left:50%;transform:translateX(-50%);bottom:84px;display:flex;align-items:center;gap:8px;height:40px;padding:0 16px;border-radius:var(--radius);background:var(--toast-bg);color:var(--toast-text);border:var(--toast-border);font-size:14px;font-weight:600;box-shadow:var(--pop-shadow);white-space:nowrap}
+h2.sec{margin:0;font-family:var(--display);font-size:17px;font-weight:600}
+.app::before,.app::after{z-index:-1}
+/* accessibility: visible focus for every control, demoed on one button per board */
+:focus-visible,.kbd-focus{outline:3px solid var(--focus,var(--accent));outline-offset:3px;box-shadow:var(--btn-shadow),0 0 0 6px var(--focus-halo,transparent)}
+.card .row{flex-wrap:wrap}
+.card .row .hint{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 0;text-align:right}
+.card .row>div{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.srlabel{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+/* editor */
+.canvas{position:relative;flex:1 1 auto;min-height:690px;background:var(--canvas)}
+.pill{display:flex;align-items:center;gap:2px;padding:4px;border:var(--pop-border);border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--pop-shadow)}
+.tool{width:40px;height:40px;display:flex;align-items:center;justify-content:center;border:0;border-radius:var(--radius);background:transparent;color:var(--text);cursor:pointer;position:relative;padding:0}
+.tool.on{background:var(--accent-bg);color:var(--accent-text)}
+.tool .k{position:absolute;right:4px;bottom:2px;font-size:10px;opacity:.8}
+.sep{width:1px;height:28px;background:var(--hair-c);margin:0 4px}
+.panel{position:absolute;left:16px;top:84px;width:200px;padding:14px;border:var(--pop-border);border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--pop-shadow);display:flex;flex-direction:column;gap:14px}
+.sw{width:24px;height:24px;border-radius:var(--radius-sm);border:var(--input-border);padding:0;cursor:pointer}
+.sw.on{outline:2px solid var(--accent);outline-offset:2px}
+.opt{height:28px;min-width:28px;padding:0 8px;border:var(--input-border);border-radius:var(--radius-sm);background:var(--input-bg);color:var(--text);font-family:var(--body);font-size:12px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:4px}
+.opt.on{background:var(--accent-bg);color:var(--accent-text);border:var(--accent-border)}
+.corner{position:absolute;display:flex;align-items:center;gap:2px;padding:4px;border:var(--pop-border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--pop-shadow)}
+.corner button{height:32px;min-width:32px;padding:0 8px;border:0;background:transparent;color:var(--text);font-family:var(--body);font-size:13px;cursor:pointer;border-radius:var(--radius-sm);display:inline-flex;align-items:center;justify-content:center}
+.shot{position:absolute;left:260px;top:70px;width:760px;height:475px;background:var(--shot-bg);border:var(--card-border);box-shadow:var(--shot-shadow);border-radius:var(--radius-sm)}
+.shot .ui{position:absolute;border:1.5px solid var(--shot-line);border-radius:var(--radius-sm);background:var(--shot-fill)}
+.anno{position:absolute}
+.handle{position:absolute;width:10px;height:10px;border:2px solid var(--anno);background:var(--surface);border-radius:2px}
+.track{height:4px;background:var(--hair-c);border-radius:2px;position:relative;margin:8px 6px}
+.track i{position:absolute;left:0;top:0;height:4px;width:100%;background:var(--accent);border-radius:2px}
+.track b{position:absolute;right:-6px;top:-5px;width:14px;height:14px;border-radius:50%;background:var(--surface);border:2px solid var(--accent)}
+/* select mode */
+.card.sel{outline:3px solid var(--accent);outline-offset:3px;background:var(--surface-sel)}
+.check{position:absolute;left:18px;top:18px;width:26px;height:26px;border:var(--input-border);border-radius:var(--radius-sm);background:var(--surface);display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;color:var(--accent-text);z-index:1}
+.check.on{background:var(--accent-bg);border:var(--accent-border)}
+.bulk{position:absolute;left:50%;transform:translateX(-50%);bottom:20px;display:flex;align-items:center;gap:6px;padding:8px 10px;border-radius:var(--radius-lg);background:var(--bulk-bg);color:var(--bulk-text);border:var(--pop-border);box-shadow:var(--pop-shadow);white-space:nowrap}
+.bulk button{height:36px;padding:0 12px;border:0;border-radius:var(--radius);background:transparent;color:var(--bulk-text);font-family:var(--body);font-size:14px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+.bulk button.main{background:var(--accent-bg);color:var(--accent-text)}
+.bulk .vsep{width:1px;height:24px;background:var(--bulk-sep);margin:0 4px}
+.bulk .n{font-size:11px;opacity:.7}
+/* variant A extras */
+.jump{position:absolute;right:18px;bottom:76px;display:flex;align-items:center;gap:8px;height:36px;padding:0 14px;border:var(--toast-border);border-radius:var(--radius-pill);background:var(--toast-bg);color:var(--toast-text);font-family:var(--body);font-size:13px;font-weight:600;box-shadow:var(--pop-shadow);white-space:nowrap;cursor:pointer;z-index:2}
+.loadmore{display:flex;align-items:center;justify-content:center;gap:10px;height:44px;border:var(--load-border);border-radius:var(--radius);color:var(--muted);font-size:13px;background:var(--load-bg)}
+.earlier{margin-top:6px;padding-top:14px;border-top:var(--earlier-rule)}
+.card.dim{opacity:var(--dim-opacity)}
+/* palettes */
+.pal{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;padding:20px;flex:1 1 auto}
+.pcol{display:flex;flex-direction:column;gap:12px;padding:14px;border:var(--card-border);border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--card-shadow);color:var(--text)}
+.pcol h3{margin:0;font-family:var(--display);font-size:15px}
+.pcol .mini{border:var(--card-border);border-radius:var(--radius);overflow:hidden;background:var(--bg)}
+.pcol .mini .titlebar{height:28px;font-size:11px}
+.pcol .mini .titlebar .win span{width:30px;height:28px}
+.pcol .mini .in{padding:10px;display:flex;flex-direction:column;gap:8px}
+.swatches{display:flex;gap:6px}
+.swatches span{flex:1;height:26px;border-radius:var(--radius-sm);border:1px solid rgba(0,0,0,.15)}
+.hexes{font-family:var(--mono,var(--body));font-size:11px;color:var(--muted);line-height:1.5}
+
+body{font-size:15px}.btn{border-radius:999px;font-weight:700}.btn.primary{box-shadow:0 4px 0 #8f1d4b}.chip{font-weight:700}.tab{font-weight:600;font-size:16px}.tab.on{border-bottom-width:4px;border-radius:2px}h2.sec{font-size:20px}.titlebar .dot{background:#ff9ec4}.check{border-radius:50%}.toggle.on::after{box-shadow:0 0 0 2px #fff inset}.tool.on{border-radius:999px}.titlebar .win span{border-left:0;width:38px}.titlebar .win span{font-size:0}.titlebar .win span::before{content:'';width:14px;height:14px;border-radius:50%;background:#ff9ec4;box-shadow:inset 0 -2px 0 rgba(0,0,0,.12)}.titlebar .win span:nth-child(2)::before{background:#ffe08a}.titlebar .win span:nth-child(3)::before{background:#a3dcff}.app svg{stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}.thumb::after{content:'';position:absolute;right:10px;top:10px;width:22px;height:22px;border-radius:50%;background:rgba(255,255,255,.7)}.btn.sm{border-radius:999px}.toast,.jump{border-radius:999px}.tool{border-radius:999px}.check{width:28px;height:28px}
+</style>
+
+<div class="app">
+<div class="titlebar"><div style="display:flex;align-items:center;gap:10px"><span class="dot" aria-hidden="true"></span><span>Snapshot — session started 2:14 PM</span></div><div class="win" aria-hidden="true"><span>–</span><span>▢</span><span>✕</span></div></div>
+<div class="toolbar">
+<button class="btn primary"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4"/></svg>Region</button>
+<button class="btn kbd-focus" aria-describedby="fx"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg>Window</button><span id="fx" class="srlabel">Shown with keyboard focus ring</span>
+<button class="btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>Full screen<span class="sub">Display 1 ▾</span></button>
+<button class="btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Delayed<span class="sub">5 s ▾</span></button>
+<span class="hint" style="margin-left:4px">PrtScn · Ctrl+Shift+S</span>
+<div style="flex:1 1 40px"></div>
+<button class="btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New session</button>
+<button class="btn icon" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.5-2.3 1a7 7 0 0 0-1.7-1L14.5 3h-5l-.4 2.6a7 7 0 0 0-1.7 1l-2.3-1-2 3.5 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.5 2.3-1a7 7 0 0 0 1.7 1l.4 2.6h5l.4-2.6a7 7 0 0 0 1.7-1l2.3 1 2-3.5-2-1.5c.1-.3.1-.7.1-1z"/></svg></button>
+</div>
+<div class="body">
+<div class="gallery" style="padding:16px 18px 64px;position:relative">
+<button class="jump"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>Back to this session</button>
+<div class="row"><div style="display:flex;align-items:baseline;gap:10px"><h2 class="sec">This session ✦</h2><span class="hint">3 captures · 1 saved · nothing written to disk until you save</span></div>
+<div style="display:flex;gap:8px"><div class="field" style="height:32px;width:180px;color:var(--muted)">Search names…</div><button class="btn sm">Select</button></div></div>
+<div class="grid"><div class="card "><div class="thumb"><span class="tag">1440×900 · Region · 2:31 PM</span></div>
+<input class="name" value="screenshot_11_07_2026_3" aria-label="Screenshot name"><div class="row"><span class="chip">Unsaved</span><div style="display:flex;gap:6px"><button class="btn sm" aria-label="Copied" style="width:60px;justify-content:center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg></button><button class="btn sm primary">Save</button><button class="btn sm icon" aria-label="More">⋯</button></div></div></div><div class="card "><div class="thumb"><span class="tag">820×610 · Window · 2:22 PM</span></div>
+<input class="name" value="login-bug-repro" aria-label="Screenshot name"><div class="row"><span class="chip saved">Saved ✓</span><div style="display:flex;gap:6px"><button class="btn sm">Copy</button><button class="btn sm">Open folder</button><button class="btn sm icon" aria-label="More">⋯</button></div></div></div><div class="card "><div class="thumb"><span class="tag">2560×1440 · Full screen · 2:15 PM</span></div>
+<input class="name" value="screenshot_11_07_2026" aria-label="Screenshot name"><div class="row"><span class="chip">Unsaved</span><div style="display:flex;gap:6px"><button class="btn sm">Copy</button><button class="btn sm primary">Save</button><button class="btn sm icon" aria-label="More">⋯</button></div></div></div></div>
+<div class="row earlier"><div style="display:flex;align-items:baseline;gap:10px"><h2 class="sec" style="color:var(--muted)">Earlier — Thu, Nov 6 ✿</h2><span class="hint">2 unsaved · shown because “Show previous” is on</span></div><button class="btn sm">Collapse ▴</button></div>
+<div class="grid"><div class="card dim"><div class="thumb"><span class="tag">1200×700 · Region · Nov 6, 4:48 PM</span></div>
+<input class="name" value="screenshot_11_06_2026_2" aria-label="Screenshot name"><div class="row"><span class="chip">Unsaved</span><div style="display:flex;gap:6px"><button class="btn sm">Copy</button><button class="btn sm primary">Save</button><button class="btn sm icon" aria-label="More">⋯</button></div></div></div><div class="card dim"><div class="thumb"><span class="tag">640×420 · Window · Nov 6, 4:40 PM</span></div>
+<input class="name" value="screenshot_11_06_2026" aria-label="Screenshot name"><div class="row"><span class="chip">Unsaved</span><div style="display:flex;gap:6px"><button class="btn sm">Copy</button><button class="btn sm primary">Save</button><button class="btn sm icon" aria-label="More">⋯</button></div></div></div></div>
+<div class="loadmore" aria-live="polite"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/></svg>Loading Tue, Nov 4 … ♡</div>
+</div>
+<div class="settings">
+<div class="group"><span class="label">Session</span>
+<div class="row"><label for="t0" style="font-size:14px">Show previous screenshots</label><button id="t0" class="toggle on" role="switch" aria-checked="true" aria-label="Show previous screenshots"></button></div>
+<p class="hint" style="margin:-4px 0 0">Off = clean slate each session. On = earlier unsaved shots load below, a day at a time as you scroll.</p>
+</div>
+<div class="group"><span class="label">Capture</span>
+<div class="row"><label for="t1" style="font-size:14px">Copy to clipboard on capture</label><button id="t1" class="toggle on" role="switch" aria-checked="true" aria-label="Copy to clipboard on capture"></button></div>
+<div class="row"><label for="t2" style="font-size:14px">Auto-save every capture</label><button id="t2" class="toggle" role="switch" aria-checked="false" aria-label="Auto-save every capture"></button></div>
+<div class="row"><label for="t3" style="font-size:14px">Keep running in the tray</label><button id="t3" class="toggle on" role="switch" aria-checked="true" aria-label="Keep running in the tray"></button></div>
+<div class="row"><label for="t4" style="font-size:14px">Open editor after capture</label><button id="t4" class="toggle" role="switch" aria-checked="false" aria-label="Open editor after capture"></button></div>
+</div>
+<div class="group"><span class="label">Shortcuts</span>
+<div class="row"><span>PrtScn</span><span class="hint">Region (default)</span></div>
+<div class="row"><span>Ctrl + Shift + W</span><span class="hint">Window</span></div>
+<div class="row"><span>Ctrl + Shift + F</span><span class="hint">Full screen</span></div>
+<button class="btn sm" style="align-self:flex-start">Edit shortcuts…</button>
+</div>
+<div class="group"><span class="label">Save to</span>
+<div style="display:flex;gap:8px"><div class="field" style="flex:1 1 0">C:\Users\Pat\Pictures\Screenshots</div><button class="btn sm">Change</button></div>
+</div>
+<div class="group"><label class="label" for="pat">Name pattern</label>
+<input id="pat" class="name" value="screenshot_{mm}_{dd}_{yyyy}">
+<p class="hint" style="margin:0">Same-day captures get _2, _3 … appended.</p>
+</div>
+<div class="group"><span class="label">Format</span>
+<div class="seg" role="group" aria-label="Image format"><button class="on">PNG</button><button>JPG</button><button>WebP</button></div>
+</div>
+</div>
+</div>
+<div class="toast" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Copied! ♡</div>
+<div class="bottom"><span class="hint">3 captures · 1 saved · 2 unsaved — Save all skips anything already saved.</span>
+<div style="display:flex;gap:8px"><button class="btn">Clear unsaved</button><button class="btn">Copy all</button><button class="btn primary">Save all (2 new)</button></div></div>
+</div>
+
+
+</body>
+</html>

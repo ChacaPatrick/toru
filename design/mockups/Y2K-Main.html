@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Y2K — Main window (A)</title>
+
+</head>
+<body>
+
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Audiowide&family=Exo+2:wght@400;600;700&display=swap">
+<style>
+:root{--display:Audiowide,sans-serif;--body:'Exo 2',sans-serif;--mono:'Exo 2',sans-serif;
+--bg:linear-gradient(160deg,#dfe7ff 0%,#f6f0ff 50%,#d9f3ff 100%);--surface:linear-gradient(180deg,#ffffff,#eef2ff);--surface-2:rgba(255,255,255,.55);--surface-sel:#e6e9ff;--text:#1b1f3b;--muted:#4f5680;
+--accent:#6a2bdc;--accent-bg:linear-gradient(180deg,#b388ff 0%,#6a2bdc 55%,#4e1bb3 100%);--accent-text:#fff;--accent-border:1px solid #4e1bb3;--accent-shadow:inset 0 1px 0 rgba(255,255,255,.7),0 2px 6px rgba(78,27,179,.4);
+--hair-w:1px;--hair-c:#b9c2e6;--hair:1px solid #b9c2e6;--frame-border:2px solid #c7cff2;--frame-radius:18px;
+--radius-sm:8px;--radius:14px;--radius-lg:20px;--radius-pill:999px;--dot-radius:50%;
+--btn-border:1px solid #9aa6d8;--btn-bg:linear-gradient(180deg,#ffffff 0%,#dfe5fb 50%,#c9d2f5 51%,#e9edfd 100%);--btn-text:#1b1f3b;--btn-shadow:inset 0 1px 0 #fff,0 2px 4px rgba(27,31,59,.2);
+--card-border:1px solid #c3cbef;--card-shadow:inset 0 1px 0 #fff,0 4px 12px rgba(27,31,59,.14);--thumb:linear-gradient(135deg,#ff9ae5,#9ad5ff 60%,#c7ffd8);
+--tag-bg:rgba(255,255,255,.85);--tag-text:#1b1f3b;--input-border:1px solid #9aa6d8;--input-bg:linear-gradient(180deg,#eef1ff,#fff);
+--chip-border:1px solid #9aa6d8;--chip-bg:linear-gradient(180deg,#fff,#e4e9ff);--chip-text:#1b1f3b;
+--toggle-border:1px solid #9aa6d8;--toggle-off:linear-gradient(180deg,#e3e8ff,#c9d2f5);--toggle-knob:linear-gradient(180deg,#fff,#b9c2e6);
+--title-bg:linear-gradient(180deg,#5d6fe0,#3545b8);--title-text:#fff;--label-case:uppercase;--label-track:.1em;
+--toast-bg:linear-gradient(180deg,#ff9ae5,#e04fc1);--toast-text:#fff;--toast-border:1px solid #c33aa5;--pop-shadow:0 10px 30px rgba(27,31,59,.25);--pop-border:1px solid #9aa6d8;
+--canvas:radial-gradient(circle at 30% 20%,#fff 0%,#dfe7ff 45%,#c9d6ff 100%);--shot-bg:#fff;--shot-line:#c3cbef;--shot-fill:#f3f5ff;--shot-shadow:0 14px 40px rgba(27,31,59,.3);
+--bulk-bg:linear-gradient(180deg,#3545b8,#1f2b86);--bulk-text:#fff;--bulk-sep:#6b7ad6;--focus:#ff2fd0;--focus-halo:rgba(255,47,208,.25);--sticker:#ff9ae5;--sticker-line:#4e1bb3;--anno:#ff2fd0;--load-border:1px solid #9aa6d8;--load-bg:linear-gradient(180deg,#fff,#e4e9ff);--earlier-rule:1px solid #b9c2e6;--dim-opacity:1;}
+
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--body);font-size:14px}
+a{color:var(--text)}a:hover{color:var(--accent)}
+.app{width:100%;min-height:820px;display:flex;flex-direction:column;position:relative;overflow:hidden;isolation:isolate;background:var(--bg);border:var(--frame-border);border-radius:var(--frame-radius)}
+.titlebar{height:38px;display:flex;align-items:center;justify-content:space-between;padding:0 0 0 14px;background:var(--title-bg);color:var(--title-text);border-bottom:var(--hair);font-size:13px}
+.titlebar .dot{width:14px;height:14px;border-radius:var(--dot-radius);background:var(--accent)}
+.titlebar .win{display:flex}
+.titlebar .win span{width:46px;height:38px;display:flex;align-items:center;justify-content:center;border-left:var(--hair)}
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 16px;border-bottom:var(--hair);background:var(--surface-2)}
+.btn{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 16px;border:var(--btn-border);border-radius:var(--radius);background:var(--btn-bg);color:var(--btn-text);font-family:var(--body);font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap;box-shadow:var(--btn-shadow);text-decoration:none}
+.btn.primary{background:var(--accent-bg);color:var(--accent-text);border:var(--accent-border);box-shadow:var(--accent-shadow)}
+.btn.sm{height:32px;padding:0 12px;font-size:13px}
+.btn.icon{width:40px;padding:0;justify-content:center}
+.btn.icon.sm{width:32px}
+.btn .sub{font-size:12px;opacity:.75;border-left:1px solid currentColor;padding-left:8px;font-weight:400}
+.hint{font-size:12px;color:var(--muted);line-height:1.45}
+.body{display:flex;flex-wrap:wrap;flex:1 1 auto;min-height:0}
+.gallery{flex:999 1 560px;min-width:0;padding:0 18px 18px;display:flex;flex-direction:column;gap:16px}
+.tabs{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:var(--hair)}
+.tab{height:42px;padding:0 16px;border:0;border-bottom:3px solid transparent;background:none;font-family:var(--display);font-size:15px;color:var(--muted);cursor:pointer}
+.tab.on{color:var(--text);border-bottom-color:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.card{border:var(--card-border);border-radius:var(--radius-lg);padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--surface);box-shadow:var(--card-shadow);min-width:0;position:relative}
+.thumb{height:140px;border-radius:var(--radius);position:relative;overflow:hidden;background:var(--thumb)}
+.thumb .tag{position:absolute;left:8px;bottom:6px;font-size:11px;color:var(--tag-text);background:var(--tag-bg);padding:2px 7px;border-radius:var(--radius-sm)}
+.name{height:34px;border:var(--input-border);border-radius:var(--radius);padding:0 10px;font-family:var(--mono,var(--body));font-size:13px;width:100%;color:var(--text);background:var(--input-bg)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.chip{font-size:11px;font-weight:600;padding:3px 9px;border:var(--chip-border);border-radius:var(--radius-pill);color:var(--chip-text);background:var(--chip-bg);white-space:nowrap}
+.chip.saved{background:var(--accent-bg);color:var(--accent-text);border:var(--accent-border)}
+.day{display:flex;align-items:center;gap:10px;margin-top:4px}
+.day h3{margin:0;font-family:var(--display);font-size:14px;font-weight:600;color:var(--text)}
+.day span{font-size:12px;color:var(--muted)}
+.day::after{content:"";flex:1;height:var(--hair-w);background:var(--hair-c)}
+.settings{flex:0 1 300px;min-width:0;border-left:var(--hair);padding:18px;display:flex;flex-direction:column;gap:22px;background:var(--surface-2)}
+.group{display:flex;flex-direction:column;gap:11px}
+.label{font-family:var(--display);font-size:12px;color:var(--muted);text-transform:var(--label-case);letter-spacing:var(--label-track)}
+.toggle{width:44px;height:24px;border:var(--toggle-border);border-radius:var(--radius-pill);position:relative;flex:none;background:var(--toggle-off);padding:0;cursor:pointer}
+.toggle::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:var(--radius-pill);background:var(--toggle-knob)}
+.toggle.on{background:var(--accent-bg)}.toggle.on::after{left:23px;background:var(--accent-text)}
+.field{height:36px;border:var(--input-border);border-radius:var(--radius);padding:0 10px;display:flex;align-items:center;font-size:13px;overflow:hidden;white-space:nowrap;background:var(--input-bg);min-width:0;font-family:var(--mono,var(--body))}
+.seg{display:flex;border:var(--input-border);border-radius:var(--radius);overflow:hidden;background:var(--input-bg)}
+.seg button{flex:1;height:32px;border:0;background:transparent;font-family:var(--body);font-size:13px;color:var(--text);cursor:pointer}
+.seg button.on{background:var(--accent-bg);color:var(--accent-text)}
+.bottom{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:12px 18px;border-top:var(--hair);background:var(--surface-2)}
+.toast{position:absolute;left:50%;transform:translateX(-50%);bottom:84px;display:flex;align-items:center;gap:8px;height:40px;padding:0 16px;border-radius:var(--radius);background:var(--toast-bg);color:var(--toast-text);border:var(--toast-border);font-size:14px;font-weight:600;box-shadow:var(--pop-shadow);white-space:nowrap}
+h2.sec{margin:0;font-family:var(--display);font-size:17px;font-weight:600}
+.app::before,.app::after{z-index:-1}
+/* accessibility: visible focus for every control, demoed on one button per board */
+:focus-visible,.kbd-focus{outline:3px solid var(--focus,var(--accent));outline-offset:3px;box-shadow:var(--btn-shadow),0 0 0 6px var(--focus-halo,transparent)}
+.card .row{flex-wrap:wrap}
+.card .row .hint{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 0;text-align:right}
+.card .row>div{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.srlabel{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+/* editor */
+.canvas{position:relative;flex:1 1 auto;min-height:690px;background:var(--canvas)}
+.pill{display:flex;align-items:center;gap:2px;padding:4px;border:var(--pop-border);border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--pop-shadow)}
+.tool{width:40px;height:40px;display:flex;align-items:center;justify-content:center;border:0;border-radius:var(--radius);background:transparent;color:var(--text);cursor:pointer;position:relative;padding:0}
+.tool.on{background:var(--accent-bg);color:var(--accent-text)}
+.tool .k{position:absolute;right:4px;bottom:2px;font-size:10px;opacity:.8}
+.sep{width:1px;height:28px;background:var(--hair-c);margin:0 4px}
+.panel{position:absolute;left:16px;top:84px;width:200px;padding:14px;border:var(--pop-border);border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--pop-shadow);display:flex;flex-direction:column;gap:14px}
+.sw{width:24px;height:24px;border-radius:var(--radius-sm);border:var(--input-border);padding:0;cursor:pointer}
+.sw.on{outline:2px solid var(--accent);outline-offset:2px}
+.opt{height:28px;min-width:28px;padding:0 8px;border:var(--input-border);border-radius:var(--radius-sm);background:var(--input-bg);color:var(--text);font-family:var(--body);font-size:12px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:4px}
+.opt.on{background:var(--accent-bg);color:var(--accent-text);border:var(--accent-border)}
+.corner{position:absolute;display:flex;align-items:center;gap:2px;padding:4px;border:var(--pop-border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--pop-shadow)}
+.corner button{height:32px;min-width:32px;padding:0 8px;border:0;background:transparent;color:var(--text);font-family:var(--body);font-size:13px;cursor:pointer;border-radius:var(--radius-sm);display:inline-flex;align-items:center;justify-content:center}
+.shot{position:absolute;left:260px;top:70px;width:760px;height:475px;background:var(--shot-bg);border:var(--card-border);box-shadow:var(--shot-shadow);border-radius:var(--radius-sm)}
+.shot .ui{position:absolute;border:1.5px solid var(--shot-line);border-radius:var(--radius-sm);background:var(--shot-fill)}
+.anno{position:absolute}
+.handle{position:absolute;width:10px;height:10px;border:2px solid var(--anno);background:var(--surface);border-radius:2px}
+.track{height:4px;background:var(--hair-c);border-radius:2px;position:relative;margin:8px 6px}
+.track i{position:absolute;left:0;top:0;height:4px;width:100%;background:var(--accent);border-radius:2px}
+.track b{position:absolute;right:-6px;top:-5px;width:14px;height:14px;border-radius:50%;background:var(--surface);border:2px solid var(--accent)}
+/* select mode */
+.card.sel{outline:3px solid var(--accent);outline-offset:3px;background:var(--surface-sel)}
+.check{position:absolute;left:18px;top:18px;width:26px;height:26px;border:var(--input-border);border-radius:var(--radius-sm);background:var(--surface);display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;color:var(--accent-text);z-index:1}
+.check.on{background:var(--accent-bg);border:var(--accent-border)}
+.bulk{position:absolute;left:50%;transform:translateX(-50%);bottom:20px;display:flex;align-items:center;gap:6px;padding:8px 10px;border-radius:var(--radius-lg);background:var(--bulk-bg);color:var(--bulk-text);border:var(--pop-border);box-shadow:var(--pop-shadow);white-space:nowrap}
+.bulk button{height:36px;padding:0 12px;border:0;border-radius:var(--radius);background:transparent;color:var(--bulk-text);font-family:var(--body);font-size:14px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+.bulk button.main{background:var(--accent-bg);color:var(--accent-text)}
+.bulk .vsep{width:1px;height:24px;background:var(--bulk-sep);margin:0 4px}
+.bulk .n{font-size:11px;opacity:.7}
+/* variant A extras */
+.jump{position:absolute;right:18px;bottom:76px;display:flex;align-items:center;gap:8px;height:36px;padding:0 14px;border:var(--toast-border);border-radius:var(--radius-pill);background:var(--toast-bg);color:var(--toast-text);font-family:var(--body);font-size:13px;font-weight:600;box-shadow:var(--pop-shadow);white-space:nowrap;cursor:pointer;z-index:2}
+.loadmore{display:flex;align-items:center;justify-content:center;gap:10px;height:44px;border:var(--load-border);border-radius:var(--radius);color:var(--muted);font-size:13px;background:var(--load-bg)}
+.earlier{margin-top:6px;padding-top:14px;border-top:var(--earlier-rule)}
+.card.dim{opacity:var(--dim-opacity)}
+/* palettes */
+.pal{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;padding:20px;flex:1 1 auto}
+.pcol{display:flex;flex-direction:column;gap:12px;padding:14px;border:var(--card-border);border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--card-shadow);color:var(--text)}
+.pcol h3{margin:0;font-family:var(--display);font-size:15px}
+.pcol .mini{border:var(--card-border);border-radius:var(--radius);overflow:hidden;background:var(--bg)}
+.pcol .mini .titlebar{height:28px;font-size:11px}
+.pcol .mini .titlebar .win span{width:30px;height:28px}
+.pcol .mini .in{padding:10px;display:flex;flex-direction:column;gap:8px}
+.swatches{display:flex;gap:6px}
+.swatches span{flex:1;height:26px;border-radius:var(--radius-sm);border:1px solid rgba(0,0,0,.15)}
+.hexes{font-family:var(--mono,var(--body));font-size:11px;color:var(--muted);line-height:1.5}
+
+.titlebar .win span{border-left-color:rgba(255,255,255,.3)}.tab.on{text-shadow:0 0 8px rgba(106,43,220,.5)}.card::before{content:'';position:absolute;inset:0 0 50% 0;border-radius:inherit;background:linear-gradient(180deg,rgba(255,255,255,.75),rgba(255,255,255,0));pointer-events:none}.app::after{content:'';position:absolute;right:-120px;top:-120px;width:360px;height:360px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.9),rgba(255,255,255,0) 70%);pointer-events:none}.titlebar .win span{color:#fff}.titlebar .dot{background:radial-gradient(circle at 35% 30%,#fff,#ff9ae5 40%,#6a2bdc);box-shadow:0 0 8px rgba(255,154,229,.9)}.thumb::before{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.75),rgba(255,255,255,0) 50%)}.btn,.chip,.toast,.jump{text-shadow:0 1px 0 rgba(255,255,255,.6)}.btn.primary,.toast,.jump,.bulk{text-shadow:0 1px 1px rgba(0,0,0,.35)}.tool.on{box-shadow:inset 0 2px 4px rgba(0,0,0,.35)}.app::before{content:'';position:absolute;left:10%;bottom:-200px;width:600px;height:400px;border-radius:50%;background:radial-gradient(ellipse,rgba(154,213,255,.6),rgba(154,213,255,0) 70%);pointer-events:none}
+</style>
+
+<div class="app">
+<div class="titlebar"><div style="display:flex;align-items:center;gap:10px"><span class="dot" aria-hidden="true"></span><span>Snapshot — session started 2:14 PM</span></div><div class="win" aria-hidden="true"><span>–</span><span>▢</span><span>✕</span></div></div>
+<div class="toolbar">
+<button class="btn primary"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4"/></svg>Region</button>
+<button class="btn kbd-focus" aria-describedby="fx"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg>Window</button><span id="fx" class="srlabel">Shown with keyboard focus ring</span>
+<button class="btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>Full screen<span class="sub">Display 1 ▾</span></button>
+<button class="btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Delayed<span class="sub">5 s ▾</span></button>
+<span class="hint" style="margin-left:4px">PrtScn · Ctrl+Shift+S</span>
+<div style="flex:1 1 40px"></div>
+<button class="btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New session</button>
+<button class="btn icon" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.5-2.3 1a7 7 0 0 0-1.7-1L14.5 3h-5l-.4 2.6a7 7 0 0 0-1.7 1l-2.3-1-2 3.5 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.5 2.3-1a7 7 0 0 0 1.7 1l.4 2.6h5l.4-2.6a7 7 0 0 0 1.7-1l2.3 1 2-3.5-2-1.5c.1-.3.1-.7.1-1z"/></svg></button>
+</div>
+<div class="body">
+<div class="gallery" style="padding:16px 18px 64px;position:relative">
+<button class="jump"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>Back to this session</button>
+<div class="row"><div style="display:flex;align-items:baseline;gap:10px"><h2 class="sec">This session</h2><span class="hint">3 captures · 1 saved · nothing written to disk until you save</span></div>
+<div style="display:flex;gap:8px"><div class="field" style="height:32px;width:180px;color:var(--muted)">Search names…</div><button class="btn sm">Select</button></div></div>
+<div class="grid"><div class="card "><div class="thumb"><span class="tag">1440×900 · Region · 2:31 PM</span></div>
+<input class="name" value="screenshot_11_07_2026_3" aria-label="Screenshot name"><div class="row"><span class="chip">Unsaved</span><div style="display:flex;gap:6px"><button class="btn sm" aria-label="Copied" style="width:60px;justify-content:center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg></button><button class="btn sm primary">Save</button><button class="btn sm icon" aria-label="More">⋯</button></div></div></div><div class="card "><div class="thumb"><span class="tag">820×610 · Window · 2:22 PM</span></div>
+<input class="name" value="login-bug-repro" aria-label="Screenshot name"><div class="row"><span class="chip saved">Saved ✓</span><div style="display:flex;gap:6px"><button class="btn sm">Copy</button><button class="btn sm">Open folder</button><button class="btn sm icon" aria-label="More">⋯</button></div></div></div><div class="card "><div class="thumb"><span class="tag">2560×1440 · Full screen · 2:15 PM</span></div>
+<input class="name" value="screenshot_11_07_2026" aria-label="Screenshot name"><div class="row"><span class="chip">Unsaved</span><div style="display:flex;gap:6px"><button class="btn sm">Copy</button><button class="btn sm primary">Save</button><button class="btn sm icon" aria-label="More">⋯</button></div></div></div></div>
+<div class="row earlier"><div style="display:flex;align-items:baseline;gap:10px"><h2 class="sec" style="color:var(--muted)">Earlier — Thu, Nov 6</h2><span class="hint">2 unsaved · shown because “Show previous” is on</span></div><button class="btn sm">Collapse ▴</button></div>
+<div class="grid"><div class="card dim"><div class="thumb"><span class="tag">1200×700 · Region · Nov 6, 4:48 PM</span></div>
+<input class="name" value="screenshot_11_06_2026_2" aria-label="Screenshot name"><div class="row"><span class="chip">Unsaved</span><div style="display:flex;gap:6px"><button class="btn sm">Copy</button><button class="btn sm primary">Save</button><button class="btn sm icon" aria-label="More">⋯</button></div></div></div><div class="card dim"><div class="thumb"><span class="tag">640×420 · Window · Nov 6, 4:40 PM</span></div>
+<input class="name" value="screenshot_11_06_2026" aria-label="Screenshot name"><div class="row"><span class="chip">Unsaved</span><div style="display:flex;gap:6px"><button class="btn sm">Copy</button><button class="btn sm primary">Save</button><button class="btn sm icon" aria-label="More">⋯</button></div></div></div></div>
+<div class="loadmore" aria-live="polite"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/></svg>Loading Tue, Nov 4 … ▰▰▰▱▱</div>
+</div>
+<div class="settings">
+<div class="group"><span class="label">Session</span>
+<div class="row"><label for="t0" style="font-size:14px">Show previous screenshots</label><button id="t0" class="toggle on" role="switch" aria-checked="true" aria-label="Show previous screenshots"></button></div>
+<p class="hint" style="margin:-4px 0 0">Off = clean slate each session. On = earlier unsaved shots load below, a day at a time as you scroll.</p>
+</div>
+<div class="group"><span class="label">Capture</span>
+<div class="row"><label for="t1" style="font-size:14px">Copy to clipboard on capture</label><button id="t1" class="toggle on" role="switch" aria-checked="true" aria-label="Copy to clipboard on capture"></button></div>
+<div class="row"><label for="t2" style="font-size:14px">Auto-save every capture</label><button id="t2" class="toggle" role="switch" aria-checked="false" aria-label="Auto-save every capture"></button></div>
+<div class="row"><label for="t3" style="font-size:14px">Keep running in the tray</label><button id="t3" class="toggle on" role="switch" aria-checked="true" aria-label="Keep running in the tray"></button></div>
+<div class="row"><label for="t4" style="font-size:14px">Open editor after capture</label><button id="t4" class="toggle" role="switch" aria-checked="false" aria-label="Open editor after capture"></button></div>
+</div>
+<div class="group"><span class="label">Shortcuts</span>
+<div class="row"><span>PrtScn</span><span class="hint">Region (default)</span></div>
+<div class="row"><span>Ctrl + Shift + W</span><span class="hint">Window</span></div>
+<div class="row"><span>Ctrl + Shift + F</span><span class="hint">Full screen</span></div>
+<button class="btn sm" style="align-self:flex-start">Edit shortcuts…</button>
+</div>
+<div class="group"><span class="label">Save to</span>
+<div style="display:flex;gap:8px"><div class="field" style="flex:1 1 0">C:\Users\Pat\Pictures\Screenshots</div><button class="btn sm">Change</button></div>
+</div>
+<div class="group"><label class="label" for="pat">Name pattern</label>
+<input id="pat" class="name" value="screenshot_{mm}_{dd}_{yyyy}">
+<p class="hint" style="margin:0">Same-day captures get _2, _3 … appended.</p>
+</div>
+<div class="group"><span class="label">Format</span>
+<div class="seg" role="group" aria-label="Image format"><button class="on">PNG</button><button>JPG</button><button>WebP</button></div>
+</div>
+</div>
+</div>
+<div class="toast" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>★ Copied to clipboard ★</div>
+<div class="bottom"><span class="hint">3 captures · 1 saved · 2 unsaved — Save all skips anything already saved.</span>
+<div style="display:flex;gap:8px"><button class="btn">Clear unsaved</button><button class="btn">Copy all</button><button class="btn primary">Save all (2 new)</button></div></div>
+</div>
+
+
+</body>
+</html>
