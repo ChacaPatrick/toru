@@ -1,10 +1,11 @@
-//! The left context panel (DESIGN.md §5): the active tool's options in labelled groups. Only the
-//! Arrow panel exists so far; each later section adds its tool's groups here.
+//! The left context panel (DESIGN.md §5): the active tool's options in labelled groups. A
+//! drawing tool shows the groups its shape needs; Select shows the selected mark's, and changing
+//! one changes the mark. Later sections add their tools' groups here.
 
 use gpui::{AnyElement, Context, Div, ElementId, Hsla, Pixels, div, prelude::*, px};
 use gpui_kit::component::scroll::ScrollableElement;
 
-use super::{Editor, act, chrome, tools::*};
+use super::{Editor, act, chrome, on, tools::*};
 use crate::theme::{ActiveTheme, Theme, ThemedText};
 use crate::ui::{Choices, MIN_TARGET, Pressable, Slider};
 
@@ -34,10 +35,10 @@ const WIDTH_BAR: f32 = 14.;
 /// takes keyboard focus below the fold is scrolled to.
 pub fn panel(editor: &Editor, cx: &Context<Editor>) -> Option<AnyElement> {
     let theme = cx.theme();
-    let groups = match editor.tool {
-        Tool::Arrow => arrow_groups(editor.arrow, theme, cx),
-        _ => return None,
-    };
+    let (options, shown) = editor.panel_options(theme)?;
+    let groups = shown
+        .iter()
+        .map(|group| stroke_group(*group, options, theme, cx));
     let pop = theme.borders.pop;
     let content = div()
         .id("panel-scroll")
@@ -79,84 +80,85 @@ fn max_height(canvas_height: Pixels) -> Pixels {
     room.max(px(MIN_HEIGHT))
 }
 
-fn arrow_groups(arrow: ArrowOptions, theme: &Theme, cx: &Context<Editor>) -> Vec<Div> {
-    let swatch_count = theme.colors.stroke_swatches().len();
-    let stroke = Choices::new(
-        "stroke",
-        "Stroke",
-        swatch_count,
-        arrow.stroke,
-        |i, on, theme| swatch(theme, i, on),
-    )
-    .gap(px(SWATCH_GAP))
-    .on_change(act(cx, |this, i, cx| this.set_arrow(cx, |a| a.stroke = i)));
-
-    let width = Choices::new(
-        "width",
-        "Width",
-        Width::ALL.len(),
-        index_of(&Width::ALL, arrow.width),
-        |i, on, theme| {
-            let width = Width::ALL[i];
-            option(theme, ("width", i), width.label(), on).child(
-                div()
-                    .w(px(WIDTH_BAR))
-                    .h(px(width.pixels()))
-                    .bg(option_text(theme, on)),
+/// One of the panel's groups, showing `options` and changing them through the editor.
+fn stroke_group(which: Group, options: StrokeOptions, theme: &Theme, cx: &Context<Editor>) -> Div {
+    let control: AnyElement = match which {
+        Group::Stroke => {
+            let swatch_count = theme.colors.stroke_swatches().len();
+            Choices::new(
+                "stroke",
+                "Stroke",
+                swatch_count,
+                options.stroke,
+                |i, on, theme| swatch(theme, i, on),
             )
-        },
-    )
-    .gap(px(OPTION_GAP))
-    .on_change(act(cx, |this, i, cx| {
-        this.set_arrow(cx, |a| a.width = Width::ALL[i])
-    }));
-
-    let head = Choices::new(
-        "head",
-        "Arrow head",
-        Head::ALL.len(),
-        index_of(&Head::ALL, arrow.head),
-        |i, on, theme| {
-            let head = Head::ALL[i];
-            option(theme, ("head", i), head.label(), on).child(head.glyph())
-        },
-    )
-    .flex_wrap()
-    .gap(px(OPTION_GAP))
-    .on_change(act(cx, |this, i, cx| {
-        this.set_arrow(cx, |a| a.head = Head::ALL[i])
-    }));
-
-    let style = Choices::new(
-        "style",
-        "Style",
-        LineStyle::ALL.len(),
-        index_of(&LineStyle::ALL, arrow.style),
-        |i, on, theme| {
-            let style = LineStyle::ALL[i];
-            let label = theme.type_scale.option.case.apply(style.label());
-            option(theme, ("style", i), style.label(), on).child(label)
-        },
-    )
-    // The larger-type looks can't fit three words on one line of the panel.
-    .flex_wrap()
-    .gap(px(OPTION_GAP))
-    .on_change(act(cx, |this, i, cx| {
-        this.set_arrow(cx, |a| a.style = LineStyle::ALL[i])
-    }));
-
-    let opacity = Slider::new("opacity", "Opacity", arrow.opacity)
-        .on_change(act(cx, |this, value, cx| {
-            this.set_arrow(cx, |a| a.opacity = value)
-        }));
-
-    vec![
-        group(theme, "Stroke", stroke),
-        group(theme, "Width", width),
-        group(theme, "Arrow head", head),
-        group(theme, "Style", style),
-        group(theme, "Opacity", opacity),
-    ]
+            .gap(px(SWATCH_GAP))
+            .on_change(act(cx, |this, i, cx| this.set_option(cx, |o| o.stroke = i)))
+            .into_any_element()
+        }
+        Group::Width => Choices::new(
+            "width",
+            "Width",
+            Width::ALL.len(),
+            index_of(&Width::ALL, options.width),
+            |i, on, theme| {
+                let width = Width::ALL[i];
+                option(theme, ("width", i), width.label(), on).child(
+                    div()
+                        .w(px(WIDTH_BAR))
+                        .h(px(width.pixels()))
+                        .bg(option_text(theme, on)),
+                )
+            },
+        )
+        .gap(px(OPTION_GAP))
+        .on_change(act(cx, |this, i, cx| {
+            this.set_option(cx, |o| o.width = Width::ALL[i])
+        }))
+        .into_any_element(),
+        Group::Head => Choices::new(
+            "head",
+            "Arrow head",
+            Head::ALL.len(),
+            index_of(&Head::ALL, options.head),
+            |i, on, theme| {
+                let head = Head::ALL[i];
+                option(theme, ("head", i), head.label(), on).child(head.glyph())
+            },
+        )
+        .flex_wrap()
+        .gap(px(OPTION_GAP))
+        .on_change(act(cx, |this, i, cx| {
+            this.set_option(cx, |o| o.head = Head::ALL[i])
+        }))
+        .into_any_element(),
+        Group::Style => Choices::new(
+            "style",
+            "Style",
+            LineStyle::ALL.len(),
+            index_of(&LineStyle::ALL, options.style),
+            |i, on, theme| {
+                let style = LineStyle::ALL[i];
+                let label = theme.type_scale.option.case.apply(style.label());
+                option(theme, ("style", i), style.label(), on).child(label)
+            },
+        )
+        // The larger-type looks can't fit three words on one line of the panel.
+        .flex_wrap()
+        .gap(px(OPTION_GAP))
+        .on_change(act(cx, |this, i, cx| {
+            this.set_option(cx, |o| o.style = LineStyle::ALL[i])
+        }))
+        .into_any_element(),
+        // A drag of the slider is one undo step on a selected mark, however many moves it has.
+        Group::Opacity => Slider::new("opacity", "Opacity", options.opacity)
+            .on_change(act(cx, |this, value, cx| {
+                this.set_option_live(cx, |o| o.opacity = value)
+            }))
+            .on_commit(on(cx, |this, _| this.end_live_edit()))
+            .into_any_element(),
+    };
+    group(theme, which.label(), control)
 }
 
 /// `.group`: a label over its control.

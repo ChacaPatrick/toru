@@ -1,6 +1,8 @@
 //! `.track`: the editor panel's opacity slider. A 4px track filled in the accent up to the knob.
 //! A press on the row sets the value from the pointer and starts a drag that follows the pointer
-//! wherever it goes until the button comes up; the arrow keys step the value.
+//! wherever it goes until the button comes up; the arrow keys step the value. `on_change` is
+//! called with each value and `on_commit` once the drag ends, or after each key, so a user of
+//! the slider can make a whole drag one change.
 
 use std::rc::Rc;
 
@@ -26,6 +28,7 @@ const ROW_HEIGHT: f32 = TRACK_HEIGHT + MARGIN_Y * 2.;
 const STEP: f32 = 0.05;
 
 type ChangeHandler = Rc<dyn Fn(f32, &mut Window, &mut App)>;
+type CommitHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 
 #[derive(IntoElement)]
 pub struct Slider {
@@ -34,6 +37,7 @@ pub struct Slider {
     /// 0 to 1.
     value: f32,
     on_change: Option<ChangeHandler>,
+    on_commit: Option<CommitHandler>,
 }
 
 impl Slider {
@@ -43,11 +47,18 @@ impl Slider {
             label: label.into(),
             value: value.clamp(0., 1.),
             on_change: None,
+            on_commit: None,
         }
     }
 
     pub fn on_change(mut self, handler: impl Fn(f32, &mut Window, &mut App) + 'static) -> Slider {
         self.on_change = Some(Rc::new(handler));
+        self
+    }
+
+    /// Called when a drag ends, however it ends, and after each arrow key.
+    pub fn on_commit(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Slider {
+        self.on_commit = Some(Rc::new(handler));
         self
     }
 }
@@ -91,6 +102,15 @@ impl RenderOnce for Slider {
         let c = &theme.colors;
         let value = self.value;
         let on_change = self.on_change;
+        let on_commit = self.on_commit;
+        let commit = {
+            let on_commit = on_commit.clone();
+            move |window: &mut Window, cx: &mut App| {
+                if let Some(handler) = &on_commit {
+                    handler(window, cx);
+                }
+            }
+        };
         let set_from = {
             let on_change = on_change.clone();
             let track_bounds = track_bounds.clone();
@@ -123,6 +143,7 @@ impl RenderOnce for Slider {
                 }
                 {
                     let dragging = dragging.clone();
+                    let commit = commit.clone();
                     window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
                         if !phase.bubble() || !*dragging.read(cx) {
                             return;
@@ -131,12 +152,14 @@ impl RenderOnce for Slider {
                             set_from(event.position.x, window, cx);
                         } else {
                             dragging.update(cx, |held, _| *held = false);
+                            commit(window, cx);
                         }
                     });
                 }
-                window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
+                window.on_mouse_event(move |_: &MouseUpEvent, phase, window, cx| {
                     if phase.bubble() && *dragging.read(cx) {
                         dragging.update(cx, |held, _| *held = false);
+                        commit(window, cx);
                     }
                 });
             },
@@ -150,6 +173,9 @@ impl RenderOnce for Slider {
             cx.stop_propagation();
             if let Some(handler) = &on_change {
                 handler(next, window, cx);
+            }
+            if let Some(handler) = &on_commit {
+                handler(window, cx);
             }
         };
 

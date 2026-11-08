@@ -515,6 +515,15 @@ impl Gallery {
         }
     }
 
+    /// Why the card with the name field `name` has its name refused, if it does.
+    pub fn name_error_of(&self, name: &Entity<InputState>) -> Option<SharedString> {
+        self.groups
+            .iter()
+            .flat_map(|group| &group.cards)
+            .find(|card| card.name == *name)
+            .and_then(|card| card.name_error.clone())
+    }
+
     /// Turns a card to Saved once its file is written.
     pub fn mark_saved(&mut self, capture: CaptureId, file: SavedFile, cx: &mut Context<Self>) {
         if let Some(card) = self.stored_card(capture) {

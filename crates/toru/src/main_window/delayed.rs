@@ -4,6 +4,8 @@
 //! button counting, and pressing it cancels. Toru isn't brought back afterwards, which would take
 //! the foreground from what was just arranged: the capture lands in the gallery as any capture
 //! taken while minimized does (DESIGN.md §3), and if it fails, the message waits for Toru's return.
+//! The one exception is "Open editor after capture", which brings the window back to show the
+//! editor (`captures.rs`).
 
 use std::time::Duration;
 

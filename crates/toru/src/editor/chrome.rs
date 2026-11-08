@@ -65,13 +65,12 @@ pub fn top_bar(editor: &Editor, window: &Window, cx: &Context<Editor>) -> Div {
                 .on_click(on(cx, |this, cx| this.back(cx))),
         )
         .child(TextField::new(&editor.name, "Screenshot name").w(px(NAME_WIDTH)))
-        .child(
-            div()
-                .type_style(theme, theme.type_scale.hint)
-                .text_color(c.muted)
-                .whitespace_nowrap()
-                .child(editor.status()),
-        )
+        // A refused name is said here in place of the status, right after its field, so the bar
+        // keeps its shape, as the card does.
+        .child(match &editor.name_error {
+            Some(error) => status_text(theme, c.text).child(error.clone()),
+            None => status_text(theme, c.muted).child(editor.status()),
+        })
         .child(div().flex_1().min_w(px(40.)))
         .child(Button::new("reset", "Reset edits").on_click(on(cx, |this, cx| this.reset(cx))))
         .child(
@@ -82,6 +81,13 @@ pub fn top_bar(editor: &Editor, window: &Window, cx: &Context<Editor>) -> Div {
         )
         .child(Button::new("save", "Save").primary().on_click(|_, _| {}))
         .child(save_as)
+}
+
+fn status_text(theme: &Theme, color: Hsla) -> Div {
+    div()
+        .type_style(theme, theme.type_scale.hint)
+        .text_color(color)
+        .whitespace_nowrap()
 }
 
 /// The tool pill, top-centre. It is one tab stop: the arrow keys move between tools.

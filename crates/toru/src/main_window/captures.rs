@@ -83,9 +83,12 @@ impl MainWindow {
             let auto_saved = auto_saved.is_ok();
             if let Ok(card) = stored {
                 this.update(cx, |this, cx| {
-                    // "Open editor after capture" (DESIGN.md §5), once the card exists.
+                    // "Open editor after capture" (DESIGN.md §5), once the card exists. A
+                    // delayed capture minimized Toru for its countdown, and the editor is no
+                    // use in the taskbar, so the window comes back.
                     if let Some(id) = this.show_card(card, cx).filter(|_| open_editor) {
                         this.open_editor(id, cx);
+                        platform::show_main_window();
                     }
                 })
                 .ok();

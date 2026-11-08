@@ -1,6 +1,7 @@
 //! The tools of DESIGN.md §5, in the pill's order and groups, each with its shortcut letter,
-//! icon and hint, and the options the Arrow panel holds. The shapes themselves come in 8.2.
+//! icon and hint, the shape a drawing tool leaves and the options its panel holds.
 
+use super::annotation::Shape;
 use crate::ui::Icon;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -103,6 +104,20 @@ impl Tool {
             Tool::Stickers => Icon::Stickers,
             Tool::Eraser => Icon::Eraser,
         }
+    }
+
+    /// The shape the tool draws, or `None` for a tool that doesn't draw one. The Arrow takes its
+    /// head from its options.
+    pub fn shape(self, head: Head) -> Option<Shape> {
+        Some(match self {
+            Tool::Arrow => Shape::Arrow(head),
+            Tool::Line => Shape::Line,
+            Tool::Rectangle => Shape::Rectangle,
+            Tool::Ellipse => Shape::Ellipse,
+            Tool::Draw => Shape::Pen,
+            Tool::Highlighter => Shape::Highlighter,
+            _ => return None,
+        })
     }
 
     /// "Select (V)", as assistive technology reads the tool.
@@ -216,9 +231,50 @@ impl LineStyle {
     }
 }
 
-/// The Arrow panel's choices, kept while the editor is open. 8.2 reads them when it draws.
+/// The context panel's groups. Each tool shows the ones it needs, in this order.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Group {
+    Stroke,
+    Width,
+    Head,
+    Style,
+    Opacity,
+}
+
+impl Group {
+    pub fn label(self) -> &'static str {
+        match self {
+            Group::Stroke => "Stroke",
+            Group::Width => "Width",
+            Group::Head => "Arrow head",
+            Group::Style => "Style",
+            Group::Opacity => "Opacity",
+        }
+    }
+}
+
+/// The panel's groups for a shape: the Arrow's full set from the mockup, the other lines and
+/// boxes without the head, and the pens without a line style, which freehand doesn't need.
+pub fn groups(shape: Shape) -> &'static [Group] {
+    match shape {
+        Shape::Arrow(_) => &[
+            Group::Stroke,
+            Group::Width,
+            Group::Head,
+            Group::Style,
+            Group::Opacity,
+        ],
+        Shape::Line | Shape::Rectangle | Shape::Ellipse => {
+            &[Group::Stroke, Group::Width, Group::Style, Group::Opacity]
+        }
+        Shape::Pen | Shape::Highlighter => &[Group::Stroke, Group::Width, Group::Opacity],
+    }
+}
+
+/// A drawing tool's panel choices, kept per tool while the editor is open, and what a mark on
+/// the picture is drawn with.
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub struct ArrowOptions {
+pub struct StrokeOptions {
     /// Index into `Colors::stroke_swatches`.
     pub stroke: usize,
     pub width: Width,
@@ -228,16 +284,25 @@ pub struct ArrowOptions {
     pub opacity: f32,
 }
 
-impl Default for ArrowOptions {
-    /// The mockups' chosen options: ink, medium, a single head, solid, fully opaque.
-    fn default() -> Self {
-        ArrowOptions {
+impl StrokeOptions {
+    /// The yellow swatch, which the highlighter starts on.
+    const YELLOW: usize = 3;
+
+    /// The mockups' chosen options: ink, medium, a single head, solid, fully opaque. The
+    /// highlighter starts yellow and half-strength, so the text under it stays readable.
+    pub fn for_shape(shape: Shape) -> StrokeOptions {
+        let mut options = StrokeOptions {
             stroke: 0,
             width: Width::Medium,
             head: Head::Single,
             style: LineStyle::Solid,
             opacity: 1.,
+        };
+        if shape == Shape::Highlighter {
+            options.stroke = StrokeOptions::YELLOW;
+            options.opacity = 0.5;
         }
+        options
     }
 }
 
@@ -269,5 +334,41 @@ mod tests {
             Tool::Arrow.hint(),
             "Drag to draw an arrow · Shift keeps it straight · Esc back to Select"
         );
+    }
+
+    #[test]
+    fn only_the_six_drawing_tools_leave_a_shape() {
+        let drawing: Vec<Tool> = Tool::all()
+            .filter(|tool| tool.shape(Head::Single).is_some())
+            .collect();
+        assert_eq!(
+            drawing,
+            [
+                Tool::Arrow,
+                Tool::Line,
+                Tool::Rectangle,
+                Tool::Ellipse,
+                Tool::Draw,
+                Tool::Highlighter
+            ]
+        );
+        assert_eq!(
+            Tool::Arrow.shape(Head::Curly),
+            Some(Shape::Arrow(Head::Curly))
+        );
+    }
+
+    #[test]
+    fn each_shape_shows_the_groups_it_needs() {
+        assert_eq!(groups(Shape::Arrow(Head::Single)).len(), 5);
+        assert!(!groups(Shape::Line).contains(&Group::Head));
+        assert_eq!(
+            groups(Shape::Pen),
+            &[Group::Stroke, Group::Width, Group::Opacity]
+        );
+        let highlighter = StrokeOptions::for_shape(Shape::Highlighter);
+        assert_eq!(highlighter.stroke, 3);
+        assert_eq!(highlighter.opacity, 0.5);
+        assert_eq!(StrokeOptions::for_shape(Shape::Line).opacity, 1.);
     }
 }

@@ -170,6 +170,16 @@ impl MainWindow {
             GalleryEvent::OpenEditor(id) => this.open_editor(*id, cx),
         })
         .detach();
+        // The card says why a name was refused; while that card is in the editor, the editor's
+        // top bar says it too.
+        cx.observe(&gallery, |this, gallery, cx| {
+            if let Some(editor) = &this.editor {
+                let name = editor.read(cx).name_field();
+                let error = gallery.read(cx).name_error_of(&name);
+                editor.update(cx, |editor, cx| editor.set_name_error(error, cx));
+            }
+        })
+        .detach();
         let pattern =
             cx.new(|cx| InputState::new(window, cx).default_value(settings.name_pattern.clone()));
         cx.subscribe(&pattern, |this, pattern, event: &InputEvent, cx| {
