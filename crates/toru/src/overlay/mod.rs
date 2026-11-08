@@ -50,6 +50,8 @@ struct Session {
     /// Ends the capture when any overlay is closed from outside, such as by Alt+F4.
     _closed: Subscription,
     on_capture: OnCapture,
+    /// Told when no overlay could be opened, which would otherwise look like nothing happening.
+    on_failed: Box<dyn FnOnce(&mut App)>,
 }
 
 impl Global for Session {}
@@ -64,10 +66,14 @@ struct Captured {
 }
 
 /// Starts a region capture: takes Toru's windows out of what captures see, captures every
-/// monitor, and covers each one with an overlay. Toru's windows stay on screen, so Toru keeps the
-/// foreground and the overlay gets the keyboard. `on_capture` runs on the main thread with the
-/// crop once the user confirms.
-pub fn start_region(cx: &mut App, on_capture: impl Fn(RgbaImage, CaptureMode, &mut App) + 'static) {
+/// monitor, covers each one with an overlay and gives one of them the foreground, since another
+/// app holds it after a delayed capture. `on_capture` runs on the main thread with the crop once
+/// the user confirms, and `on_failed` if no overlay could be opened.
+pub fn start_region(
+    cx: &mut App,
+    on_capture: impl Fn(RgbaImage, CaptureMode, &mut App) + 'static,
+    on_failed: impl FnOnce(&mut App) + 'static,
+) {
     if cx.has_global::<Session>() {
         return;
     }
@@ -83,6 +89,7 @@ pub fn start_region(cx: &mut App, on_capture: impl Fn(RgbaImage, CaptureMode, &m
             }
         }),
         on_capture: Rc::new(on_capture),
+        on_failed: Box::new(on_failed),
     });
     platform::exclude_windows_from_capture(true);
     cx.spawn(async move |cx| {
@@ -94,6 +101,7 @@ pub fn start_region(cx: &mut App, on_capture: impl Fn(RgbaImage, CaptureMode, &m
         // another app's capture.
         platform::exclude_windows_from_capture(false);
         cx.update(|cx| open_overlays(captured, cx));
+        platform::bring_overlay_to_foreground();
     })
     .detach();
 }
@@ -120,7 +128,7 @@ fn capture_monitors() -> Vec<Captured> {
 }
 
 /// Opens an overlay on each captured monitor GPUI also knows. With nothing to show, the capture
-/// ends as a cancel.
+/// has failed.
 fn open_overlays(captured: Vec<Captured>, cx: &mut App) {
     let displays = cx.displays();
     let mut overlays = Vec::new();
@@ -134,9 +142,12 @@ fn open_overlays(captured: Vec<Captured>, cx: &mut App) {
             overlays.push(handle.into());
         }
     }
+    if !cx.has_global::<Session>() {
+        return;
+    }
     if overlays.is_empty() {
-        finish(None, cx);
-    } else if cx.has_global::<Session>() {
+        (cx.remove_global::<Session>().on_failed)(cx);
+    } else {
         cx.global_mut::<Session>().overlays = overlays;
     }
 }

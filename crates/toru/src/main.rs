@@ -80,7 +80,7 @@ fn main() {
                 // The title bar is drawn by `main_window::title_bar`; `appears_transparent` hides
                 // the system one while keeping its frame behaviour.
                 titlebar: Some(TitlebarOptions {
-                    title: Some("Toru".into()),
+                    title: Some(main_window::WINDOW_TITLE.into()),
                     appears_transparent: true,
                     ..Default::default()
                 }),

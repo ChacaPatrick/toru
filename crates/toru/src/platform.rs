@@ -1,8 +1,8 @@
 //! The little the app needs from the operating system that GPUI 0.3.11 doesn't offer: restoring
 //! a maximized window, a display's size in physical pixels, the local time, the app-data and
-//! default save folders, showing a file in the file manager and keeping Toru's own windows out of
-//! a capture. Windows is done here; the other platforms get the fallbacks at the bottom until
-//! they are.
+//! default save folders, showing a file in the file manager, keeping Toru's own windows out of a
+//! capture and bringing the capture overlay to the foreground. Windows is done here; the other
+//! platforms get the fallbacks at the bottom until they are.
 
 use std::{path::PathBuf, time::Duration};
 
@@ -70,6 +70,9 @@ mod windows {
     const MONITOR_DEFAULTTONULL: u32 = 0;
     const WDA_NONE: u32 = 0;
     const WDA_EXCLUDEFROMCAPTURE: u32 = 0x11;
+    const GWL_EXSTYLE: i32 = -20;
+    const WS_EX_TOPMOST: u32 = 0x8;
+    const WS_EX_TOOLWINDOW: u32 = 0x80;
 
     #[link(name = "user32")]
     unsafe extern "system" {
@@ -84,6 +87,13 @@ mod windows {
         fn GetMonitorInfoW(monitor: isize, info: *mut MonitorInfo) -> i32;
         fn SetWindowDisplayAffinity(hwnd: isize, affinity: u32) -> i32;
         fn MessageBoxW(hwnd: isize, text: *const u16, caption: *const u16, kind: u32) -> i32;
+        fn IsWindowVisible(hwnd: isize) -> i32;
+        fn GetWindowLongW(hwnd: isize, index: i32) -> i32;
+        fn GetForegroundWindow() -> isize;
+        fn GetWindowThreadProcessId(hwnd: isize, process: *mut u32) -> u32;
+        fn IsHungAppWindow(hwnd: isize) -> i32;
+        fn AttachThreadInput(attach: u32, attach_to: u32, on: i32) -> i32;
+        fn SetForegroundWindow(hwnd: isize) -> i32;
     }
 
     #[link(name = "kernel32")]
@@ -269,6 +279,66 @@ mod windows {
             EnumThreadWindows(GetCurrentThreadId(), set_affinity, affinity as isize);
         }
     }
+
+    /// The extended style GPUI gives a `WindowKind::PopUp`, which only the overlays use.
+    pub fn is_overlay_style(ex_style: u32) -> bool {
+        let overlay = WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
+        ex_style & overlay == overlay
+    }
+
+    /// A thread can't attach to itself, and thread 0 means nothing holds the foreground.
+    pub fn must_attach(foreground_thread: u32, this_thread: u32) -> bool {
+        foreground_thread != 0 && foreground_thread != this_thread
+    }
+
+    unsafe extern "system" fn find_overlay(hwnd: isize, param: isize) -> i32 {
+        // SAFETY: `param` is the handle `bring_overlay_to_foreground` passed and still holds.
+        let found = unsafe { &mut *(param as *mut isize) };
+        // SAFETY: plain user32 calls on a handle the enumeration just handed over.
+        let overlay = unsafe {
+            IsWindowVisible(hwnd) != 0 && is_overlay_style(GetWindowLongW(hwnd, GWL_EXSTYLE) as u32)
+        };
+        if overlay {
+            *found = hwnd;
+        }
+        i32::from(!overlay)
+    }
+
+    /// Gives an open overlay the foreground, and so the keyboard. Any one will do, since Esc on
+    /// any of them closes them all. After a delayed capture another app holds the foreground and
+    /// Windows refuses to hand it over to a background process, unless that process shares the
+    /// foreground thread's input for the moment it asks. `activate_window` gets there by pressing
+    /// Alt (`docs/spikes.md` §1.2), which would reach the app being captured.
+    ///
+    /// Activation is delivered before this returns, and GPUI's handler for it needs the app, so
+    /// this must be called outside any `update`. A hung foreground app isn't attached to, because
+    /// that could hang Toru with it; the overlay then gets the keyboard on its first click.
+    pub fn bring_overlay_to_foreground() {
+        let mut overlay = 0isize;
+        // SAFETY: `overlay` outlives the enumeration, and the handles passed on are either the
+        // one it found or the current foreground window. Nothing between the two
+        // `AttachThreadInput` calls can leave early, so an attached thread is always detached.
+        unsafe {
+            let this_thread = GetCurrentThreadId();
+            EnumThreadWindows(
+                this_thread,
+                find_overlay,
+                &mut overlay as *mut isize as isize,
+            );
+            if overlay == 0 {
+                return;
+            }
+            let foreground = GetForegroundWindow();
+            let foreground_thread = GetWindowThreadProcessId(foreground, std::ptr::null_mut());
+            let attached = must_attach(foreground_thread, this_thread)
+                && IsHungAppWindow(foreground) == 0
+                && AttachThreadInput(this_thread, foreground_thread, 1) != 0;
+            SetForegroundWindow(overlay);
+            if attached {
+                AttachThreadInput(this_thread, foreground_thread, 0);
+            }
+        }
+    }
 }
 
 /// How long a capture waits after `exclude_windows_from_capture(true)`. Exclusion took effect with
@@ -278,8 +348,8 @@ pub const EXCLUDE_SETTLE: Duration = Duration::from_millis(50);
 
 #[cfg(windows)]
 pub use windows::{
-    default_save_folder, exclude_windows_from_capture, local_now, restore_window, reveal_file,
-    show_startup_error,
+    bring_overlay_to_foreground, default_save_folder, exclude_windows_from_capture, local_now,
+    restore_window, reveal_file, show_startup_error,
 };
 
 #[cfg(not(windows))]
@@ -295,6 +365,9 @@ pub fn default_save_folder() -> Option<PathBuf> {
 pub fn reveal_file(_path: &std::path::Path) -> std::io::Result<()> {
     Err(std::io::ErrorKind::Unsupported.into())
 }
+
+#[cfg(not(windows))]
+pub fn bring_overlay_to_foreground() {}
 
 #[cfg(not(windows))]
 pub fn exclude_windows_from_capture(_exclude: bool) {}
@@ -361,5 +434,23 @@ mod tests {
             windows::select_argument(Path::new(r"C:\My, Pictures\a shot.png")),
             r#"/select,"C:\My, Pictures\a shot.png""#
         );
+    }
+
+    #[test]
+    fn only_a_topmost_tool_window_counts_as_an_overlay() {
+        const TOPMOST_TOOL: u32 = 0x88;
+        const APP_WINDOW: u32 = 0x40000;
+        assert!(windows::is_overlay_style(TOPMOST_TOOL));
+        assert!(windows::is_overlay_style(TOPMOST_TOOL | APP_WINDOW));
+        assert!(!windows::is_overlay_style(0x8));
+        assert!(!windows::is_overlay_style(0x80));
+        assert!(!windows::is_overlay_style(APP_WINDOW));
+    }
+
+    #[test]
+    fn input_is_only_shared_with_another_thread_that_holds_the_foreground() {
+        assert!(windows::must_attach(7, 3));
+        assert!(!windows::must_attach(3, 3));
+        assert!(!windows::must_attach(0, 3));
     }
 }

@@ -35,12 +35,15 @@ use crate::theme::ActiveTheme;
 use crate::ui::Toast;
 
 const CAPTURE_FAILED: &str = "Couldn't capture that display";
+const REGION_FAILED: &str = "Couldn't capture the screen";
 const STORE_FAILED: &str = "Couldn't store that capture";
 pub(super) const COPY_FAILED: &str = "Couldn't copy to the clipboard. Another app may be using it.";
+const STORE_AND_COPY_FAILED: &str = "Couldn't store that capture or copy it to the clipboard";
 const RENAME_FAILED: &str = "Couldn't rename that capture";
 const FILE_GONE: &str = "Couldn't read that image. Its file may have moved.";
 const AUTO_SAVE_FAILED: &str =
     "Couldn't auto-save. The capture is still here, unsaved. Check the Save to folder.";
+const SEVERAL_FAILED: &str = "Some captures failed while Toru was in the background";
 
 pub(super) type CopyResult = Result<(), Box<dyn Error + Send + Sync>>;
 
@@ -70,26 +73,29 @@ impl MainWindow {
                     (stored, auto_saved, image)
                 })
                 .await;
-            let kept = stored.is_ok() && auto_saved.is_ok();
+            let kept = stored.is_ok();
+            let auto_saved = auto_saved.is_ok();
+            if let Ok(card) = stored {
+                this.update(cx, |this, cx| this.show_card(card, cx)).ok();
+            }
+            // The clipboard doesn't depend on the store, so a capture that couldn't be kept can
+            // still be pasted.
+            let copied = if copy {
+                Some(
+                    cx.background_spawn(async move { copy_image(image).is_ok() })
+                        .await,
+                )
+            } else {
+                None
+            };
             this.update(cx, |this, cx| {
-                match stored {
-                    Ok(card) => this.show_card(card, cx),
-                    Err(_) => this.show_toast(Toast::failed(STORE_FAILED), cx),
-                }
-                if auto_saved.is_err() {
-                    this.show_toast(Toast::failed(AUTO_SAVE_FAILED), cx);
+                match capture_failure(kept, auto_saved, copied) {
+                    Some(failure) => this.report_failure(failure, cx),
+                    None if copied == Some(true) => this.report_copy(Ok(()), cx),
+                    None => {}
                 }
             })
             .ok();
-            // The clipboard doesn't depend on the store, so a capture that couldn't be kept can
-            // still be pasted. A failure from above stays up unless the copy failed too.
-            if copy {
-                let copied = cx.background_spawn(async move { copy_image(image) }).await;
-                if kept || copied.is_err() {
-                    this.update(cx, |this, cx| this.report_copy(copied, cx))
-                        .ok();
-                }
-            }
         });
     }
 
@@ -101,7 +107,7 @@ impl MainWindow {
         }
         let (displays, chosen) = self.displays(cx);
         let Some(display) = displays.get(chosen) else {
-            self.show_toast(Toast::failed(CAPTURE_FAILED), cx);
+            self.report_failure(CAPTURE_FAILED, cx);
             return;
         };
         // `xcap`'s monitor id is GPUI's `DisplayId`, cut to 32 bits (`docs/spikes.md` §1.2).
@@ -119,8 +125,13 @@ impl MainWindow {
             this.update(cx, |this, cx| {
                 this.capturing = false;
                 match frame {
-                    Some(image) => this.add_capture(image, CaptureMode::FullScreen, cx),
-                    None => this.show_toast(Toast::failed(CAPTURE_FAILED), cx),
+                    Some(image) => {
+                        this.add_capture(image, CaptureMode::FullScreen, cx);
+                        // Only a window in the background flashes. There, as after a delayed
+                        // capture, nothing else says it happened.
+                        this.on_window(cx, |window| window.request_attention());
+                    }
+                    None => this.report_failure(CAPTURE_FAILED, cx),
                 }
             })
             .ok();
@@ -141,7 +152,7 @@ impl MainWindow {
                 .await;
             this.update(cx, |this, cx| {
                 let Some(copied) = copied else {
-                    this.show_toast(Toast::failed(FILE_GONE), cx);
+                    this.report_failure(FILE_GONE, cx);
                     return;
                 };
                 if copied.is_ok() {
@@ -203,7 +214,7 @@ impl MainWindow {
                         })
                         .ok();
                 }
-                None => self.show_toast(Toast::failed(RENAME_FAILED), cx),
+                None => self.report_failure(RENAME_FAILED, cx),
             },
         }
     }
@@ -227,11 +238,41 @@ impl MainWindow {
     }
 
     pub(super) fn report_copy(&mut self, copied: CopyResult, cx: &mut Context<Self>) {
-        let toast = match copied {
-            Ok(()) => Toast::new(cx.theme().strings.copied),
-            Err(_) => Toast::failed(COPY_FAILED),
-        };
-        self.show_toast(toast, cx);
+        match copied {
+            Ok(()) => {
+                let toast = Toast::new(cx.theme().strings.copied);
+                self.show_toast(toast, cx);
+            }
+            Err(_) => self.report_failure(COPY_FAILED, cx),
+        }
+    }
+
+    pub(super) fn report_region_failed(&mut self, cx: &mut Context<Self>) {
+        self.report_failure(REGION_FAILED, cx);
+    }
+
+    /// Says something went wrong. A toast only lasts two seconds and would run out unseen with
+    /// Toru minimized or behind another window, so there the message waits for Toru to come
+    /// back, and the taskbar button flashes to say something is waiting.
+    pub(super) fn report_failure(
+        &mut self,
+        failure: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        let failure = failure.into();
+        if self.window_active {
+            self.show_toast(Toast::failed(failure), cx);
+        } else {
+            self.missed_failures.push(failure);
+            self.on_window(cx, |window| window.request_attention());
+        }
+    }
+
+    pub(super) fn show_missed_failures(&mut self, cx: &mut Context<Self>) {
+        if let Some(message) = missed_failures_message(&self.missed_failures) {
+            self.missed_failures.clear();
+            self.show_toast(Toast::failed(message), cx);
+        }
     }
 
     fn auto_save_target(&self) -> Option<AutoSave> {
@@ -263,6 +304,27 @@ impl MainWindow {
                 gallery.update(cx, |gallery, cx| gallery.add_session_card(card, window, cx))
             })
             .ok();
+    }
+}
+
+/// What went wrong with a capture, once it has been stored, auto-saved if the setting says so and,
+/// if `copied` isn't `None`, copied. An auto-save only runs on a stored capture.
+fn capture_failure(stored: bool, auto_saved: bool, copied: Option<bool>) -> Option<&'static str> {
+    match (stored, auto_saved, copied) {
+        (false, _, Some(false)) => Some(STORE_AND_COPY_FAILED),
+        (false, _, _) => Some(STORE_FAILED),
+        (true, _, Some(false)) => Some(COPY_FAILED),
+        (true, false, _) => Some(AUTO_SAVE_FAILED),
+        (true, true, _) => None,
+    }
+}
+
+/// The one toast for everything that failed while nobody could see it.
+fn missed_failures_message(missed: &[SharedString]) -> Option<SharedString> {
+    match missed {
+        [] => None,
+        [only] => Some(only.clone()),
+        _ => Some(SEVERAL_FAILED.into()),
     }
 }
 
@@ -417,6 +479,47 @@ pub(super) mod tests {
     fn png_dimensions(path: &Path) -> (u32, u32) {
         let image = image::open(path).unwrap();
         (image.width(), image.height())
+    }
+
+    #[test]
+    fn every_failed_step_of_a_capture_is_reported_once() {
+        assert_eq!(capture_failure(true, true, None), None);
+        assert_eq!(capture_failure(true, true, Some(true)), None);
+        assert_eq!(capture_failure(true, true, Some(false)), Some(COPY_FAILED));
+        assert_eq!(capture_failure(false, true, None), Some(STORE_FAILED));
+        assert_eq!(capture_failure(false, true, Some(true)), Some(STORE_FAILED));
+        assert_eq!(
+            capture_failure(false, true, Some(false)),
+            Some(STORE_AND_COPY_FAILED)
+        );
+    }
+
+    #[test]
+    fn a_failed_auto_save_is_reported_unless_the_copy_failed_too() {
+        assert_eq!(capture_failure(true, false, None), Some(AUTO_SAVE_FAILED));
+        assert_eq!(
+            capture_failure(true, false, Some(true)),
+            Some(AUTO_SAVE_FAILED)
+        );
+        assert_eq!(capture_failure(true, false, Some(false)), Some(COPY_FAILED));
+    }
+
+    #[test]
+    fn missed_failures_come_back_as_one_message() {
+        assert_eq!(missed_failures_message(&[]), None);
+        let one = [SharedString::from(CAPTURE_FAILED)];
+        assert_eq!(
+            missed_failures_message(&one).as_deref(),
+            Some(CAPTURE_FAILED)
+        );
+        let two = [
+            SharedString::from(CAPTURE_FAILED),
+            SharedString::from(STORE_FAILED),
+        ];
+        assert_eq!(
+            missed_failures_message(&two).as_deref(),
+            Some(SEVERAL_FAILED)
+        );
     }
 
     #[test]

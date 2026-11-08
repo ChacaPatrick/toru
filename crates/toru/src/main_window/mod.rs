@@ -7,6 +7,7 @@ mod actions;
 mod bottom_bar;
 mod captures;
 mod card;
+mod delayed;
 mod gallery;
 mod mock;
 mod settings;
@@ -21,6 +22,7 @@ use gpui::{
 };
 use gpui_kit::component::input::{InputEvent, InputState};
 use toru_core::{
+    capture::CaptureMode,
     naming::{NameError, validate_pattern},
     settings::Settings,
     store::{SessionId, Store},
@@ -31,6 +33,9 @@ use crate::platform;
 use crate::theme::{ActiveTheme, ThemedText};
 use crate::ui::{Flash, FocusInView, Toast};
 use gallery::{Gallery, GalleryEvent};
+
+/// The window's title in the taskbar. The title bar Toru draws has its own (`MainWindow::title`).
+pub const WINDOW_TITLE: &str = "Toru";
 
 const TOAST_FOR: Duration = Duration::from_secs(2);
 
@@ -62,6 +67,10 @@ pub struct MainWindow {
     display: Option<DisplayId>,
     gallery: Entity<Gallery>,
     toast: Flash<Toast>,
+    /// Whether the window is the active one, so a toast shown now would be seen.
+    window_active: bool,
+    /// Failures from while it wasn't, shown when it next is.
+    missed_failures: Vec<SharedString>,
     /// The window new cards' name fields are created in.
     window: AnyWindowHandle,
     /// The last job handed to `enqueue`, which the next one waits for.
@@ -70,6 +79,7 @@ pub struct MainWindow {
     capturing: bool,
     /// `Pictures\Screenshots`, where captures go unless the Save to setting says otherwise.
     default_save_folder: Option<PathBuf>,
+    countdown: Option<delayed::RunningCountdown>,
 }
 
 impl MainWindow {
@@ -92,6 +102,13 @@ impl MainWindow {
                 .focus_lost_restore_target(cx)
                 .unwrap_or_else(|| this.first.clone());
             target.focus(window, cx)
+        })
+        .detach();
+        cx.observe_window_activation(window, |this, window, cx| {
+            this.window_active = window.is_window_active();
+            if this.window_active {
+                this.show_missed_failures(cx);
+            }
         })
         .detach();
         let now = platform::local_now();
@@ -137,10 +154,13 @@ impl MainWindow {
             display: None,
             gallery,
             toast: Flash::new(),
+            window_active: window.is_window_active(),
+            missed_failures: Vec::new(),
             window: window.window_handle(),
             queue: None,
             capturing: false,
             default_save_folder: platform::default_save_folder(),
+            countdown: None,
         }
     }
 
@@ -166,11 +186,38 @@ impl MainWindow {
         (displays, chosen)
     }
 
+    /// Takes a capture now, whichever way it was asked for, in place of any countdown.
+    fn capture(&mut self, mode: CaptureMode, cx: &mut Context<Self>) {
+        self.cancel_countdown(cx);
+        match mode {
+            CaptureMode::Region => self.capture_region(cx),
+            CaptureMode::Window => self.capture_window(cx),
+            CaptureMode::FullScreen => self.capture_full_screen(cx),
+        }
+    }
+
     /// Opens the region overlay (DESIGN.md §6); its crop arrives in `add_capture`.
     fn capture_region(&mut self, cx: &mut Context<Self>) {
         let this = cx.entity();
-        overlay::start_region(cx, move |image, mode, cx| {
-            this.update(cx, |this, cx| this.add_capture(image, mode, cx));
+        let failed = this.clone();
+        overlay::start_region(
+            cx,
+            move |image, mode, cx| {
+                this.update(cx, |this, cx| this.add_capture(image, mode, cx));
+            },
+            move |cx| failed.update(cx, |this, cx| this.report_region_failed(cx)),
+        );
+    }
+
+    /// Section 5.3 opens its overlay from here.
+    fn capture_window(&mut self, _cx: &mut Context<Self>) {}
+
+    /// Runs `f` on the window. Deferred, because the window can't be reached from inside one of
+    /// its own handlers.
+    fn on_window(&self, cx: &mut Context<Self>, f: impl FnOnce(&mut Window) + 'static) {
+        let window = self.window;
+        cx.defer(move |cx| {
+            window.update(cx, |_, window, _| f(window)).ok();
         });
     }
 

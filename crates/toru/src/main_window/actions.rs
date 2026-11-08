@@ -53,7 +53,7 @@ impl MainWindow {
             this.update(cx, |this, cx| match saved {
                 Ok(Some(file)) => this.show_toast(Toast::new(saved_message(&file)), cx),
                 Ok(None) => {}
-                Err(_) => this.show_toast(Toast::failed(SAVE_FAILED), cx),
+                Err(_) => this.report_failure(SAVE_FAILED, cx),
             })
             .ok();
         });
@@ -82,7 +82,12 @@ impl MainWindow {
         }
         self.enqueue(cx, async move |this, cx| {
             this.update(cx, |this, cx| {
-                this.show_toast(save_all_toast(total, failed.get()), cx)
+                let message = save_all_message(total, failed.get());
+                if failed.get() == 0 {
+                    this.show_toast(Toast::new(message), cx);
+                } else {
+                    this.report_failure(message, cx);
+                }
             })
             .ok();
         });
@@ -104,16 +109,16 @@ impl MainWindow {
 
     fn finish_copy_all(&mut self, copied: Result<CopyAll, &'static str>, cx: &mut Context<Self>) {
         match copied {
-            Err(message) => self.show_toast(Toast::failed(message), cx),
+            Err(message) => self.report_failure(message, cx),
             Ok(CopyAll::Nothing) => self.show_toast(Toast::new("Nothing to copy"), cx),
             Ok(CopyAll::AllMissing(count)) => {
                 let message = format!("Nothing copied. {}", missing_files(count));
-                self.show_toast(Toast::failed(message), cx);
+                self.report_failure(message, cx);
             }
             Ok(CopyAll::Copied { missing: 0 }) => self.report_copy(Ok(()), cx),
             Ok(CopyAll::Copied { missing }) => {
                 let message = format!("Copied, but {}", missing_files(missing));
-                self.show_toast(Toast::failed(message), cx);
+                self.report_failure(message, cx);
             }
         }
     }
@@ -129,7 +134,7 @@ impl MainWindow {
                 .await;
             this.update(cx, |this, cx| {
                 if cleared.is_err() {
-                    this.show_toast(Toast::failed(CLEAR_FAILED), cx);
+                    this.report_failure(CLEAR_FAILED, cx);
                     return;
                 }
                 let removed = this
@@ -153,10 +158,8 @@ impl MainWindow {
                 .background_spawn(async move { platform::reveal_file(&file) })
                 .await;
             if opened.is_err() {
-                this.update(cx, |this, cx| {
-                    this.show_toast(Toast::failed(OPEN_FOLDER_FAILED), cx)
-                })
-                .ok();
+                this.update(cx, |this, cx| this.report_failure(OPEN_FOLDER_FAILED, cx))
+                    .ok();
             }
         })
         .detach();
@@ -281,15 +284,6 @@ fn saved_message(file: &SavedFile) -> String {
         .map(|name| name.to_string_lossy())
         .unwrap_or_default();
     format!("Saved as {name}")
-}
-
-fn save_all_toast(total: usize, failed: usize) -> Toast {
-    let message = save_all_message(total, failed);
-    if failed == 0 {
-        Toast::new(message)
-    } else {
-        Toast::failed(message)
-    }
 }
 
 fn save_all_message(total: usize, failed: usize) -> String {
