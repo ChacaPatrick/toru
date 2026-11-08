@@ -1,9 +1,11 @@
 //! The marks the tools leave (DESIGN.md §5): arrows, lines, rectangles, ellipses, pen and
-//! highlighter trails, which are dragged out, and text, number badges and stickers, which are
-//! placed with a click. Each is a shape, its points in picture pixels and a style, and knows how
-//! to draw itself with `tiny-skia`, where its handles are, how to move and resize, and whether a
-//! point hits it. Everything here is plain arithmetic on picture pixels, so the same code serves
-//! the canvas, the saved file and the tests.
+//! highlighter trails, which are dragged out, text, number badges and stickers, which are
+//! placed with a click, and the blocks that hide part of the picture. Each is a shape, its
+//! points in picture pixels and a style, and knows how to draw itself with `tiny-skia`, where
+//! its handles are, how to move and resize, and whether a point hits it. Everything here is
+//! plain arithmetic on picture pixels, so the same code serves the canvas, the saved file and
+//! the tests. Points are in the pixels of the whole picture, so a crop, which only changes what
+//! is shown, leaves every mark where it was.
 
 use gpui::{Bounds, Point, Size, point, size};
 use tiny_skia::{
@@ -11,6 +13,7 @@ use tiny_skia::{
     PathBuilder, Pixmap, PixmapPaint, Rect, Stroke, StrokeDash, Transform,
 };
 
+use super::block::{self, BlockKind};
 use super::sticker::{self, Part, Sticker};
 use super::text::{self, Font};
 use super::tools::{Head, LineStyle, Width};
@@ -110,6 +113,8 @@ pub enum Shape {
     Number(Badge),
     /// Its two points are the sticker's box, always square.
     Sticker(Sticker),
+    /// A box that hides what is under it.
+    Block(BlockKind),
 }
 
 /// A shape's kind alone, for what the panel shows and the options a tool keeps.
@@ -124,6 +129,7 @@ pub enum Kind {
     Text,
     Number,
     Sticker,
+    Block,
 }
 
 impl Shape {
@@ -138,6 +144,7 @@ impl Shape {
             Shape::Text(_) => Kind::Text,
             Shape::Number(_) => Kind::Number,
             Shape::Sticker(_) => Kind::Sticker,
+            Shape::Block(_) => Kind::Block,
         }
     }
 
@@ -156,6 +163,10 @@ impl Shape {
     /// out: text, a badge or a sticker.
     pub fn is_placed(&self) -> bool {
         matches!(self, Shape::Text(_) | Shape::Number(_) | Shape::Sticker(_))
+    }
+
+    pub fn is_block(&self) -> bool {
+        matches!(self, Shape::Block(_))
     }
 }
 
@@ -183,9 +194,9 @@ impl Annotation {
 
     /// Follows the pointer to `to`: the second point of a line or box, or the next point of a
     /// trail. `constrain` is Shift: a line snaps to 45°, a box becomes a square, a trail is drawn
-    /// straight from its start. The mark stays within a picture `within` big: the pointer is held
+    /// straight from its start. The mark stays within the picture `within`: the pointer is held
     /// at its edge, and a snapped or squared end is cut short so it fits too.
-    pub fn extend(&mut self, to: Point<f32>, constrain: bool, within: Size<f32>) {
+    pub fn extend(&mut self, to: Point<f32>, constrain: bool, within: Bounds<f32>) {
         let to = in_picture(within, to);
         let start = self.points[0];
         if self.shape.is_trail() && !constrain {
@@ -224,10 +235,17 @@ impl Annotation {
     }
 
     /// Whether the mark is big enough to keep: a click without a drag draws nothing, but a
-    /// placed mark has its own size.
+    /// placed mark has its own size, and a box dragged along one axis only, which would be a
+    /// line or a crop of no size, is none.
     pub fn is_drawn(&self) -> bool {
-        let bounds = self.bounds();
-        self.shape.is_placed() || bounds.size.width >= 1. || bounds.size.height >= 1.
+        let size = self.bounds().size;
+        if self.shape.is_placed() {
+            true
+        } else if self.shape.is_line() || self.shape.is_trail() {
+            size.width >= 1. || size.height >= 1.
+        } else {
+            size.width >= 1. && size.height >= 1.
+        }
     }
 
     /// The box around the mark: its points, or what a placed mark takes up.
@@ -353,15 +371,15 @@ impl Annotation {
     /// The mark with handle `handle` dragged to `to`: a line's end moves, a box's corner moves
     /// with the opposite corner still, and a trail is stretched to fit its new box. `constrain`
     /// is Shift, as when drawing: the line's end snaps to 45° from the other, the box stays
-    /// square, and the trail keeps its proportions. The mark stays within a picture `within`
-    /// big, and the end or corner that stays still stays still: a constrained end that would
-    /// leave the picture is cut short instead.
+    /// square, and the trail keeps its proportions. The mark stays within the picture `within`,
+    /// and the end or corner that stays still stays still: a constrained end that would leave
+    /// the picture is cut short instead.
     pub fn resized(
         &self,
         handle: HandleIndex,
         to: Point<f32>,
         constrain: bool,
-        within: Size<f32>,
+        within: Bounds<f32>,
     ) -> Annotation {
         let to = in_picture(within, to);
         if self.shape.is_line() {
@@ -441,15 +459,16 @@ impl Annotation {
 
     /// Whether `at` is on the mark's stroke, within `tolerance` pixels of it: on any of the
     /// segments the mark is drawn from, so an arrow's head counts as well as its shaft. The
-    /// ellipse is tested against a polygon fine enough to pass for the curve.
+    /// ellipse is tested against a polygon fine enough to pass for the curve. A block is a
+    /// filled box, so anywhere inside it counts.
     pub fn hit(&self, at: Point<f32>, tolerance: f32) -> bool {
         if let Shape::Number(badge) = &self.shape {
             let c = self.points[0];
             return ((at.x - c.x).powi(2) + (at.y - c.y).powi(2)).sqrt()
                 <= badge.diameter / 2. + tolerance;
         }
-        if self.shape.is_placed() {
-            // Text and stickers are solid: anywhere in their box picks them.
+        if self.shape.is_placed() || self.shape.is_block() {
+            // Text, stickers and blocks are solid: anywhere in their box picks them.
             let b = self.bounds();
             return at.x >= b.left() - tolerance
                 && at.x <= b.right() + tolerance
@@ -475,11 +494,11 @@ impl Annotation {
             .any(|(points, closed)| polyline_distance(at, points, *closed) <= reach)
     }
 
-    /// The stroke's width in picture pixels; a placed mark has none.
+    /// The stroke's width in picture pixels; a placed mark and a block have none.
     pub fn pixel_width(&self) -> f32 {
         let widths = match self.shape {
             Shape::Highlighter => HIGHLIGHTER_WIDTHS,
-            _ if self.shape.is_placed() => 0.,
+            _ if self.shape.is_placed() || self.shape.is_block() => 0.,
             _ => 1.,
         };
         self.style.width.pixels() * widths
@@ -487,12 +506,14 @@ impl Annotation {
 
     /// How far past its points the mark may paint: half its stroke, and an arrow's head, the
     /// curl of a curly shaft and the sketchy wobble, with a pixel over for anti-aliasing. Text
-    /// may overhang its line box by a little of its size; a sticker by half its outline.
+    /// may overhang its line box by a little of its size; a sticker by half its outline. A
+    /// block fills its box and nothing more.
     pub fn reach(&self) -> f32 {
         match &self.shape {
             Shape::Text(text) => text.size * TEXT_OVERHANG + 1.,
             Shape::Number(_) => 1.,
             Shape::Sticker(_) => self.sticker_unit() * sticker::OUTLINE / 2. + 1.,
+            Shape::Block(_) => 0.,
             _ => {
                 let width = self.pixel_width();
                 let head = (width * HEAD_WIDTHS).max(HEAD_MIN) * LONG_HEAD;
@@ -518,6 +539,16 @@ impl Annotation {
         )
     }
 
+    /// A block's pixels over `base`, the picture with the blocks under this one applied, and
+    /// the whole-picture rectangle they fill. `None` for any other mark, or a block off the
+    /// picture.
+    pub fn block_pixels(&self, base: &Pixmap) -> Option<(IntRect, Pixmap)> {
+        let Shape::Block(kind) = self.shape else {
+            return None;
+        };
+        block::render(kind, base, self.paint_rect()?, self.style.color)
+    }
+
     /// Draws the mark on a picture whose top-left pixel is picture pixel `(0, 0)`.
     #[cfg(test)]
     pub fn draw(&self, picture: &mut Pixmap) {
@@ -527,8 +558,12 @@ impl Annotation {
     /// Draws the mark on `picture`, whose top-left pixel is picture pixel `origin`: the whole
     /// picture, or a region of it rendered on its own. The mark is stroked opaque on a layer of
     /// its own and that is laid on at its opacity, so the passes of a sketchy stroke and an
-    /// arrow's head over its shaft don't darken where they cross.
+    /// arrow's head over its shaft don't darken where they cross. A block draws nothing here:
+    /// its pixels depend on the picture under it, so `Document` takes them from `block_pixels`.
     pub fn draw_at(&self, picture: &mut Pixmap, origin: Point<i32>) {
+        if self.shape.is_block() {
+            return;
+        }
         let Some(area) = IntRect::from_xywh(
             origin.x - LAYER_MARGIN,
             origin.y - LAYER_MARGIN,
@@ -690,7 +725,7 @@ impl Annotation {
         match &self.shape {
             Shape::Line => vec![(self.points.clone(), false)],
             Shape::Arrow(head) => arrow(self.points[0], self.points[1], *head, self.pixel_width()),
-            Shape::Rectangle => vec![(
+            Shape::Rectangle | Shape::Block(_) => vec![(
                 vec![
                     b.origin,
                     point(b.right(), b.top()),
@@ -742,32 +777,49 @@ fn proportional(from: Point<f32>, to: Point<f32>, size: Size<f32>) -> Point<f32>
     )
 }
 
-/// `at` held within a picture `picture` big: a drag that leaves it draws along its edge, not
-/// in the margin where nothing shows.
-pub fn in_picture(picture: Size<f32>, at: Point<f32>) -> Point<f32> {
+/// Lays `pixels`, which fill whole-picture rectangle `rect`, on `picture`, whose top-left pixel
+/// is picture pixel `origin`, replacing what was there.
+pub fn paint_pixels(picture: &mut Pixmap, origin: Point<i32>, rect: IntRect, pixels: &Pixmap) {
+    picture.draw_pixmap(
+        rect.x() - origin.x,
+        rect.y() - origin.y,
+        pixels.as_ref(),
+        &PixmapPaint {
+            opacity: 1.,
+            blend_mode: BlendMode::Source,
+            quality: FilterQuality::Nearest,
+        },
+        Transform::identity(),
+        None,
+    );
+}
+
+/// `at` held within the picture `picture`: a drag that leaves it draws along its edge, not in
+/// the margin where nothing shows.
+pub fn in_picture(picture: Bounds<f32>, at: Point<f32>) -> Point<f32> {
     point(
-        at.x.clamp(0., picture.width),
-        at.y.clamp(0., picture.height),
+        at.x.clamp(picture.left(), picture.right()),
+        at.y.clamp(picture.top(), picture.bottom()),
     )
 }
 
-/// `to` pulled back towards `from` until it is within a picture `within` big, so a square from
+/// `to` pulled back towards `from` until it is within the picture `within`, so a square from
 /// `from` stays square and a snapped line keeps its angle, each as large as fits. `from` is
 /// expected to be inside already.
-fn fit(from: Point<f32>, to: Point<f32>, within: Size<f32>) -> Point<f32> {
+fn fit(from: Point<f32>, to: Point<f32>, within: Bounds<f32>) -> Point<f32> {
     // How much of the way from `from` to `to` fits along one axis.
-    let room = |from: f32, delta: f32, extent: f32| {
+    let room = |from: f32, delta: f32, low: f32, high: f32| {
         if delta > 0. {
-            (extent - from) / delta
+            (high - from) / delta
         } else if delta < 0. {
-            from / -delta
+            (from - low) / -delta
         } else {
             1.
         }
     };
     let delta = to - from;
-    let t = room(from.x, delta.x, within.width)
-        .min(room(from.y, delta.y, within.height))
+    let t = room(from.x, delta.x, within.left(), within.right())
+        .min(room(from.y, delta.y, within.top(), within.bottom()))
         .clamp(0., 1.);
     in_picture(within, point(from.x + delta.x * t, from.y + delta.y * t))
 }
@@ -982,10 +1034,17 @@ mod tests {
     }
 
     /// A picture big enough for everything the tests draw.
-    const PICTURE: Size<f32> = Size {
-        width: 10_000.,
-        height: 10_000.,
+    const PICTURE: Bounds<f32> = Bounds {
+        origin: Point { x: 0., y: 0. },
+        size: Size {
+            width: 10_000.,
+            height: 10_000.,
+        },
     };
+
+    fn picture(width: f32, height: f32) -> Bounds<f32> {
+        Bounds::new(point(0., 0.), size(width, height))
+    }
 
     fn mark(shape: Shape, from: (f32, f32), to: (f32, f32)) -> Annotation {
         let mut a = Annotation::new(shape, point(from.0, from.1), style(LineStyle::Solid));
@@ -1024,7 +1083,7 @@ mod tests {
 
     #[test]
     fn shift_keeps_a_drawing_within_the_picture() {
-        let picture = size(1000., 600.);
+        let picture = picture(1000., 600.);
         // The square that fits from the start, not the pointer's 500 pushed off the bottom.
         let mut rect =
             Annotation::new(Shape::Rectangle, point(100., 500.), style(LineStyle::Solid));
@@ -1046,7 +1105,7 @@ mod tests {
 
     #[test]
     fn shift_keeps_a_resize_within_the_picture_and_its_anchor_still() {
-        let picture = size(1000., 600.);
+        let picture = picture(1000., 600.);
         let rect = mark(Shape::Rectangle, (900., 300.), (950., 350.));
         let squared = rect.resized(3, point(1100., 700.), true, picture);
         assert_eq!(
@@ -1095,6 +1154,11 @@ mod tests {
         );
         assert!(!dot.is_drawn());
         assert!(mark(Shape::Arrow(Head::Single), (4., 4.), (9., 4.)).is_drawn());
+        // A box needs both sides; a line or trail along one axis is drawn.
+        assert!(!mark(Shape::Rectangle, (4., 4.), (40., 4.)).is_drawn());
+        assert!(!mark(Shape::Block(BlockKind::Solid), (4., 4.), (4., 40.)).is_drawn());
+        assert!(mark(Shape::Rectangle, (4., 4.), (40., 5.)).is_drawn());
+        assert!(mark(Shape::Pen, (4., 4.), (40., 4.)).is_drawn());
     }
 
     #[test]
@@ -1117,9 +1181,9 @@ mod tests {
     #[test]
     fn moving_shifts_every_point_and_shift_keeps_it_to_45_degrees() {
         let line = mark(Shape::Line, (10., 10.), (20., 20.));
-        let moved = line.moved(point(5., -5.), false, PICTURE);
+        let moved = line.moved(point(5., -5.), false, PICTURE.size);
         assert_eq!(moved.points, vec![point(15., 5.), point(25., 15.)]);
-        let constrained = line.moved(point(20., 3.), true, PICTURE);
+        let constrained = line.moved(point(20., 3.), true, PICTURE.size);
         assert!((constrained.points[0].y - 10.).abs() < 1e-3);
         assert!((constrained.points[0].x - 10. - (400f32 + 9.).sqrt()).abs() < 1e-3);
     }
@@ -1268,8 +1332,11 @@ mod tests {
         // shifted by the move.
         let moved = {
             let mut picture = white(130, 40);
-            let mut line =
-                mark(Shape::Line, (10., 15.), (110., 15.)).moved(point(7., 3.), false, PICTURE);
+            let mut line = mark(Shape::Line, (10., 15.), (110., 15.)).moved(
+                point(7., 3.),
+                false,
+                PICTURE.size,
+            );
             line.style.line = LineStyle::Sketchy;
             line.draw(&mut picture);
             picture
@@ -1658,7 +1725,7 @@ mod tests {
         assert_eq!(grown.bounds(), Bounds::new(point(40., 30.), size(30., 30.)));
         // Moving shifts a placed mark like any other.
         assert_eq!(
-            badge.moved(point(5., 5.), false, PICTURE).points,
+            badge.moved(point(5., 5.), false, PICTURE.size).points,
             vec![point(55., 55.)]
         );
     }

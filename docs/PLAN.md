@@ -59,7 +59,7 @@ Drawn with `tiny-skia`, so the screen matches the saved file exactly.
   tool pill and context panel. Each later section adds its tools' options to the panel.
 - [x] 8.2 Arrow, line, rectangle, ellipse, pen, highlighter, and the Select tool to move and resize them
 - [x] 8.3 Text, number badges, stickers
-- [ ] 8.4 Crop, blur/pixelate/solid, eraser
+- [x] 8.4 Crop, blur/pixelate/solid, eraser
 - [ ] 8.5 Save, Save as, Copy, Reset, updated thumbnail
 
 ## Phase 9: Appearance [Fable]

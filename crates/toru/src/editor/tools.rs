@@ -2,6 +2,7 @@
 //! icon and hint, the shape a drawing tool leaves and the options its panel holds.
 
 use super::annotation::{Kind, Shape};
+pub use super::block::BlockKind;
 use super::sticker::Sticker;
 use crate::theme::{Case, Family, Theme};
 use crate::ui::Icon;
@@ -108,11 +109,12 @@ impl Tool {
         }
     }
 
-    /// The shape the tool drags out, or `None` for a tool that doesn't draw one. The Arrow takes
-    /// its head from its options.
-    pub fn shape(self, head: Head) -> Option<Shape> {
+    /// The shape the tool drags out, or `None` for a tool that doesn't draw one. The Arrow
+    /// takes its head and the Block its kind from `options`.
+    pub fn shape(self, options: &StrokeOptions) -> Option<Shape> {
         Some(match self {
-            Tool::Arrow => Shape::Arrow(head),
+            Tool::Block => Shape::Block(options.block),
+            Tool::Arrow => Shape::Arrow(options.head),
             Tool::Line => Shape::Line,
             Tool::Rectangle => Shape::Rectangle,
             Tool::Ellipse => Shape::Ellipse,
@@ -126,10 +128,17 @@ impl Tool {
     /// leaves none.
     pub fn kind(self) -> Option<Kind> {
         Some(match self {
+            Tool::Block => Kind::Block,
+            Tool::Arrow => Kind::Arrow,
+            Tool::Line => Kind::Line,
+            Tool::Rectangle => Kind::Rectangle,
+            Tool::Ellipse => Kind::Ellipse,
+            Tool::Draw => Kind::Pen,
+            Tool::Highlighter => Kind::Highlighter,
             Tool::Text => Kind::Text,
             Tool::Number => Kind::Number,
             Tool::Stickers => Kind::Sticker,
-            _ => return self.shape(Head::Single).map(|shape| shape.kind()),
+            Tool::Select | Tool::Pan | Tool::Crop | Tool::Eraser => return None,
         })
     }
 
@@ -145,8 +154,10 @@ impl Tool {
                 "Click an annotation to select it · Drag to move it · Delete removes it"
             }
             Tool::Pan => "Drag to move the picture · Scroll to zoom · Esc back to Select",
-            Tool::Crop => "Drag to choose what to keep · Enter crops · Esc back to Select",
-            Tool::Block => "Drag over what to hide · Esc back to Select",
+            Tool::Crop => {
+                "Drag to choose what to keep · Drag the handles to adjust · Enter crops · Esc cancels"
+            }
+            Tool::Block => "Drag over what to hide · Shift makes a square · Esc back to Select",
             Tool::Arrow => "Drag to draw an arrow · Shift keeps it straight · Esc back to Select",
             Tool::Line => "Drag to draw a line · Shift keeps it straight · Esc back to Select",
             Tool::Rectangle => {
@@ -158,7 +169,7 @@ impl Tool {
             Tool::Text => "Click to place text · Click text to edit it · Esc back to Select",
             Tool::Number => "Click to place the next number · Esc back to Select",
             Tool::Stickers => "Pick a sticker, then click to place it · Esc back to Select",
-            Tool::Eraser => "Click an annotation to remove it · Esc back to Select",
+            Tool::Eraser => "Click or drag over annotations to remove them · Esc back to Select",
         }
     }
 
@@ -323,6 +334,10 @@ pub enum Group {
     Size,
     Sticker,
     Opacity,
+    /// Blur / Pixelate / Solid.
+    Block,
+    /// A Solid block's colour, from the stroke swatches.
+    Fill,
 }
 
 impl Group {
@@ -336,15 +351,19 @@ impl Group {
             Group::Size => "Size",
             Group::Sticker => "Sticker",
             Group::Opacity => "Opacity",
+            Group::Block => "Block",
+            Group::Fill => "Fill",
         }
     }
 }
 
 /// The panel's groups for a kind of mark: the Arrow's full set from the mockup, the other lines
 /// and boxes without the head, the pens without a line style, which freehand doesn't need, text
-/// with its font and size, a badge with its colour, and the stickers' tray.
+/// with its font and size, a badge with its colour, the stickers' tray, and a block's kind with
+/// its colour, which the panel shows only while the block is solid.
 pub fn groups(kind: Kind) -> &'static [Group] {
     match kind {
+        Kind::Block => &[Group::Block, Group::Fill],
         Kind::Arrow => &[
             Group::Stroke,
             Group::Width,
@@ -377,6 +396,7 @@ pub struct StrokeOptions {
     pub sticker: Sticker,
     /// 0 to 1.
     pub opacity: f32,
+    pub block: BlockKind,
 }
 
 impl StrokeOptions {
@@ -385,10 +405,10 @@ impl StrokeOptions {
     const YELLOW: usize = 3;
     const ANNO: usize = 2;
 
-    /// The mockups' chosen options: ink, medium, a single head, solid, fully opaque. The
-    /// highlighter starts yellow and half-strength, so the text under it stays readable; text
-    /// and badges start in the annotation colour, text in the look's `anno_text` face at the
-    /// mockup's size.
+    /// The mockups' chosen options: ink, medium, a single head, solid, fully opaque, and a
+    /// blurring block. The highlighter starts yellow and half-strength, so the text under it
+    /// stays readable; text and badges start in the annotation colour, text in the look's
+    /// `anno_text` face at the mockup's size.
     pub fn for_kind(kind: Kind, theme: &Theme) -> StrokeOptions {
         let mut options = StrokeOptions {
             stroke: 0,
@@ -399,6 +419,7 @@ impl StrokeOptions {
             size: TextSize::Small,
             sticker: Sticker::Hand(0),
             opacity: 1.,
+            block: BlockKind::Blur,
         };
         match kind {
             Kind::Highlighter => {
@@ -449,13 +470,15 @@ mod tests {
     }
 
     #[test]
-    fn only_the_six_drawing_tools_leave_a_shape() {
+    fn only_the_seven_dragging_tools_leave_a_shape() {
+        let defaults = StrokeOptions::for_kind(Kind::Line, &Theme::new(Look::Japandi, 0));
         let drawing: Vec<Tool> = Tool::all()
-            .filter(|tool| tool.shape(Head::Single).is_some())
+            .filter(|tool| tool.shape(&defaults).is_some())
             .collect();
         assert_eq!(
             drawing,
             [
+                Tool::Block,
                 Tool::Arrow,
                 Tool::Line,
                 Tool::Rectangle,
@@ -464,9 +487,15 @@ mod tests {
                 Tool::Highlighter
             ]
         );
+        let curly = StrokeOptions {
+            head: Head::Curly,
+            block: BlockKind::Solid,
+            ..defaults
+        };
+        assert_eq!(Tool::Arrow.shape(&curly), Some(Shape::Arrow(Head::Curly)));
         assert_eq!(
-            Tool::Arrow.shape(Head::Curly),
-            Some(Shape::Arrow(Head::Curly))
+            Tool::Block.shape(&curly),
+            Some(Shape::Block(BlockKind::Solid))
         );
     }
 
@@ -493,16 +522,25 @@ mod tests {
         assert_eq!(text.font, Family::Body);
         assert!(!StrokeOptions::upper(&theme));
         assert!(StrokeOptions::upper(&Theme::new(Look::NeoBrutalism, 0)));
+        assert_eq!(groups(Kind::Block), &[Group::Block, Group::Fill]);
+        assert_eq!(
+            StrokeOptions::for_kind(Kind::Block, &theme).block,
+            BlockKind::Blur
+        );
     }
 
     #[test]
     fn the_placing_tools_have_a_kind_but_no_dragged_shape() {
+        let theme = Theme::new(Look::Japandi, 0);
+        let options = StrokeOptions::for_kind(Kind::Line, &theme);
         assert_eq!(Tool::Text.kind(), Some(Kind::Text));
         assert_eq!(Tool::Number.kind(), Some(Kind::Number));
         assert_eq!(Tool::Stickers.kind(), Some(Kind::Sticker));
-        assert_eq!(Tool::Text.shape(Head::Single), None);
+        assert_eq!(Tool::Text.shape(&options), None);
         assert_eq!(Tool::Arrow.kind(), Some(Kind::Arrow));
+        assert_eq!(Tool::Block.kind(), Some(Kind::Block));
         assert_eq!(Tool::Select.kind(), None);
+        assert_eq!(Tool::Crop.kind(), None);
         assert_eq!(Tool::Eraser.kind(), None);
     }
 

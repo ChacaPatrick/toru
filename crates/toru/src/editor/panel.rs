@@ -1,6 +1,7 @@
 //! The left context panel (DESIGN.md §5): the active tool's options in labelled groups. A
 //! tool shows the groups its kind of mark needs; Select shows the selected mark's, and changing
-//! one changes the mark. Later sections add their tools' groups here.
+//! one changes the mark; Crop shows its rectangle's size with the buttons that apply or cancel
+//! it.
 
 use gpui::{
     AnyElement, Context, Div, ElementId, Hsla, Pixels, SharedString, div, img, prelude::*, px,
@@ -9,7 +10,7 @@ use gpui_kit::component::scroll::ScrollableElement;
 
 use super::{Editor, TRAY_ICON, act, chrome, on, sticker::Sticker, tools::*};
 use crate::theme::{ActiveTheme, Family, Theme, ThemedText};
-use crate::ui::{Choices, MIN_TARGET, Pressable, Slider};
+use crate::ui::{Button, Choices, MIN_TARGET, Pressable, Slider};
 
 pub const WIDTH: f32 = 200.;
 pub const LEFT: f32 = 16.;
@@ -41,10 +42,17 @@ const FAMILIES: [Family; 2] = [Family::Display, Family::Body];
 /// takes keyboard focus below the fold is scrolled to.
 pub fn panel(editor: &Editor, cx: &Context<Editor>) -> Option<AnyElement> {
     let theme = cx.theme();
-    let (options, shown) = editor.panel_options(theme)?;
-    let groups = shown
-        .iter()
-        .map(|group| stroke_group(*group, options, editor, theme, cx));
+    let groups: Vec<Div> = if editor.tool == Tool::Crop {
+        vec![crop_group(editor, theme, cx)]
+    } else {
+        let (options, shown) = editor.panel_options(theme)?;
+        shown
+            .iter()
+            // A block's Fill is its solid colour, so it shows only while the block is solid.
+            .filter(|group| **group != Group::Fill || options.block == BlockKind::Solid)
+            .map(|group| stroke_group(*group, options, editor, theme, cx))
+            .collect()
+    };
     let pop = theme.borders.pop;
     let content = div()
         .id("panel-scroll")
@@ -95,11 +103,11 @@ fn stroke_group(
     cx: &Context<Editor>,
 ) -> Div {
     let control: AnyElement = match which {
-        Group::Stroke => {
+        Group::Stroke | Group::Fill => {
             let swatch_count = theme.colors.stroke_swatches().len();
             Choices::new(
-                "stroke",
-                "Stroke",
+                which.label(),
+                which.label(),
                 swatch_count,
                 options.stroke,
                 |i, on, theme| swatch(theme, i, on),
@@ -108,6 +116,23 @@ fn stroke_group(
             .on_change(act(cx, |this, i, cx| this.set_option(cx, |o| o.stroke = i)))
             .into_any_element()
         }
+        Group::Block => Choices::new(
+            "block",
+            "Block",
+            BlockKind::ALL.len(),
+            index_of(&BlockKind::ALL, options.block),
+            |i, on, theme| {
+                let kind = BlockKind::ALL[i];
+                let label = theme.type_scale.option.case.apply(kind.label());
+                option(theme, ("block", i), kind.label(), on).child(label)
+            },
+        )
+        .flex_wrap()
+        .gap(px(OPTION_GAP))
+        .on_change(act(cx, |this, i, cx| {
+            this.set_option(cx, |o| o.block = BlockKind::ALL[i])
+        }))
+        .into_any_element(),
         Group::Width => Choices::new(
             "width",
             "Width",
@@ -237,6 +262,43 @@ fn stroke_group(
             .into_any_element(),
     };
     group(theme, which.label(), control)
+}
+
+/// The Crop tool's group: the size the picture will be, and the buttons that crop it or go
+/// back to Select. Enter and Esc do the same.
+fn crop_group(editor: &Editor, theme: &Theme, cx: &Context<Editor>) -> Div {
+    let size = match editor.crop_rect() {
+        Some(rect) => format!("{} × {}", rect.width(), rect.height()),
+        None => "Drag out the part to keep".to_string(),
+    };
+    let content = div()
+        .flex()
+        .flex_col()
+        .gap(px(LABEL_GAP))
+        .child(
+            div()
+                .type_style(theme, theme.type_scale.hint)
+                .text_color(theme.colors.muted)
+                .child(size),
+        )
+        .child(
+            div()
+                .flex()
+                .gap(px(OPTION_GAP))
+                .child(
+                    Button::new("crop-apply", "Crop")
+                        .track_focus(&editor.crop_button)
+                        .primary()
+                        .small()
+                        .on_click(on(cx, |this, cx| this.apply_crop(cx))),
+                )
+                .child(
+                    Button::new("crop-cancel", "Cancel")
+                        .small()
+                        .on_click(on(cx, |this, cx| this.set_tool(Tool::Select, cx))),
+                ),
+        );
+    group(theme, "Crop", content)
 }
 
 /// `.group`: a label over its control.

@@ -1,7 +1,9 @@
 //! What the editor edits: the capture's pixels, untouched, plus the list of annotations laid
-//! over them, with undo and redo over that list. `render` draws both into one bitmap with
-//! `tiny-skia`, and that same bitmap is what the canvas shows and what Save (8.5) writes, so the
-//! screen and the file can't differ.
+//! over them and the crop that chooses what of the picture is kept, with undo and redo over
+//! both. `render` draws them into one bitmap with `tiny-skia`, and that same bitmap is what the
+//! canvas shows and what Save (8.5) writes, so the screen and the file can't differ. The crop
+//! is a rectangle of the whole picture and the marks stay in the whole picture's pixels, so
+//! cropping, and undoing it, moves nothing.
 
 use std::{path::Path, sync::Arc};
 
@@ -11,7 +13,7 @@ use tiny_skia::{
 };
 use xcap::image::{Frame, RgbaImage};
 
-use super::annotation::Annotation;
+use super::annotation::{self, Annotation};
 
 /// Undo and redo over a value: every edit keeps the value before it.
 pub struct History<T> {
@@ -75,134 +77,182 @@ impl<T: Clone> History<T> {
     }
 }
 
+/// The undoable state: the marks, bottom to top, and the crop, if any, as a rectangle of the
+/// whole picture.
+#[derive(Clone, PartialEq, Debug, Default)]
+struct Edits {
+    annotations: Vec<Annotation>,
+    crop: Option<IntRect>,
+}
+
 pub struct Document {
     base: Pixmap,
-    annotations: History<Vec<Annotation>>,
+    edits: History<Edits>,
 }
 
 impl Document {
     pub fn new(base: Pixmap) -> Document {
         Document {
             base,
-            annotations: History::new(Vec::new()),
+            edits: History::new(Edits::default()),
         }
     }
 
+    /// The width of what is shown and saved: the crop's, or the whole picture's.
     pub fn width(&self) -> u32 {
-        self.base.width()
+        self.crop().width()
     }
 
     pub fn height(&self) -> u32 {
-        self.base.height()
+        self.crop().height()
     }
 
+    /// The whole picture, as captured.
+    pub fn whole(&self) -> IntRect {
+        IntRect::from_xywh(0, 0, self.base.width(), self.base.height())
+            .expect("a pixmap is at least one pixel")
+    }
+
+    /// The whole picture's size in picture pixels: what a mark may be moved within, crop or no.
     pub fn size(&self) -> Size<f32> {
-        size(self.width() as f32, self.height() as f32)
+        size(self.base.width() as f32, self.base.height() as f32)
     }
 
-    /// Whether any annotation is on the picture.
+    /// The part of the picture that is kept: the crop, or the whole picture without one.
+    pub fn crop(&self) -> IntRect {
+        self.edits.get().crop.unwrap_or_else(|| self.whole())
+    }
+
+    /// Whether a crop is set.
+    pub fn is_cropped(&self) -> bool {
+        self.edits.get().crop.is_some()
+    }
+
+    /// Crops to `crop`, or uncrops with `None`, as one undoable step. The rectangle is held
+    /// within the picture; one that covers it all is no crop. Returns whether anything changed.
+    pub fn set_crop(&mut self, crop: Option<IntRect>) -> bool {
+        let crop = crop
+            .and_then(|crop| crop.intersect(&self.whole()))
+            .filter(|crop| *crop != self.whole());
+        if crop == self.edits.get().crop {
+            return false;
+        }
+        self.edits.edit(|edits| edits.crop = crop);
+        true
+    }
+
+    /// Whether any annotation or crop is on the picture.
     pub fn is_edited(&self) -> bool {
-        !self.annotations.get().is_empty()
+        *self.edits.get() != Edits::default()
     }
 
     /// The marks on the picture, bottom to top.
     pub fn annotations(&self) -> &[Annotation] {
-        self.annotations.get()
+        &self.edits.get().annotations
     }
 
     /// Puts `annotation` on top, as one undoable step. Returns its index.
     pub fn add(&mut self, annotation: Annotation) -> usize {
-        self.annotations.edit(|all| all.push(annotation));
-        self.annotations.get().len() - 1
+        self.edits.edit(|edits| edits.annotations.push(annotation));
+        self.annotations().len() - 1
     }
 
     /// Replaces the mark at `index`, as one undoable step. Returns whether anything changed:
     /// nothing happens if the mark is already so.
     pub fn replace(&mut self, index: usize, annotation: Annotation) -> bool {
-        if index >= self.annotations.get().len() || self.annotations.get()[index] == annotation {
+        if self
+            .annotations()
+            .get(index)
+            .is_none_or(|mark| *mark == annotation)
+        {
             return false;
         }
-        self.annotations.edit(|all| all[index] = annotation);
+        self.edits
+            .edit(|edits| edits.annotations[index] = annotation);
         true
     }
 
     /// Replaces the mark at `index` within the last undo step, for the later moves of a slider
     /// drag whose first move was a `replace`.
     pub fn amend(&mut self, index: usize, annotation: Annotation) {
-        if index < self.annotations.get().len() {
-            self.annotations.amend(|all| all[index] = annotation);
+        if index < self.annotations().len() {
+            self.edits
+                .amend(|edits| edits.annotations[index] = annotation);
         }
     }
 
-    /// Takes the mark at `index` off, as one undoable step.
-    pub fn remove(&mut self, index: usize) {
-        if index < self.annotations.get().len() {
-            self.annotations.edit(|all| {
-                all.remove(index);
-            });
+    /// Takes the mark at `index` off: as one undoable step, or within the last step if
+    /// `amend`, so an eraser drag that takes several marks off is undone as one.
+    pub fn remove(&mut self, index: usize, amend: bool) {
+        if index >= self.annotations().len() {
+            return;
+        }
+        let change = |edits: &mut Edits| {
+            edits.annotations.remove(index);
+        };
+        if amend {
+            self.edits.amend(change);
+        } else {
+            self.edits.edit(change);
         }
     }
 
     /// The topmost mark within `tolerance` picture pixels of `at`, as its index.
     pub fn hit_test(&self, at: Point<f32>, tolerance: f32) -> Option<usize> {
-        self.annotations
-            .get()
+        self.annotations()
             .iter()
             .rposition(|annotation| annotation.hit(at, tolerance))
     }
 
     pub fn can_undo(&self) -> bool {
-        self.annotations.can_undo()
+        self.edits.can_undo()
     }
 
     pub fn can_redo(&self) -> bool {
-        self.annotations.can_redo()
+        self.edits.can_redo()
     }
 
     pub fn undo(&mut self) -> bool {
-        self.annotations.undo()
+        self.edits.undo()
     }
 
     pub fn redo(&mut self) -> bool {
-        self.annotations.redo()
+        self.edits.redo()
     }
 
-    /// Reset edits: takes every annotation off, as one undoable step. `false` when there were
-    /// none.
+    /// Reset edits: takes every annotation and the crop off, as one undoable step. `false`
+    /// when there were none.
     pub fn reset(&mut self) -> bool {
         if !self.is_edited() {
             return false;
         }
-        self.annotations.edit(Vec::clear);
+        self.edits.edit(|edits| *edits = Edits::default());
         true
     }
 
-    /// The picture with its annotations, as the canvas shows it and a save writes it.
+    /// The picture with its annotations, within the crop, as the canvas shows it and Save
+    /// (8.5) writes it.
+    #[allow(dead_code)]
     pub fn render(&self) -> Pixmap {
-        self.render_with(None, None)
+        self.render_region(self.crop(), None, None)
+            .expect("the crop is within the picture")
+            .1
     }
 
-    /// The picture as `render` draws it, but for a drag's preview: the mark at `index` is left
+    /// The pixels in `region` of the whole picture with its marks, as a picture of their own:
+    /// the crop for the canvas, a mark's surroundings so a drag only redraws where the mark is,
+    /// or the whole picture for the Crop tool. For a drag's preview, the mark at `index` is left
     /// out, or drawn as `preview` in its place, under the same marks as before, so a mark being
-    /// moved or resized keeps its depth. A `preview` with no `index` is a mark being drawn, on
+    /// moved or resized keeps its depth; a `preview` with no `index` is a mark being drawn, on
     /// top. Committing the preview to the document renders the same pixels, so nothing shifts
-    /// on release.
-    pub fn render_with(&self, index: Option<usize>, preview: Option<&Annotation>) -> Pixmap {
-        let mut picture = self.base.clone();
-        self.draw_marks(&mut picture, point(0, 0), index, preview);
-        picture
-    }
-
-    /// The pixels in `region` of what `render_with` would draw, as a picture of their own, so a
-    /// drag only redraws where the mark is. `None` if the region misses the picture.
+    /// on release. `None` if the region misses the picture.
     pub fn render_region(
         &self,
         region: IntRect,
         index: Option<usize>,
         preview: Option<&Annotation>,
     ) -> Option<(IntRect, Pixmap)> {
-        let whole = IntRect::from_xywh(0, 0, self.width(), self.height())?;
-        let region = region.intersect(&whole)?;
+        let region = region.intersect(&self.whole())?;
         let mut picture = Pixmap::new(region.width(), region.height())?;
         picture.draw_pixmap(
             -region.x(),
@@ -221,7 +271,10 @@ impl Document {
     }
 
     /// Draws the marks, bottom to top, on `picture`, whose top-left pixel is picture pixel
-    /// `origin`, with the drag's preview as `render_with` describes.
+    /// `origin`, with the drag's preview as `render_region` describes. A block reads the base
+    /// with the blocks under it applied, so a block over another shows only what the first
+    /// left and adding a block never reveals more; that base is built up, over the whole
+    /// picture, only when a second block needs it.
     fn draw_marks(
         &self,
         picture: &mut Pixmap,
@@ -229,19 +282,31 @@ impl Document {
         index: Option<usize>,
         preview: Option<&Annotation>,
     ) {
-        for (i, annotation) in self.annotations.get().iter().enumerate() {
-            if Some(i) == index {
-                if let Some(preview) = preview {
-                    preview.draw_at(picture, origin);
-                }
-            } else {
-                annotation.draw_at(picture, origin);
-            }
+        let marks = self
+            .annotations()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, mark)| (Some(i) != index).then_some(mark))
+            .chain(preview.filter(|_| index.is_none()));
+        let mut marks: Vec<&Annotation> = marks.collect();
+        if let (Some(i), Some(preview)) = (index, preview) {
+            marks.insert(i.min(marks.len()), preview);
         }
-        if index.is_none()
-            && let Some(preview) = preview
-        {
-            preview.draw_at(picture, origin);
+        let blocks = marks.iter().filter(|mark| mark.shape.is_block()).count();
+        let mut hidden = (blocks > 1).then(|| self.base.clone());
+        for mark in marks {
+            if !mark.shape.is_block() {
+                mark.draw_at(picture, origin);
+                continue;
+            }
+            let Some((rect, pixels)) = mark.block_pixels(hidden.as_ref().unwrap_or(&self.base))
+            else {
+                continue;
+            };
+            annotation::paint_pixels(picture, origin, rect, &pixels);
+            if let Some(hidden) = hidden.as_mut() {
+                annotation::paint_pixels(hidden, point(0, 0), rect, &pixels);
+            }
         }
     }
 }
@@ -338,6 +403,18 @@ mod tests {
         assert_eq!(document.render().data(), base.data());
     }
 
+    /// The crop's pixels with a drag's preview, as the canvas shows them.
+    fn render_with(
+        document: &Document,
+        index: Option<usize>,
+        preview: Option<&Annotation>,
+    ) -> Pixmap {
+        document
+            .render_region(document.crop(), index, preview)
+            .unwrap()
+            .1
+    }
+
     fn red_line(from: f32, to: f32, y: f32) -> Annotation {
         use super::super::annotation::{Shape, Style};
         use super::super::tools::{LineStyle, Width};
@@ -352,7 +429,11 @@ mod tests {
                 opacity: 1.,
             },
         );
-        line.extend(gpui::point(to, y), false, gpui::size(100., 100.));
+        line.extend(
+            gpui::point(to, y),
+            false,
+            gpui::Bounds::new(gpui::point(0., 0.), gpui::size(100., 100.)),
+        );
         line
     }
 
@@ -367,7 +448,7 @@ mod tests {
         // Replacing with the same mark is not an edit, nor is replacing what isn't there.
         assert!(!document.replace(0, red_line(0., 40., 5.)));
         assert!(!document.replace(1, red_line(0., 40., 5.)));
-        document.remove(0);
+        document.remove(0, false);
         assert!(!document.is_edited());
         assert!(document.undo());
         assert!(document.undo());
@@ -422,13 +503,13 @@ mod tests {
             line.style.color = Color::from_rgba8(0, 255, 0, 255);
             line
         };
-        let preview = document.render_with(Some(0), Some(&moved));
+        let preview = render_with(&document, Some(0), Some(&moved));
         let overlap = preview.pixel(20, 12).unwrap();
         assert!(overlap.red() > 200 && overlap.green() < 50);
         document.replace(0, moved);
         assert_eq!(preview.data(), document.render().data());
         // Left out, the mark is gone and what was under it shows.
-        let without = document.render_with(Some(1), None);
+        let without = render_with(&document, Some(1), None);
         let shown = without.pixel(20, 12).unwrap();
         assert!(shown.green() > 200 && shown.red() < 50);
     }
@@ -453,7 +534,7 @@ mod tests {
         let mut document = Document::new(base);
         document.add(red_line(0., 40., 10.));
         let drawing = red_line(5., 30., 14.);
-        let whole = document.render_with(None, Some(&drawing));
+        let whole = render_with(&document, None, Some(&drawing));
         let (region, part) = document
             .render_region(
                 IntRect::from_ltrb(-5, 8, 25, 30).unwrap(),
@@ -485,7 +566,7 @@ mod tests {
         let mut document = Document::new(base);
         document.add(red_line(0., 40., 10.));
         let moved = red_line(0., 40., 15.);
-        let preview = document.render_with(Some(0), Some(&moved));
+        let preview = render_with(&document, Some(0), Some(&moved));
         document.replace(0, moved);
         assert_eq!(preview.data(), document.render().data());
         assert!(preview.pixel(20, 15).unwrap().red() > 200);
@@ -494,11 +575,190 @@ mod tests {
     }
 
     #[test]
+    fn a_crop_changes_what_is_shown_and_is_one_undo_step() {
+        let base = super::super::block::tests::text_like(64, 48);
+        let mut document = Document::new(base.clone());
+        assert_eq!(document.crop(), document.whole());
+        document.add(red_line(0., 64., 10.));
+        let crop = IntRect::from_xywh(20, 20, 30, 20).unwrap();
+        assert!(document.set_crop(Some(crop)));
+        assert!(document.is_cropped());
+        assert_eq!((document.width(), document.height()), (30, 20));
+        // The render is the crop's pixels of the whole picture: the line at y 10 is outside.
+        let cropped = document.render();
+        assert_eq!((cropped.width(), cropped.height()), (30, 20));
+        let (_, whole) = document
+            .render_region(document.whole(), None, None)
+            .unwrap();
+        for y in 0..20 {
+            for x in 0..30 {
+                assert_eq!(cropped.pixel(x, y), whole.pixel(x + 20, y + 20));
+            }
+        }
+        assert!(cropped.pixels().iter().all(|p| p.red() == p.green()));
+        assert!(whole.pixel(32, 10).unwrap().red() > 200);
+        // The mark stays where it was, in the whole picture's pixels.
+        assert_eq!(document.annotations()[0].points[0].y, 10.);
+        // The same crop again, or one that is held to the picture's edge, changes nothing new.
+        assert!(!document.set_crop(Some(crop)));
+        assert!(document.set_crop(Some(IntRect::from_xywh(-10, -10, 200, 200).unwrap())));
+        assert!(!document.is_cropped());
+        assert!(document.undo());
+        assert_eq!(document.crop(), crop);
+        assert!(document.undo());
+        assert!(!document.is_cropped());
+        assert!(document.is_edited());
+        assert!(document.redo());
+        assert!(document.reset());
+        assert!(!document.is_cropped());
+        assert!(!document.is_edited());
+        // A crop alone is an edit.
+        let mut just_cropped = Document::new(base);
+        assert!(just_cropped.set_crop(Some(crop)));
+        assert!(just_cropped.is_edited());
+        assert!(!Document::new(Pixmap::new(4, 4).unwrap()).set_crop(None));
+    }
+
+    #[test]
+    fn an_eraser_sweep_is_one_undo_step() {
+        let mut document = Document::new(Pixmap::new(40, 20).unwrap());
+        document.add(red_line(0., 40., 5.));
+        document.add(red_line(0., 40., 10.));
+        document.add(red_line(0., 40., 15.));
+        document.remove(2, false);
+        document.remove(0, true);
+        assert_eq!(document.annotations().len(), 1);
+        assert_eq!(document.annotations()[0].points[0].y, 10.);
+        assert!(document.undo());
+        assert_eq!(document.annotations().len(), 3);
+        // Removing what isn't there does nothing.
+        document.remove(7, true);
+        assert_eq!(document.annotations().len(), 3);
+    }
+
+    #[test]
+    fn a_block_hides_the_marks_under_it_and_renders_the_same_as_a_region() {
+        use super::super::block::BlockKind;
+        let base = super::super::block::tests::text_like(96, 64);
+        let mut document = Document::new(base);
+        document.add(red_line(0., 96., 30.));
+        for kind in [BlockKind::Blur, BlockKind::Pixelate, BlockKind::Solid] {
+            let index = document.add(block(kind, (10., 10.), (80., 50.)));
+            let whole = document.render();
+            // The line under the block is hidden with the picture: no red within the block.
+            for x in 10..80 {
+                let p = whole.pixel(x, 30).unwrap();
+                assert!(
+                    p.red() as u16 <= p.blue() as u16 + 1,
+                    "{kind:?} shows red at ({x}, 30)"
+                );
+            }
+            assert!(whole.pixel(5, 30).unwrap().red() > 200);
+            // A region of the block comes out the same as the whole, cells and all.
+            let (region, part) = document
+                .render_region(IntRect::from_xywh(30, 25, 40, 30).unwrap(), None, None)
+                .unwrap();
+            for y in 0..region.height() {
+                for x in 0..region.width() {
+                    assert_eq!(
+                        part.pixel(x, y).unwrap(),
+                        whole.pixel(x + 30, y + 25).unwrap(),
+                        "{kind:?} pixel ({x}, {y})"
+                    );
+                }
+            }
+            document.remove(index, false);
+        }
+    }
+
+    /// A blue block of `kind` dragged from `from` to `to` on a 96×64 picture.
+    fn block(kind: super::super::block::BlockKind, from: (f32, f32), to: (f32, f32)) -> Annotation {
+        use super::super::annotation::{Shape, Style};
+        use super::super::tools::{LineStyle, Width};
+        let mut block = Annotation::new(
+            Shape::Block(kind),
+            gpui::point(from.0, from.1),
+            Style {
+                color: Color::from_rgba8(0, 0, 255, 255),
+                second: Color::BLACK,
+                width: Width::Medium,
+                line: LineStyle::Solid,
+                opacity: 1.,
+            },
+        );
+        block.extend(
+            gpui::point(to.0, to.1),
+            false,
+            gpui::Bounds::new(gpui::point(0., 0.), gpui::size(96., 64.)),
+        );
+        block
+    }
+
+    #[test]
+    fn a_block_over_a_block_reads_what_the_first_hid() {
+        use super::super::block::BlockKind;
+        let base = super::super::block::tests::text_like(96, 64);
+        let is_blue = |p: tiny_skia::PremultipliedColorU8| p.blue() == 255 && p.red() == 0;
+        for kind in [BlockKind::Blur, BlockKind::Pixelate] {
+            // Solid over the text, then Blur or Pixelate over part of the solid: nothing of
+            // the text comes back, the block is solid blue through and through.
+            let mut document = Document::new(base.clone());
+            document.add(block(BlockKind::Solid, (0., 0.), (96., 64.)));
+            let over = block(kind, (10., 10.), (80., 50.));
+            // As a preview, on top, and committed.
+            let preview = render_with(&document, None, Some(&over));
+            assert!(
+                preview.pixels().iter().all(|p| is_blue(*p)),
+                "{kind:?} preview"
+            );
+            let index = document.add(over.clone());
+            let whole = document.render();
+            assert!(whole.pixels().iter().all(|p| is_blue(*p)), "{kind:?}");
+            // A region of the second block comes out the same as the whole.
+            let (region, part) = document
+                .render_region(IntRect::from_xywh(30, 25, 40, 30).unwrap(), None, None)
+                .unwrap();
+            for y in 0..region.height() {
+                for x in 0..region.width() {
+                    assert_eq!(part.pixel(x, y), whole.pixel(x + 30, y + 25), "{kind:?}");
+                }
+            }
+            // The same block moved as a preview at its depth reads the solid too.
+            let moved = block(kind, (12., 12.), (82., 52.));
+            let dragged = render_with(&document, Some(index), Some(&moved));
+            assert!(
+                dragged.pixels().iter().all(|p| is_blue(*p)),
+                "{kind:?} dragged"
+            );
+        }
+        // A small Pixelate over a large one shows the large one's cells, not finer ones. Both
+        // have 8px cells, the large block's anchored at (0, 0) and the small one's at (8, 8),
+        // so they share a grid and every cell the small block averages is already one colour:
+        // its pixels stay what the large one made them.
+        let mut document = Document::new(base.clone());
+        document.add(block(BlockKind::Pixelate, (0., 0.), (96., 32.)));
+        let large = document.render();
+        document.add(block(BlockKind::Pixelate, (8., 8.), (40., 24.)));
+        assert_eq!(document.render().data(), large.data());
+        // In the other order the small block is read by the large one, so nothing of what it
+        // hid shows: the pixels where it was are averages of the small block's cells alone.
+        let mut document = Document::new(base);
+        document.add(block(BlockKind::Solid, (8., 8.), (40., 24.)));
+        document.add(block(BlockKind::Pixelate, (0., 0.), (96., 32.)));
+        let rendered = document.render();
+        for y in 8..24 {
+            for x in 8..40 {
+                assert!(is_blue(rendered.pixel(x, y).unwrap()), "({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
     fn the_render_image_is_bgra() {
         let mut base = Pixmap::new(1, 1).unwrap();
         base.fill(Color::from_rgba8(10, 20, 30, 255));
         let image = render_image(&base);
-        assert_eq!(image.size(0), size(1.into(), 1.into()));
+        assert_eq!(image.size(0), gpui::size(1.into(), 1.into()));
         // The frame's bytes are BGRA: blue first.
         let mut swapped = base.data().to_vec();
         swapped.swap(0, 2);

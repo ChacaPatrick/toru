@@ -4,10 +4,13 @@
 //! While a mark is dragged, only the region around it is rendered again, as a small overlay
 //! on that bitmap, so a 4K picture isn't rebuilt and uploaded on every pointer move.
 //! The drawing tools of 8.2 put `Annotation`s on the document and Select moves and resizes them;
-//! 8.3 places text, typed in place, number badges and stickers; 8.4 adds the rest, each adding
-//! its `Tool`'s behaviour on the canvas and its groups to `panel`.
+//! 8.3 places text, typed in place, number badges and stickers. 8.4's Block is drawn the same
+//! way, its pixels computed by `block`; its Crop is a rectangle of the document that the canvas
+//! shows the whole picture around while it is adjusted; and its Eraser takes marks off. Each
+//! tool adds its behaviour on the canvas here and its groups to `panel`.
 
 pub mod annotation;
+pub mod block;
 pub mod chrome;
 pub mod document;
 mod panel;
@@ -87,6 +90,11 @@ enum Drag {
         original: Annotation,
         current: Annotation,
     },
+    /// The Crop tool on its rectangle, as it was; `Editor::crop_draft` has it under the pointer.
+    Crop { grip: Grip, original: Annotation },
+    /// The Eraser: whether a mark has gone yet, so the next folds into the same undo step, and
+    /// the pointer's last position in picture pixels, so a fast sweep misses nothing between.
+    Erase { removed: bool, last: Point<f32> },
 }
 
 /// Text being typed in place: a new one, or the document's text at `index` with its changes
@@ -138,6 +146,9 @@ pub struct Editor {
     /// The sticker tray's pictures, one per `Sticker::ALL`, drawn as `tray_key` says.
     tray: Vec<Arc<RenderImage>>,
     tray_key: Option<TrayKey>,
+    /// The Crop tool's rectangle, in whole-picture pixels, while there is one: held as a
+    /// rectangle mark so the handle, move and resize arithmetic is the marks'.
+    crop_draft: Option<Annotation>,
     viewport: Viewport,
     /// The canvas's window bounds from the last frame, so zoom buttons can centre on it.
     canvas: Bounds<Pixels>,
@@ -153,6 +164,8 @@ pub struct Editor {
     focus: FocusHandle,
     /// Back to session: focused when the editor opens.
     back: FocusHandle,
+    /// The panel's Crop button, so Enter crops from it and the canvas but not from Cancel.
+    crop_button: FocusHandle,
     panel_scroll: ScrollHandle,
     /// Scrolls the panel to whichever of its controls takes keyboard focus.
     panel_focus: FocusInView,
@@ -193,6 +206,7 @@ impl Editor {
             typing: None,
             tray: Vec::new(),
             tray_key: None,
+            crop_draft: None,
             viewport: Viewport {
                 zoom: 1.,
                 origin: point(0., 0.),
@@ -204,6 +218,7 @@ impl Editor {
             live_edit: false,
             focus: cx.focus_handle(),
             back: cx.focus_handle().tab_stop(true),
+            crop_button: cx.focus_handle().tab_stop(true),
             panel_scroll: ScrollHandle::new(),
             panel_focus: FocusInView::new(cx),
             copied: Flash::new(),
@@ -223,7 +238,7 @@ impl Editor {
             }
         }
         let theme = cx.theme();
-        let picture = self.document.size();
+        let picture = self.shown_bounds().size;
         let at = |x: f32, y: f32| point(x / 1440. * picture.width, y / 900. * picture.height);
         let text = self
             .placed(Tool::Text, at(170., 290.), theme)
@@ -299,12 +314,39 @@ impl Editor {
         parts.join(" · ")
     }
 
+    /// Switches tools. Into or out of Crop the canvas changes what it shows, the whole picture
+    /// or the crop, and is laid out again; leaving Crop drops the rectangle unless `apply_crop`
+    /// took it first.
     fn set_tool(&mut self, tool: Tool, cx: &mut Context<Self>) {
         self.finish_typing(cx);
+        let was_cropping = self.tool == Tool::Crop;
         self.tool = tool;
         self.cancel_drag(cx);
         self.select(None, cx);
+        if (tool == Tool::Crop) != was_cropping {
+            self.crop_draft = (tool == Tool::Crop)
+                .then(|| self.document_crop_draft())
+                .flatten();
+            self.shown_changed(cx);
+        }
         cx.notify();
+    }
+
+    /// The document's crop as the Crop tool's rectangle, or `None` without one.
+    fn document_crop_draft(&self) -> Option<Annotation> {
+        self.document
+            .is_cropped()
+            .then(|| rectangle(self.document.crop()))
+    }
+
+    /// After the canvas changes what it shows, the whole picture or the crop: it is laid out
+    /// again at Fit, so the new picture sits centred at a zoom that fits, and rendered again.
+    fn shown_changed(&mut self, cx: &mut Context<Self>) {
+        self.fitted = true;
+        if self.measured() {
+            self.viewport = self.laid_out();
+        }
+        self.document_changed(cx);
     }
 
     /// The hint chip's text: what the tool does, or how to finish the text being typed.
@@ -316,11 +358,32 @@ impl Editor {
         }
     }
 
-    /// Drops a drag without committing it: the half-drawn mark goes, and a mark being moved
-    /// returns to where it was.
+    /// The Crop tool's rectangle as whole pixels, if there is one.
+    pub(super) fn crop_rect(&self) -> Option<IntRect> {
+        whole_pixels(self.crop_draft.as_ref()?.bounds())
+    }
+
+    /// Crops to the rectangle, as one undo step, and returns to Select. With no rectangle it
+    /// just returns to Select.
+    fn apply_crop(&mut self, cx: &mut Context<Self>) {
+        if self.drag.is_some() {
+            return;
+        }
+        if let Some(rect) = self.crop_rect() {
+            self.document.set_crop(Some(rect));
+        }
+        self.set_tool(Tool::Select, cx);
+    }
+
+    /// Drops a drag without committing it: the half-drawn mark goes, a mark being moved returns
+    /// to where it was, and the crop rectangle too. What the eraser took stays taken.
     fn cancel_drag(&mut self, cx: &mut Context<Self>) {
         match self.drag.take() {
             Some(Drag::Edit { .. }) => self.document_changed(cx),
+            Some(Drag::Crop { original, .. }) => {
+                self.crop_draft = original.is_drawn().then_some(original);
+                cx.notify();
+            }
             Some(_) => self.preview_changed(cx),
             None => {}
         }
@@ -450,26 +513,38 @@ impl Editor {
     /// index of the mark it found, which they would move from under it. Text being typed goes
     /// on the document first, so the step they take is the one the user sees.
     fn undo(&mut self, cx: &mut Context<Self>) {
-        self.finish_typing(cx);
-        if self.drag.is_none() && self.document.undo() {
-            self.select(None, cx);
-            self.document_changed(cx);
-        }
+        self.step_history(Document::undo, cx);
     }
 
     fn redo(&mut self, cx: &mut Context<Self>) {
-        self.finish_typing(cx);
-        if self.drag.is_none() && self.document.redo() {
-            self.select(None, cx);
-            self.document_changed(cx);
-        }
+        self.step_history(Document::redo, cx);
     }
 
     fn reset(&mut self, cx: &mut Context<Self>) {
+        self.step_history(Document::reset, cx);
+    }
+
+    /// Undo, redo or Reset: typing ends, then `step` the document and, if it did anything,
+    /// drop the selection. A step that changes the crop changes what the canvas shows, so it is
+    /// laid out again, and while the Crop tool is out its rectangle follows, so Enter can't
+    /// bring back a crop that was just undone or reset.
+    fn step_history(&mut self, step: fn(&mut Document) -> bool, cx: &mut Context<Self>) {
         self.finish_typing(cx);
-        if self.drag.is_none() && self.document.reset() {
-            self.select(None, cx);
+        if self.drag.is_some() {
+            return;
+        }
+        let crop = self.document.crop();
+        if !step(&mut self.document) {
+            return;
+        }
+        self.select(None, cx);
+        if self.document.crop() == crop {
             self.document_changed(cx);
+        } else if self.tool == Tool::Crop {
+            self.crop_draft = self.document_crop_draft();
+            self.document_changed(cx);
+        } else {
+            self.shown_changed(cx);
         }
     }
 
@@ -496,7 +571,7 @@ impl Editor {
         let empty = text.text().is_none_or(|t| t.content.trim().is_empty());
         match (index, empty) {
             (Some(index), true) => {
-                self.document.remove(index);
+                self.document.remove(index, false);
                 self.select(None, cx);
             }
             (Some(index), false) => {
@@ -594,7 +669,43 @@ impl Editor {
             return;
         }
         if let Some(index) = self.selected.take() {
-            self.document.remove(index);
+            self.document.remove(index, false);
+            self.document_changed(cx);
+        }
+    }
+
+    /// The topmost mark under `at`, a pixel of the whole picture, if `at` is on the shown
+    /// picture: a mark hidden by the crop, or the part of one past it, can't be picked from
+    /// the margin.
+    fn mark_at(&self, at: Point<f32>) -> Option<usize> {
+        self.shown_bounds()
+            .contains(&at)
+            .then(|| self.document.hit_test(at, self.hit_tolerance()))
+            .flatten()
+    }
+
+    /// Takes off every mark the eraser passes between `from` and `to`, in picture pixels: the
+    /// first as an undo step and the rest of the drag within it. The way is sampled a
+    /// tolerance apart, so a quick sweep across a thin line still takes it, and only where it
+    /// crosses the shown picture, so marks hidden by the crop stay.
+    fn erase(&mut self, from: Point<f32>, to: Point<f32>, cx: &mut Context<Self>) {
+        let tolerance = self.hit_tolerance();
+        let (dx, dy) = (to.x - from.x, to.y - from.y);
+        let steps = ((dx * dx + dy * dy).sqrt() / tolerance).ceil().max(1.) as usize;
+        let mut erased = false;
+        for i in 0..=steps {
+            let t = i as f32 / steps as f32;
+            let at = point(from.x + dx * t, from.y + dy * t);
+            while let Some(index) = self.mark_at(at) {
+                let amend = match &mut self.drag {
+                    Some(Drag::Erase { removed, .. }) => std::mem::replace(removed, true),
+                    _ => false,
+                };
+                self.document.remove(index, amend);
+                erased = true;
+            }
+        }
+        if erased {
             self.document_changed(cx);
         }
     }
@@ -610,10 +721,25 @@ impl Editor {
         cx.emit(EditorEvent::Copied);
     }
 
-    /// The picture's logical size at 100%: one picture pixel per device pixel, so it is sharp on
-    /// screen and the same size as the capture was.
+    /// The part of the whole picture the canvas shows: the crop, or all of it while the Crop
+    /// tool is out so the rectangle can be drawn anywhere on it.
+    fn shown(&self) -> IntRect {
+        if self.tool == Tool::Crop {
+            self.document.whole()
+        } else {
+            self.document.crop()
+        }
+    }
+
+    /// `shown` in picture pixels, as the marks are held within it.
+    fn shown_bounds(&self) -> Bounds<f32> {
+        bounds_of(self.shown())
+    }
+
+    /// The shown picture's logical size at 100%: one picture pixel per device pixel, so it is
+    /// sharp on screen and the same size as the capture was.
     fn picture(&self) -> Size<f32> {
-        self.document.size().map(|v| v / self.scale)
+        self.shown_bounds().size.map(|v| v / self.scale)
     }
 
     /// The canvas area the picture is fitted into: inside the pill, the corners and, on both
@@ -687,22 +813,24 @@ impl Editor {
         self.zoom_at(zoom, anchor, cx);
     }
 
-    /// A window position as a picture pixel.
+    /// A window position as a pixel of the whole picture.
     fn image_point(&self, position: Point<Pixels>) -> Point<f32> {
         let on_canvas = (position - self.canvas.origin).map(f32::from);
         let v = &self.viewport;
+        let shown = self.shown_bounds().origin;
         point(
-            (on_canvas.x - v.origin.x) / v.zoom * self.scale,
-            (on_canvas.y - v.origin.y) / v.zoom * self.scale,
+            shown.x + (on_canvas.x - v.origin.x) / v.zoom * self.scale,
+            shown.y + (on_canvas.y - v.origin.y) / v.zoom * self.scale,
         )
     }
 
-    /// A picture pixel as a logical point on the canvas.
+    /// A pixel of the whole picture as a logical point on the canvas.
     fn canvas_point(&self, at: Point<f32>) -> Point<f32> {
         let v = &self.viewport;
+        let shown = self.shown_bounds().origin;
         point(
-            v.origin.x + at.x / self.scale * v.zoom,
-            v.origin.y + at.y / self.scale * v.zoom,
+            v.origin.x + (at.x - shown.x) / self.scale * v.zoom,
+            v.origin.y + (at.y - shown.y) / self.scale * v.zoom,
         )
     }
 
@@ -714,19 +842,24 @@ impl Editor {
     /// The selected mark's handle under `position`, if any.
     fn handle_at(&self, position: Point<Pixels>) -> Option<(usize, HandleIndex, &Annotation)> {
         let (index, annotation) = self.selection()?;
+        Some((index, self.handle_on(annotation, position)?, annotation))
+    }
+
+    /// `mark`'s handle under `position`, if any.
+    fn handle_on(&self, mark: &Annotation, position: Point<Pixels>) -> Option<HandleIndex> {
         let on_canvas = (position - self.canvas.origin).map(f32::from);
-        let handle = annotation.handles().into_iter().position(|handle| {
+        mark.handles().into_iter().position(|handle| {
             let at = self.canvas_point(handle);
             (at.x - on_canvas.x).abs() <= HANDLE_HIT && (at.y - on_canvas.y).abs() <= HANDLE_HIT
-        })?;
-        Some((index, handle, annotation))
+        })
     }
 
     /// A left press on the canvas starts a drag that lasts until the button is released,
     /// wherever the pointer goes: the Pan tool moves the picture, a drawing tool begins a mark,
-    /// and Select takes a handle of the selected mark, or picks the mark under the pointer and
-    /// starts moving it, or clears the selection. Returns whether a drag began, so the canvas
-    /// keeps the pointer for its length.
+    /// Select takes a handle of the selected mark, or picks the mark under the pointer and
+    /// starts moving it, or clears the selection, Crop takes a handle of its rectangle, or moves
+    /// it, or begins a new one, and the Eraser begins taking marks off. Returns whether a drag
+    /// began, so the canvas keeps the pointer for its length.
     fn mouse_down(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) -> bool {
         if event.button != MouseButton::Left {
             return false;
@@ -741,24 +874,22 @@ impl Editor {
             return false;
         }
         let options = self.options_for(self.tool);
-        let tolerance = self.hit_tolerance();
         let drag = if self.tool == Tool::Pan {
             Drag::Pan(event.position)
-        } else if let Some(shape) = self.tool.shape(options.head) {
+        } else if let Some(shape) = self.tool.shape(&options) {
             self.select(None, cx);
             let style = style_of(options, cx.theme(), shape.kind());
-            let at = in_picture(self.document.size(), at);
+            let at = in_picture(self.shown_bounds(), at);
             Drag::Draw(Annotation::new(shape, at, style))
         } else if self.tool == Tool::Text {
             // On a text already there, the click edits it; anywhere else it begins a new one.
             let on_text = self
-                .document
-                .hit_test(at, tolerance)
+                .mark_at(at)
                 .filter(|index| self.document.annotations()[*index].text().is_some());
             match on_text {
                 Some(index) => self.edit_text(index, cx),
                 None => {
-                    let at = in_picture(self.document.size(), at);
+                    let at = in_picture(self.shown_bounds(), at);
                     if let Some(text) = self.placed(Tool::Text, at, cx.theme()) {
                         self.start_typing(None, text, cx);
                     }
@@ -766,12 +897,45 @@ impl Editor {
             }
             return false;
         } else if matches!(self.tool, Tool::Number | Tool::Stickers) {
-            let at = in_picture(self.document.size(), at);
+            let at = in_picture(self.shown_bounds(), at);
             if let Some(mark) = self.placed(self.tool, at, cx.theme()) {
                 self.document.add(mark);
                 self.document_changed(cx);
             }
             return false;
+        } else if self.tool == Tool::Crop {
+            let draft = self.crop_draft.clone();
+            let handle = draft
+                .as_ref()
+                .and_then(|draft| self.handle_on(draft, event.position));
+            match (draft, handle) {
+                (Some(original), Some(handle)) => Drag::Crop {
+                    grip: Grip::Handle(handle),
+                    original,
+                },
+                (Some(original), None) if original.bounds().contains(&at) => Drag::Crop {
+                    grip: Grip::Body(at),
+                    original,
+                },
+                _ => {
+                    // A fresh rectangle: its far corner follows the pointer from the press.
+                    let at = in_picture(self.shown_bounds(), at);
+                    let style = style_of(options, cx.theme(), Kind::Rectangle);
+                    let fresh = Annotation::new(Shape::Rectangle, at, style);
+                    self.crop_draft = Some(fresh.clone());
+                    Drag::Crop {
+                        grip: Grip::Handle(3),
+                        original: fresh,
+                    }
+                }
+            }
+        } else if self.tool == Tool::Eraser {
+            self.drag = Some(Drag::Erase {
+                removed: false,
+                last: at,
+            });
+            self.erase(at, at, cx);
+            return true;
         } else if self.tool == Tool::Select {
             if let Some((index, handle, annotation)) = self.handle_at(event.position) {
                 Drag::Edit {
@@ -780,7 +944,7 @@ impl Editor {
                     original: annotation.clone(),
                     current: annotation.clone(),
                 }
-            } else if let Some(index) = self.document.hit_test(at, tolerance) {
+            } else if let Some(index) = self.mark_at(at) {
                 self.select(Some(index), cx);
                 let annotation = self.document.annotations()[index].clone();
                 // A double-click on text edits it in place.
@@ -823,7 +987,10 @@ impl Editor {
         }
         let at = self.image_point(event.position);
         let shift = event.modifiers.shift;
-        let picture = self.document.size();
+        let picture = self.shown_bounds();
+        // A mark may reach past the crop, so a move holds it within the whole picture, not the
+        // shown part: a nudge is a nudge, never a jump to the crop's edge.
+        let whole = self.document.size();
         match self.drag.as_mut() {
             Some(Drag::Pan(last)) => {
                 let delta = (event.position - *last).map(f32::from);
@@ -845,10 +1012,21 @@ impl Editor {
                 ..
             }) => {
                 *current = match *grip {
-                    Grip::Body(start) => original.moved(at - start, shift, picture),
+                    Grip::Body(start) => original.moved(at - start, shift, whole),
                     Grip::Handle(handle) => original.resized(handle, at, shift, picture),
                 };
                 self.preview_changed(cx);
+            }
+            Some(Drag::Crop { grip, original }) => {
+                self.crop_draft = Some(match *grip {
+                    Grip::Body(start) => original.moved(at - start, shift, whole),
+                    Grip::Handle(handle) => original.resized(handle, at, shift, picture),
+                });
+                cx.notify();
+            }
+            Some(Drag::Erase { last, .. }) => {
+                let from = std::mem::replace(last, at);
+                self.erase(from, at, cx);
             }
             None => {}
         }
@@ -856,8 +1034,8 @@ impl Editor {
 
     /// The left button, which began the drag, is released and the drag ends: a mark drawn to any
     /// size goes on the document, and a moved or resized mark replaces its old self, each as one
-    /// undo step. A mark that would show nothing is dropped. Another button's release is not the
-    /// drag's end.
+    /// undo step. A mark that would show nothing is dropped, and so is a crop rectangle of no
+    /// size. Another button's release is not the drag's end.
     fn mouse_up(&mut self, cx: &mut Context<Self>) {
         match self.drag.take() {
             Some(Drag::Draw(annotation)) => {
@@ -870,15 +1048,25 @@ impl Editor {
                 self.document.replace(index, current);
                 self.document_changed(cx);
             }
-            Some(Drag::Pan(_)) => cx.notify(),
+            Some(Drag::Crop { .. }) => {
+                if self
+                    .crop_draft
+                    .as_ref()
+                    .is_some_and(|draft| !draft.is_drawn())
+                {
+                    self.crop_draft = None;
+                }
+                cx.notify();
+            }
+            Some(Drag::Pan(_) | Drag::Erase { .. }) => cx.notify(),
             None => {}
         }
     }
 
     /// The shortcuts of DESIGN.md §5: a tool's letter, Esc back to Select, Ctrl+Z / Ctrl+Y for
-    /// undo and redo, Delete on a selected mark, and Enter on selected text to edit it. Typing
-    /// in the name field is left alone, but Esc still works there; text being typed on the
-    /// canvas takes every key first.
+    /// undo and redo, Delete on a selected mark, Enter to crop, and Enter on selected text to
+    /// edit it. Typing in the name field is left alone, but Esc still works there; text being
+    /// typed on the canvas takes every key first.
     fn key_down(&mut self, event: &KeyDownEvent, window: &Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         let m = keystroke.modifiers;
@@ -909,6 +1097,16 @@ impl Editor {
         }
         if matches!(keystroke.key.as_str(), "delete" | "backspace") && self.selected.is_some() {
             self.delete_selected(cx);
+            cx.stop_propagation();
+            return;
+        }
+        // Enter crops from the canvas or the panel's Crop button only: on any other control
+        // it is that control's, so Cancel cancels and Back goes back.
+        if keystroke.key == "enter"
+            && self.tool == Tool::Crop
+            && (self.focus.is_focused(window) || self.crop_button.is_focused(window))
+        {
+            self.apply_crop(cx);
             cx.stop_propagation();
             return;
         }
@@ -953,27 +1151,24 @@ impl Editor {
         self.canvas.size.width > px(0.)
     }
 
-    /// Whether any of `mark` lies over the picture.
+    /// Whether any of `mark` lies over the shown picture.
     fn shows(&self, mark: &Annotation) -> bool {
-        let picture = IntRect::from_xywh(0, 0, self.document.width(), self.document.height());
-        match (mark.paint_rect(), picture) {
-            (Some(rect), Some(picture)) => rect.intersect(&picture).is_some(),
-            _ => false,
-        }
+        mark.paint_rect()
+            .is_some_and(|rect| rect.intersect(&self.shown()).is_some())
     }
 
-    /// The picture under the overlay: the document, without the mark Select is moving or
-    /// resizing or the text being typed. The overlay puts that mark where the pointer or the
-    /// typing has it, at its own depth.
+    /// The picture under the overlay: the shown part of the document, without the mark Select
+    /// is moving or resizing or the text being typed. The overlay puts that mark where the
+    /// pointer or the typing has it, at its own depth.
     fn render_document(&self) -> Pixmap {
         let hidden = match &self.drag {
             Some(Drag::Edit { index, .. }) => Some(*index),
             _ => self.typing.as_ref().and_then(|typing| typing.index),
         };
-        match hidden {
-            Some(index) => self.document.render_with(Some(index), None),
-            None => self.document.render(),
-        }
+        self.document
+            .render_region(self.shown(), hidden, None)
+            .expect("the shown part is within the picture")
+            .1
     }
 
     /// The mark the overlay shows: the mark being drawn, on top, the mark being moved or resized,
@@ -1002,14 +1197,13 @@ impl Editor {
     /// document would render it there.
     fn render_overlay(&self) -> Option<(IntRect, Arc<RenderImage>)> {
         let (index, preview) = self.preview()?;
-        let (region, pixmap) =
-            self.document
-                .render_region(preview.paint_rect()?, index, Some(preview))?;
+        let region = preview.paint_rect()?.intersect(&self.shown())?;
+        let (region, pixmap) = self.document.render_region(region, index, Some(preview))?;
         Some((region, document::render_image(&pixmap)))
     }
 
-    /// The mark whose handles the canvas shows: the selected one, as it is under a drag. Text
-    /// being typed shows its frame instead.
+    /// The mark whose handles the canvas shows: the selected one, as it is under a drag, or the
+    /// Crop tool's rectangle. Text being typed shows its frame instead.
     fn shown_selection(&self) -> Option<&Annotation> {
         if self.typing.is_some() {
             return None;
@@ -1017,12 +1211,13 @@ impl Editor {
         match &self.drag {
             Some(Drag::Edit { current, .. }) => Some(current),
             Some(Drag::Draw(_)) => None,
+            _ if self.tool == Tool::Crop => self.crop_draft.as_ref(),
             _ => self.selection().map(|(_, annotation)| annotation),
         }
     }
 
-    /// The pointer over the canvas: a crosshair for the tools that draw or place, an I-beam for
-    /// Text, a hand for Pan.
+    /// The pointer over the canvas: a crosshair for the tools that draw or place, drag something
+    /// out or sweep over it, an I-beam for Text, a hand for Pan.
     fn cursor(&self) -> Option<CursorStyle> {
         match self.tool {
             Tool::Pan => Some(if matches!(self.drag, Some(Drag::Pan(_))) {
@@ -1031,6 +1226,7 @@ impl Editor {
                 CursorStyle::OpenHand
             }),
             Tool::Text => Some(CursorStyle::IBeam),
+            Tool::Crop | Tool::Eraser => Some(CursorStyle::Crosshair),
             _ => self.tool.kind().map(|_| CursorStyle::Crosshair),
         }
     }
@@ -1060,8 +1256,10 @@ impl Editor {
     }
 
     /// The canvas: the look's fill, then the picture at the viewport, drawn directly so its
-    /// placement is exact, then the selected mark's handles. Its hitbox takes the tools' drags
-    /// and keeps the pointer while one lasts, so crossing the pill or a corner doesn't end it.
+    /// placement is exact, then, while cropping, the picture outside the rectangle dimmed as the
+    /// capture overlay dims it, then the selected mark's or the rectangle's handles. Its hitbox
+    /// takes the tools' drags and keeps the pointer while one lasts, so crossing the pill or a
+    /// corner doesn't end it.
     fn canvas_layer(&self, cx: &Context<Self>) -> impl IntoElement {
         let editor = cx.entity();
         let theme = cx.theme();
@@ -1073,6 +1271,7 @@ impl Editor {
         let handle_radius = theme.radii.sm / 2.;
         let outline = theme.borders.hair.width;
         let frame_line = theme.colors.anno;
+        let dim = theme.overlay.dim;
         let cursor = self.cursor();
         let picture = canvas(
             move |bounds, window, cx| {
@@ -1135,22 +1334,22 @@ impl Editor {
                 if let Some((region, overlay)) = this.overlay.clone() {
                     // The region at the picture's scale, rounded where it shares a corner with
                     // the picture.
-                    let document = this.document.size();
-                    let sx = f32::from(picture.size.width) / document.width;
-                    let sy = f32::from(picture.size.height) / document.height;
+                    let shown = this.shown();
+                    let sx = f32::from(picture.size.width) / shown.width() as f32;
+                    let sy = f32::from(picture.size.height) / shown.height() as f32;
                     let bounds = Bounds::new(
                         point(
-                            picture.origin.x + snap(region.x() as f32 * sx),
-                            picture.origin.y + snap(region.y() as f32 * sy),
+                            picture.origin.x + snap((region.x() - shown.x()) as f32 * sx),
+                            picture.origin.y + snap((region.y() - shown.y()) as f32 * sy),
                         ),
                         size(
                             snap(region.width() as f32 * sx),
                             snap(region.height() as f32 * sy),
                         ),
                     );
-                    let (left, top) = (region.left() == 0, region.top() == 0);
-                    let right = region.right() == this.document.width() as i32;
-                    let bottom = region.bottom() == this.document.height() as i32;
+                    let (left, top) = (region.left() == shown.left(), region.top() == shown.top());
+                    let right = region.right() == shown.right();
+                    let bottom = region.bottom() == shown.bottom();
                     let rounded = |shared: bool| if shared { radius } else { px(0.) };
                     let corners = Corners {
                         top_left: rounded(left && top),
@@ -1203,9 +1402,28 @@ impl Editor {
                 let Some(selected) = this.shown_selection() else {
                     return;
                 };
-                if selected.shape.is_trail() || selected.shape.is_placed() {
+                let cropping = this.tool == Tool::Crop;
+                if cropping {
+                    // What the crop leaves out is dimmed: the picture above, below, left and
+                    // right of the rectangle.
+                    let b = selected.bounds();
+                    let (tl, br) = (on_window(b.origin), on_window(b.bottom_right()));
+                    let p = picture;
+                    for part in [
+                        Bounds::from_corners(p.origin, point(p.right(), tl.y)),
+                        Bounds::from_corners(point(p.left(), br.y), p.bottom_right()),
+                        Bounds::from_corners(point(p.left(), tl.y), point(tl.x, br.y)),
+                        Bounds::from_corners(point(br.x, tl.y), point(p.right(), br.y)),
+                    ] {
+                        let part = part.intersect(&p);
+                        if part.size.width > px(0.) && part.size.height > px(0.) {
+                            window.paint_quad(fill_quad(part, dim));
+                        }
+                    }
+                }
+                if cropping || selected.shape.is_trail() || selected.shape.is_placed() {
                     // A trail's or a placed mark's handles sit on its box, so the box is shown
-                    // as a hairline.
+                    // as a hairline; so is the crop rectangle.
                     let b = selected.bounds();
                     let (tl, br) = (on_window(b.origin), on_window(b.bottom_right()));
                     window.paint_quad(quad(
@@ -1359,6 +1577,7 @@ fn options_of(annotation: &Annotation, theme: &Theme) -> StrokeOptions {
     };
     match &annotation.shape {
         Shape::Arrow(head) => options.head = *head,
+        Shape::Block(kind) => options.block = *kind,
         Shape::Text(text) => {
             options.font = if text.font.family == theme.fonts.display {
                 Family::Display
@@ -1374,10 +1593,11 @@ fn options_of(annotation: &Annotation, theme: &Theme) -> StrokeOptions {
 }
 
 /// `annotation` as `options` have it: its style, an arrow's head, text's face and size, a
-/// sticker's kind. Text keeps a size set by hand unless its preset was changed.
+/// sticker's kind, a block's kind. Text keeps a size set by hand unless its preset was changed.
 fn restyled(annotation: &Annotation, options: StrokeOptions, theme: &Theme) -> Annotation {
     let shape = match &annotation.shape {
         Shape::Arrow(_) => Shape::Arrow(options.head),
+        Shape::Block(_) => Shape::Block(options.block),
         Shape::Text(text) => {
             let mut text = text.clone();
             text.font.family = theme.fonts.family(options.font);
@@ -1427,6 +1647,43 @@ fn tray_image(sticker: Sticker, theme: &Theme, scale: f32) -> Option<Arc<RenderI
     Some(document::render_image(&pixmap))
 }
 
+/// `rect` as a rectangle mark, for the Crop tool's draft; its style is never drawn.
+fn rectangle(rect: IntRect) -> Annotation {
+    Annotation {
+        shape: Shape::Rectangle,
+        points: vec![
+            point(rect.x() as f32, rect.y() as f32),
+            point(rect.right() as f32, rect.bottom() as f32),
+        ],
+        style: Style {
+            color: tiny_skia::Color::BLACK,
+            second: tiny_skia::Color::BLACK,
+            width: tools::Width::Thin,
+            line: tools::LineStyle::Solid,
+            opacity: 1.,
+        },
+    }
+}
+
+/// `rect` in picture pixels, as the marks are held within it.
+fn bounds_of(rect: IntRect) -> Bounds<f32> {
+    Bounds::new(
+        point(rect.x() as f32, rect.y() as f32),
+        size(rect.width() as f32, rect.height() as f32),
+    )
+}
+
+/// `b` rounded to whole pixels, at least one each way, for the crop.
+fn whole_pixels(b: Bounds<f32>) -> Option<IntRect> {
+    let (left, top) = (b.left().round() as i32, b.top().round() as i32);
+    IntRect::from_ltrb(
+        left,
+        top,
+        (b.right().round() as i32).max(left + 1),
+        (b.bottom().round() as i32).max(top + 1),
+    )
+}
+
 /// Runs `f` on the editor from a control's handler.
 fn on(
     cx: &Context<Editor>,
@@ -1474,10 +1731,47 @@ mod tests {
 
     #[test]
     fn drags_stay_within_the_picture() {
-        let picture = size(100., 50.);
+        let picture = Bounds::new(point(0., 0.), size(100., 50.));
         assert_eq!(in_picture(picture, point(-5., 20.)), point(0., 20.));
         assert_eq!(in_picture(picture, point(120., 70.)), point(100., 50.));
         assert_eq!(in_picture(picture, point(40., 20.)), point(40., 20.));
+        // A cropped picture starts where the crop does.
+        let cropped = Bounds::new(point(20., 10.), size(50., 30.));
+        assert_eq!(in_picture(cropped, point(5., 5.)), point(20., 10.));
+        assert_eq!(
+            bounds_of(IntRect::from_xywh(20, 10, 50, 30).unwrap()),
+            cropped
+        );
+    }
+
+    #[test]
+    fn a_crop_rectangle_rounds_to_whole_pixels_and_never_vanishes() {
+        let whole = IntRect::from_xywh(0, 0, 100, 50).unwrap();
+        assert_eq!(
+            rectangle(whole).bounds(),
+            Bounds::new(point(0., 0.), size(100., 50.))
+        );
+        let tiny = whole_pixels(Bounds::new(point(10.4, 5.6), size(0.2, 0.1))).unwrap();
+        assert_eq!(tiny, IntRect::from_xywh(10, 6, 1, 1).unwrap());
+        let rounded = whole_pixels(Bounds::new(point(9.5, 0.4), size(20.2, 10.))).unwrap();
+        assert_eq!(rounded, IntRect::from_ltrb(10, 0, 30, 10).unwrap());
+    }
+
+    #[test]
+    fn a_blocks_kind_round_trips_through_the_panels_choices() {
+        let theme = Theme::new(Look::Japandi, 0);
+        let options = StrokeOptions {
+            block: tools::BlockKind::Solid,
+            stroke: 2,
+            ..StrokeOptions::for_kind(Kind::Block, &theme)
+        };
+        let mark = Annotation::new(
+            Shape::Block(options.block),
+            point(0., 0.),
+            style_of(options, &theme, Kind::Block),
+        );
+        assert_eq!(options_of(&mark, &theme), options);
+        assert_eq!(options_of(&mark, &theme).block, tools::BlockKind::Solid);
     }
 
     #[test]
