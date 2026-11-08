@@ -1,0 +1,61 @@
+//! `.toast`: a message above the bottom bar, read out by screen readers as a polite live region.
+//! It appears and disappears without motion, so a reduced-motion setting has nothing to turn off.
+
+use gpui::{App, Role, SharedString, Window, accesskit::Live, div, prelude::*, px};
+
+use super::Icon;
+use crate::theme::{ActiveTheme, ThemedText};
+
+#[derive(IntoElement)]
+pub struct Toast {
+    message: SharedString,
+}
+
+impl Toast {
+    pub fn new(message: impl Into<SharedString>) -> Toast {
+        Toast {
+            message: message.into(),
+        }
+    }
+}
+
+impl RenderOnce for Toast {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = cx.theme();
+        let c = &theme.colors;
+        let border = theme.borders.toast;
+        let font = theme.type_scale.toast;
+        // The row spans the window so the toast can sit at its centre; it takes no clicks.
+        div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .bottom(px(84.))
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .id("toast")
+                    .role(Role::Status)
+                    .aria_label(self.message.clone())
+                    .a11y_synthetic_children(|builder| {
+                        builder.parent_node().set_live(Live::Polite);
+                    })
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .h(px(40.))
+                    .px_4()
+                    .bg(c.toast_bg)
+                    .text_color(c.toast_text)
+                    .border(border.width)
+                    .border_color(border.color)
+                    .rounded(theme.radii.md)
+                    .shadow(theme.shadows.pop.clone())
+                    .type_style(theme, font)
+                    .whitespace_nowrap()
+                    .child(Icon::Check.render(theme, c.toast_text))
+                    .child(font.case.apply(&self.message)),
+            )
+    }
+}

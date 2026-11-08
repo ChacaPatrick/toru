@@ -26,7 +26,7 @@ Results go in `docs/spikes.md`.
 
 ## Phase 3: Look and controls [Fable]
 - [x] 3.1 Theme loader, bundled fonts, and Japandi with its 3 palettes
-- [ ] 3.2 Shared controls: button, toggle, segmented control, chip, input, menu, toast, with focus rings
+- [x] 3.2 Shared controls: button, toggle, segmented control, chip, input, menu, toast, with focus rings
 - [ ] 3.3 PixelArt and NeoBrutalism with their palettes, plus an automated contrast test
 
 ## Phase 4: Main window with mock data [Fable]

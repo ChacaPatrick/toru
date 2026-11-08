@@ -5,7 +5,7 @@ use toru_core::settings::Look;
 
 use super::{
     Border, Borders, Case, Colors, DayDate, Family, Fill, Fonts, Icons, Palette, Radii, Shadows,
-    Strings, Theme, TypeScale, TypeStyle,
+    Sizes, Strings, Theme, TypeScale, TypeStyle,
 };
 
 pub fn palettes() -> [Palette; 3] {
@@ -200,6 +200,9 @@ fn base() -> Theme {
             square: false,
             dot: px(14.),
         },
+        sizes: Sizes {
+            button_sm_padding: px(12.),
+        },
         fonts: Fonts {
             display: "Noto Serif JP".into(),
             body: "Inter".into(),
@@ -215,6 +218,7 @@ fn base() -> Theme {
             button: body(14., FontWeight::SEMIBOLD),
             button_sm: body(13., FontWeight::SEMIBOLD),
             primary_button: body(14., FontWeight::MEDIUM),
+            primary_button_sm: body(13., FontWeight::MEDIUM),
             button_sub: body(12., FontWeight::NORMAL),
             chip: body(11., FontWeight::SEMIBOLD),
             tag: body(11., FontWeight::NORMAL),

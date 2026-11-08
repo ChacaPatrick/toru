@@ -6,9 +6,11 @@
 
 mod fonts;
 mod japandi;
+mod kit;
 
 use gpui::{
-    App, Background, BoxShadow, FontWeight, Global, Hsla, Pixels, SharedString, Styled, px,
+    App, Background, BoxShadow, Font, FontWeight, Global, Hsla, Pixels, SharedString, Styled, font,
+    px,
 };
 use toru_core::settings::{BUILT_IN_PALETTES, Look, PaletteChoice, Settings};
 
@@ -23,6 +25,7 @@ pub struct Theme {
     pub radii: Radii,
     pub shadows: Shadows,
     pub icons: Icons,
+    pub sizes: Sizes,
     pub fonts: Fonts,
     pub type_scale: TypeScale,
     pub strings: Strings,
@@ -61,6 +64,7 @@ impl Theme {
 
 /// Makes `theme` the active one and redraws every window with it.
 pub fn set_theme(theme: Theme, cx: &mut App) {
+    kit::sync_kit_theme(&theme, cx);
     cx.set_global(theme);
     cx.refresh_windows();
 }
@@ -250,6 +254,13 @@ pub struct Shadows {
     pub shot: Vec<BoxShadow>,
 }
 
+/// The control sizes a look changes. Everything else is the same in every look's CSS and is set
+/// where the control is drawn.
+pub struct Sizes {
+    /// The horizontal padding of `.btn.sm`.
+    pub button_sm_padding: Pixels,
+}
+
 /// Line icons and the title bar dot.
 pub struct Icons {
     pub stroke: Pixels,
@@ -301,6 +312,19 @@ impl TypeStyle {
             case,
         }
     }
+
+    /// The height of one line at CSS `line-height: normal`: the font's ascent plus descent, for a
+    /// control whose height comes from its text, as the mockups' chips do.
+    pub fn natural_line_height(&self, theme: &Theme, cx: &App) -> Pixels {
+        let font = Font {
+            weight: self.weight,
+            ..font(theme.fonts.family(self.family))
+        };
+        let text_system = cx.text_system();
+        let font_id = text_system.resolve_font(&font);
+        // The Windows text system reports the descent as a negative distance.
+        text_system.ascent(font_id, self.size) + text_system.descent(font_id, self.size).abs()
+    }
 }
 
 /// `.type_style(theme, style)` sets the family, size and weight in one go. Apply `style.case`
@@ -327,6 +351,8 @@ pub struct TypeScale {
     pub button: TypeStyle,
     pub button_sm: TypeStyle,
     pub primary_button: TypeStyle,
+    /// A small primary button, such as a card's Save: the looks size it apart from `button_sm`.
+    pub primary_button_sm: TypeStyle,
     /// The secondary part of a button label, such as its shortcut.
     pub button_sub: TypeStyle,
     pub chip: TypeStyle,
