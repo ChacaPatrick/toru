@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use image::codecs::jpeg::JpegEncoder;
 
 use crate::settings::SaveFormat;
-use crate::store::{CaptureId, Result, SessionId, Store, StoredCapture, path_text};
+use crate::store::{CaptureId, Result, Store, path_text};
 
 const JPEG_QUALITY: u8 = 90;
 
@@ -18,7 +18,7 @@ pub struct SavedFile {
     pub bytes: u64,
 }
 
-/// What Copy all puts on the clipboard.
+/// What Copy all or Copy as files puts on the clipboard.
 #[derive(Debug, PartialEq, Eq)]
 pub struct CopySet {
     /// Holds the unsaved captures' files, which must outlive the paste (`docs/spikes.md` §1.4).
@@ -54,11 +54,15 @@ pub fn save_capture(
     }))
 }
 
-/// Gets the session's captures ready to copy as files: a saved capture is its own file, and an
-/// unsaved one is written to a new folder from `Store::new_copy_folder` under its name.
-pub fn prepare_copy_set(store: &Store, session: SessionId, format: SaveFormat) -> Result<CopySet> {
+/// Gets `captures` ready to copy as files: a saved capture is its own file, and an unsaved one is
+/// written to a new folder from `Store::new_copy_folder` under its name.
+pub fn prepare_copy_set(
+    store: &Store,
+    captures: &[CaptureId],
+    format: SaveFormat,
+) -> Result<CopySet> {
     let folder = store.new_copy_folder()?;
-    let prepared = fill_copy_set(store, session, format, &folder);
+    let prepared = fill_copy_set(store, captures, format, &folder);
     if prepared.is_err() {
         let _ = fs::remove_dir_all(&folder);
     }
@@ -72,13 +76,14 @@ pub fn prepare_copy_set(store: &Store, session: SessionId, format: SaveFormat) -
 
 fn fill_copy_set(
     store: &Store,
-    session: SessionId,
+    captures: &[CaptureId],
     format: SaveFormat,
     folder: &Path,
 ) -> Result<(Vec<String>, usize)> {
     let mut files = Vec::new();
     let mut missing = 0;
-    for StoredCapture { id, capture } in store.session_captures(session)? {
+    for &id in captures {
+        let capture = store.capture(id)?;
         match capture.saved_path {
             Some(path) if path.is_file() => files.push(path_text(&path)?.to_string()),
             Some(_) => missing += 1,
@@ -163,7 +168,7 @@ mod tests {
 
     use super::*;
     use crate::capture::{Capture, CaptureMode};
-    use crate::store::StoreError;
+    use crate::store::{SessionId, StoreError};
     use crate::time::{LocalDate, LocalDateTime};
 
     struct TestDir(PathBuf);
@@ -215,6 +220,11 @@ mod tests {
             saved_path: None,
         };
         store.add_capture(session, &image, &capture, 16).unwrap()
+    }
+
+    fn session_ids(store: &Store, session: SessionId) -> Vec<CaptureId> {
+        let captures = store.session_captures(session).unwrap();
+        captures.iter().map(|stored| stored.id).collect()
     }
 
     fn file_name(path: &Path) -> &str {
@@ -359,7 +369,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let set = prepare_copy_set(&store, session, SaveFormat::Png).unwrap();
+        let set = prepare_copy_set(&store, &session_ids(&store, session), SaveFormat::Png).unwrap();
 
         assert_eq!(set.missing, 0);
         assert_eq!(set.files.len(), 2);
@@ -376,7 +386,8 @@ mod tests {
         let session = store.new_session().unwrap();
         add(&store, session, "shot");
 
-        let set = prepare_copy_set(&store, session, SaveFormat::WebP).unwrap();
+        let set =
+            prepare_copy_set(&store, &session_ids(&store, session), SaveFormat::WebP).unwrap();
 
         let bytes = fs::read(set.folder.join("shot.webp")).unwrap();
         assert_eq!(image::guess_format(&bytes).unwrap(), ImageFormat::WebP);
@@ -394,7 +405,7 @@ mod tests {
             .unwrap();
         fs::remove_file(&saved.path).unwrap();
 
-        let set = prepare_copy_set(&store, session, SaveFormat::Png).unwrap();
+        let set = prepare_copy_set(&store, &session_ids(&store, session), SaveFormat::Png).unwrap();
 
         assert_eq!(set.missing, 1);
         assert_eq!(set.files.len(), 1);
@@ -408,7 +419,7 @@ mod tests {
         let id = add(&store, session, "shot");
         fs::remove_file(store.image_path(id)).unwrap();
 
-        assert!(prepare_copy_set(&store, session, SaveFormat::Png).is_err());
+        assert!(prepare_copy_set(&store, &session_ids(&store, session), SaveFormat::Png).is_err());
         let copies = fs::read_dir(dir.0.join("app").join("copies")).unwrap();
         assert_eq!(copies.count(), 0);
     }
@@ -421,7 +432,7 @@ mod tests {
         add(&store, session, "shot");
         add(&store, session, "shot");
 
-        let set = prepare_copy_set(&store, session, SaveFormat::Png).unwrap();
+        let set = prepare_copy_set(&store, &session_ids(&store, session), SaveFormat::Png).unwrap();
 
         assert_eq!(set.files.len(), 2);
         assert!(set.folder.join("shot.png").is_file());

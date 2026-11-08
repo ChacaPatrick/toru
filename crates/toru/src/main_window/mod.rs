@@ -2,7 +2,7 @@
 //! settings column, then the bottom bar, with the toast above it. While anything is selected the
 //! bulk bar (§4) floats over the gallery's foot in the bottom bar's place. Opening a card in the
 //! editor (§5) replaces everything under the title bar with it. Captures come in through
-//! `captures`, the gallery's buttons act on them in `actions`, and the gallery pages through
+//! `captures`, the gallery's buttons act on them in `actions` and `delete`, and the gallery pages through
 //! earlier days itself (`history`). Each choice that is a setting reads and writes `Settings`,
 //! every write going through `change_settings` to the store. Old unsaved captures are deleted by
 //! the retention setting (`retention`) at launch, at midnight and when the setting changes.
@@ -16,6 +16,7 @@ mod card;
 mod closing;
 mod custom_palette;
 mod delayed;
+mod delete;
 mod gallery;
 mod history;
 mod retention;
@@ -121,8 +122,12 @@ pub struct MainWindow {
     has_tray: bool,
     /// The quit dialog is up, asking about this many unsaved captures (`closing`).
     quit_prompt: Option<usize>,
-    /// The open dialog's first action, focused when the quit dialog opens.
+    /// The delete dialog is up, asking about these cards (`delete`).
+    delete_prompt: Option<delete::DeletePrompt>,
+    /// The open dialog's first action, focused when the dialog opens.
     dialog_focus: FocusHandle,
+    /// The Save to folder picker is open, so a second Change doesn't open another.
+    picking_folder: bool,
     /// The custom palette editor, while it is open over the window.
     custom_editor: Option<CustomEditor>,
     /// The editor's file picker while it is open, one per window whatever the editor does.
@@ -211,6 +216,7 @@ impl MainWindow {
             GalleryEvent::Save { capture } => this.save_card(*capture, cx),
             GalleryEvent::OpenFolder { file } => this.open_folder(file.clone(), cx),
             GalleryEvent::OpenEditor(id) => this.open_editor(*id, cx),
+            GalleryEvent::Delete(id) => this.delete_card(*id, cx),
         })
         .detach();
         // The card says why a name was refused; while that card is in the editor, the editor's
@@ -275,7 +281,9 @@ impl MainWindow {
             quitting: false,
             has_tray: true,
             quit_prompt: None,
+            delete_prompt: None,
             dialog_focus: cx.focus_handle().tab_stop(true),
+            picking_folder: false,
             custom_editor: None,
             background_picker: BackgroundPicker::default(),
             backdrop: None,
@@ -493,6 +501,10 @@ impl MainWindow {
     /// Ctrl+A selects every listed card. A control that handles the key itself, as a name field
     /// does with both, keeps it.
     fn key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        // A dialog's question stands until it is answered, whatever is behind it.
+        if self.quit_prompt.is_some() || self.delete_prompt.is_some() {
+            return;
+        }
         let keystroke = &event.keystroke;
         let select_mode = self.gallery.read(cx).in_select_mode();
         match keystroke.key.as_str() {
@@ -599,6 +611,11 @@ impl Render for MainWindow {
             .children(
                 self.quit_prompt
                     .map(|unsaved| self.quit_dialog(unsaved, cx)),
+            )
+            .children(
+                self.delete_prompt
+                    .as_ref()
+                    .map(|prompt| self.delete_dialog(prompt, cx)),
             )
     }
 }

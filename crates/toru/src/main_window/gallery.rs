@@ -57,6 +57,7 @@ use toru_core::{
 
 use super::{
     HINT_LEADING, act, bulk_bar, card,
+    delete::DeleteCard,
     history::{self, Next, Page},
     selection::{Counts, Selection, enters_select_mode},
 };
@@ -173,6 +174,8 @@ pub enum GalleryEvent {
     },
     /// A card's `⋯ → Open in editor`, a double-click on its thumbnail, or Enter on the card.
     OpenEditor(usize),
+    /// A card's `⋯ → Delete`.
+    Delete(usize),
 }
 
 pub struct Gallery {
@@ -623,6 +626,65 @@ impl Gallery {
             selected: self.selection.len(),
             saved,
         }
+    }
+
+    /// The selected cards in reading order, so what bulk actions produce reads like the gallery.
+    fn selected_cards(&self) -> Vec<&Card> {
+        self.listed_ids()
+            .into_iter()
+            .filter(|&id| self.selection.contains(id))
+            .filter_map(|id| self.card(id))
+            .collect()
+    }
+
+    /// The selected captures: what Copy as files and Copy paths copy.
+    pub fn selected_captures(&self) -> Vec<CaptureId> {
+        self.selected_cards()
+            .iter()
+            .map(|card| card.files.id)
+            .collect()
+    }
+
+    /// The selected captures not saved yet: what the bulk bar's Save writes.
+    pub fn selected_unsaved(&self) -> Vec<CaptureId> {
+        self.selected_cards()
+            .iter()
+            .filter(|card| !card.capture.is_saved())
+            .map(|card| card.files.id)
+            .collect()
+    }
+
+    fn delete_card_for(card: &Card) -> DeleteCard {
+        DeleteCard {
+            card: card.id,
+            capture: card.files.id,
+            saved: card.capture.is_saved(),
+        }
+    }
+
+    pub fn selected_for_delete(&self) -> Vec<DeleteCard> {
+        self.selected_cards()
+            .into_iter()
+            .map(Self::delete_card_for)
+            .collect()
+    }
+
+    pub fn card_for_delete(&self, id: usize) -> Option<DeleteCard> {
+        self.card(id).map(Self::delete_card_for)
+    }
+
+    /// Takes these cards away, whichever groups they are in. A focused card that goes with them
+    /// stops being rendered, which the main window answers by refocusing.
+    pub fn remove_cards(&mut self, ids: &[usize], cx: &mut Context<Self>) {
+        for group in &mut self.groups {
+            let (gone, kept): (Vec<Card>, Vec<Card>) = std::mem::take(&mut group.cards)
+                .into_iter()
+                .partition(|card| ids.contains(&card.id));
+            group.cards = kept;
+            self.cleared.extend(gone);
+        }
+        self.rebuild_rows(cx);
+        cx.notify();
     }
 
     fn enter_select_mode(&mut self, cx: &mut Context<Self>) {

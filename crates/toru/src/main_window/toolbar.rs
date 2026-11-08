@@ -129,7 +129,7 @@ pub fn toolbar(this: &MainWindow, cx: &Context<MainWindow>) -> Div {
         .child(
             Button::new("new-session", "New session")
                 .icon(Icon::Plus)
-                .on_click(|_, _| {}),
+                .on_click(act(cx, |this, cx| this.start_new_session(cx))),
         )
         .child(
             Button::icon_only(

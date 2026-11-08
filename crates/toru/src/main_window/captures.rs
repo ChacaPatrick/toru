@@ -5,7 +5,11 @@
 //! (`enqueue`): names are chosen one at a time so two captures can't get the same `_2`, and
 //! clipboard writes can't overlap and mix formats (`docs/spikes.md` §1.4).
 
-use std::{error::Error, fs, path::PathBuf};
+use std::{
+    error::Error,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use clipboard_rs::{
     Clipboard, ClipboardContext,
@@ -312,6 +316,7 @@ impl MainWindow {
     fn auto_save_target(&self) -> Option<AutoSave> {
         self.settings.auto_save.then(|| AutoSave {
             folder: self.save_folder(),
+            chosen: self.settings.save_folder.is_some(),
             format: self.settings.format,
         })
     }
@@ -376,7 +381,19 @@ struct Shot {
 /// Pictures is, which fails like any other unreachable folder.
 struct AutoSave {
     folder: Option<PathBuf>,
+    /// The user picked this folder; see `check_chosen_folder`.
+    chosen: bool,
     format: SaveFormat,
+}
+
+/// A folder the user picked that has since gone is an error rather than made again, so a save
+/// fails with its message instead of quietly writing to wherever the path now leads, such as an
+/// unplugged drive's letter given to something else. The default folder is made when needed.
+pub(super) fn check_chosen_folder(folder: &Path, chosen: bool) -> StoreResult<()> {
+    if chosen && !folder.is_dir() {
+        return Err(StoreError::Io(std::io::ErrorKind::NotFound.into()));
+    }
+    Ok(())
 }
 
 /// Saves a capture the moment it is stored. On failure the capture stays stored and unsaved.
@@ -384,6 +401,7 @@ fn auto_save_card(store: &Store, card: &mut NewCard, target: AutoSave) -> StoreR
     let folder = target
         .folder
         .ok_or_else(|| StoreError::Io(std::io::ErrorKind::NotFound.into()))?;
+    check_chosen_folder(&folder, target.chosen)?;
     if let Some(file) = save_capture(store, card.files.id, &folder, target.format)? {
         card.bytes = file.bytes;
         card.capture.saved_path = Some(file.path);
@@ -453,7 +471,7 @@ fn copy_image(image: RgbaImage) -> CopyResult {
 
 #[cfg(test)]
 pub(super) mod tests {
-    use std::{env, path::Path, process};
+    use std::{env, process};
 
     use toru_core::{
         naming::DEFAULT_PATTERN,
@@ -616,8 +634,49 @@ pub(super) mod tests {
     fn target(folder: Option<PathBuf>) -> AutoSave {
         AutoSave {
             folder,
+            chosen: false,
             format: SaveFormat::Png,
         }
+    }
+
+    #[test]
+    fn a_chosen_folder_that_has_gone_keeps_the_capture_unsaved_and_is_not_made_again() {
+        let dir = TestDir::new("chosen-gone");
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let folder = dir.0.join("gone");
+        let mut card = add(&store, session, DEFAULT_PATTERN).unwrap();
+        let chosen = AutoSave {
+            chosen: true,
+            ..target(Some(folder.clone()))
+        };
+
+        assert!(auto_save_card(&store, &mut card, chosen).is_err());
+
+        assert!(!folder.exists());
+        assert_eq!(card.capture.saved_path, None);
+        assert!(store.image_path(card.files.id).is_file());
+    }
+
+    #[test]
+    fn a_chosen_folder_that_exists_is_saved_to() {
+        let dir = TestDir::new("chosen");
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let folder = dir.0.join("Picked");
+        fs::create_dir_all(&folder).unwrap();
+        let mut card = add(&store, session, DEFAULT_PATTERN).unwrap();
+        let chosen = AutoSave {
+            chosen: true,
+            ..target(Some(folder.clone()))
+        };
+
+        auto_save_card(&store, &mut card, chosen).unwrap();
+
+        assert_eq!(
+            card.capture.saved_path,
+            Some(folder.join(format!("{BASE}.png")))
+        );
     }
 
     #[test]

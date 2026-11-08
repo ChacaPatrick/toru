@@ -6,8 +6,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    AccessibleAction, App, ElementId, Modifiers, Role, SharedString, Toggled, Window, div,
-    prelude::*, px,
+    AccessibleAction, App, ElementId, FocusHandle, Modifiers, Role, SharedString, Toggled, Window,
+    div, prelude::*, px,
 };
 
 use super::{Icon, MIN_TARGET, focus_marks, keyed_focus};
@@ -23,6 +23,7 @@ pub struct Checkbox {
     label: SharedString,
     on: bool,
     tab_stop: bool,
+    focus: Option<FocusHandle>,
     on_press: Option<PressHandler>,
 }
 
@@ -34,6 +35,7 @@ impl Checkbox {
             label: label.into(),
             on,
             tab_stop: true,
+            focus: None,
             on_press: None,
         }
     }
@@ -41,6 +43,12 @@ impl Checkbox {
     /// Whether Tab reaches the box; see `Button::tab_stop`.
     pub fn tab_stop(mut self, tab_stop: bool) -> Checkbox {
         self.tab_stop = tab_stop;
+        self
+    }
+
+    /// Use `focus` instead of the box's own handle, to focus it from elsewhere.
+    pub fn track_focus(mut self, focus: &FocusHandle) -> Checkbox {
+        self.focus = Some(focus.clone());
         self
     }
 
@@ -56,7 +64,10 @@ impl Checkbox {
 
 impl RenderOnce for Checkbox {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let focus = keyed_focus(window, cx, &self.id).tab_stop(self.tab_stop);
+        let focus = self
+            .focus
+            .unwrap_or_else(|| keyed_focus(window, cx, &self.id))
+            .tab_stop(self.tab_stop);
         let theme = cx.theme();
         let c = &theme.colors;
         let (bg, border) = if self.on {

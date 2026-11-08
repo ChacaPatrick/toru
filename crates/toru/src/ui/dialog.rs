@@ -10,7 +10,8 @@
 //! restores focus to it, and from there it moves to the first action. Any menu open when the
 //! dialog comes up is closed,
 //! since it would paint above the backdrop and take focus from the dialog; a dialog holds no
-//! menus of its own.
+//! menus of its own. A dialog may carry one tick box, between its content and its actions, which
+//! Tab reaches before the first action.
 
 use std::{rc::Rc, sync::Arc};
 
@@ -19,7 +20,7 @@ use gpui::{
     actions, div, prelude::*, px,
 };
 
-use super::{Button, Handler, close_menus, keyed_focus, menus_open};
+use super::{Button, Checkbox, Handler, close_menus, keyed_focus, menus_open};
 use crate::theme::{ActiveTheme, ThemedText, scrim};
 
 actions!(dialog, [NextAction, PreviousAction]);
@@ -35,12 +36,21 @@ const ACTION_GAP: f32 = 8.;
 /// `.hint`'s `line-height: 1.45`, so a two-line body reads easily.
 const BODY_LEADING: f32 = 1.45;
 
+/// Between the tick box's target and its label.
+const CHECK_GAP: f32 = 4.;
+
 /// A key press in the dialog, before Esc is looked at. `true` means it was handled.
 type KeyHandler = Rc<dyn Fn(&KeyDownEvent, &mut Window, &mut App) -> bool>;
 
 struct Action {
     label: SharedString,
     primary: bool,
+    handler: Handler,
+}
+
+struct Tick {
+    label: SharedString,
+    on: bool,
     handler: Handler,
 }
 
@@ -58,6 +68,7 @@ pub struct Dialog {
     focus: FocusHandle,
     actions: Vec<Action>,
     on_key: Option<KeyHandler>,
+    tick: Option<Tick>,
     /// What Esc does.
     cancel: Handler,
 }
@@ -82,6 +93,7 @@ impl Dialog {
             focus: focus.clone(),
             actions: Vec::new(),
             on_key: None,
+            tick: None,
             cancel: Rc::new(cancel),
         }
     }
@@ -106,6 +118,21 @@ impl Dialog {
         handler: impl Fn(&KeyDownEvent, &mut Window, &mut App) -> bool + 'static,
     ) -> Dialog {
         self.on_key = Some(Rc::new(handler));
+        self
+    }
+
+    /// The dialog's tick box, currently `on`. Pressing it or its label runs `handler`.
+    pub fn tick(
+        mut self,
+        label: impl Into<SharedString>,
+        on: bool,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Dialog {
+        self.tick = Some(Tick {
+            label: label.into(),
+            on,
+            handler: Rc::new(handler),
+        });
         self
     }
 
@@ -168,7 +195,12 @@ impl RenderOnce for Dialog {
                 _ => keyed_focus(window, cx, &child_id(&format!("action {index}"))),
             })
             .collect();
+        let tick_focus = self
+            .tick
+            .as_ref()
+            .map(|_| keyed_focus(window, cx, &child_id("tick focus")));
         let mut stops = self.content_focus;
+        stops.extend(tick_focus.iter().cloned());
         stops.extend(action_focus.iter().cloned());
         // Not a tab stop: it only holds focus for the moment between a control going and the
         // first action taking over.
@@ -212,6 +244,28 @@ impl RenderOnce for Dialog {
                     .on_click(move |window, cx| handler(window, cx))
             });
 
+        let tick = self.tick.zip(tick_focus).map(|(tick, focus)| {
+            let press = tick.handler.clone();
+            let press_label = tick.handler;
+            div()
+                .flex()
+                .items_center()
+                .gap(px(CHECK_GAP))
+                .child(
+                    Checkbox::new(child_id("tick"), tick.label.clone(), tick.on)
+                        .track_focus(&focus)
+                        .on_press(move |_, window, cx| press(window, cx)),
+                )
+                .child(
+                    div()
+                        .id(child_id("tick-label"))
+                        .type_style(theme, body_font)
+                        .cursor_pointer()
+                        .on_click(move |_, window, cx| press_label(window, cx))
+                        .child(tick.label),
+                )
+        });
+
         let panel = div()
             .id(child_id("panel"))
             .role(Role::AlertDialog)
@@ -252,6 +306,7 @@ impl RenderOnce for Dialog {
                     .child(self.body),
             )
             .children(self.content)
+            .children(tick)
             .child(
                 div()
                     .flex()

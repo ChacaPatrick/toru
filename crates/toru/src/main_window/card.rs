@@ -12,20 +12,22 @@
 //! takes the accent outline and the `surface_sel` fill, and the lower row shows the chip with
 //! the path hint instead of the actions. Nothing changes the card's shape. A click anywhere on
 //! the card outside its controls, the checkbox included, is the gallery's `press_card`, and so
-//! is a Ctrl-click outside select mode, which is how the mode is entered from a card. The name
-//! field, the buttons and the menu keep their clicks to themselves.
+//! is a Ctrl-click outside select mode, which is how the mode is entered from a card. A press
+//! that starts on the name field, the buttons or the menu is theirs alone, wherever the mouse is
+//! let go, so dragging out of a name field never toggles the card.
 
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Context, Div, Entity, MouseButton, ObjectFit, Pixels, RetainAllImageCache,
-    Role, Stateful, Window, div, img, linear_color_stop, linear_gradient, prelude::*, px,
+    AnyElement, App, ClickEvent, Context, Div, Entity, MouseDownEvent, ObjectFit, Pixels,
+    RetainAllImageCache, Role, Stateful, Window, div, img, linear_color_stop, linear_gradient,
+    prelude::*, px,
 };
 use toru_core::time::LocalDate;
 
 use super::{
     act,
-    gallery::{Card, Gallery},
+    gallery::{Card, Gallery, GalleryEvent},
     selection::path_hint,
 };
 use crate::theme::{ActiveTheme, Theme, ThemedText, TypeStyle};
@@ -113,6 +115,18 @@ pub fn height(card_width: Pixels, theme: &Theme, window: &Window, cx: &gpui::App
         + unsaved.max(saved)
 }
 
+/// A mouse press stops at a control this is on, so it never registers on the card beneath and
+/// can't become a click on it when the mouse is let go on the card's padding.
+fn keep_press(_: &MouseDownEvent, _: &mut Window, cx: &mut App) {
+    cx.stop_propagation();
+}
+
+/// Whether a click on the card is a press on it. GPUI also turns Space and Enter's key-up on a
+/// focused card into a click, but the gallery's `key_down` has already handled those keys.
+fn counts_as_press(event: &ClickEvent) -> bool {
+    !event.is_keyboard()
+}
+
 /// "1.4 MB" or "412 KB".
 pub fn file_size(bytes: u64) -> String {
     const KB: u64 = 1024;
@@ -169,6 +183,7 @@ pub fn render(
     let make_current = act(cx, move |this, cx| this.set_current(id, cx));
     let save_or_open = act(cx, move |this, cx| this.save_or_open(id, cx));
     let open_editor = act(cx, move |this, cx| this.open_editor(id, cx));
+    let delete = act(cx, move |_, cx| cx.emit(GalleryEvent::Delete(id)));
     let gallery = cx.entity();
     let press = Rc::new(move |modifiers, _: &mut Window, cx: &mut App| {
         gallery.update(cx, |this, cx| this.press_card(id, modifiers, cx))
@@ -193,9 +208,12 @@ pub fn render(
     .header(size.clone())
     .item("Open in editor", open_editor)
     .item("Rename", rename)
-    .item("Reveal", |_, _| {})
+    // Reveal needs a file on disk, which only a saved capture has.
+    .when(saved, |menu| {
+        menu.item("Reveal", act(cx, move |this, cx| this.save_or_open(id, cx)))
+    })
     .divider()
-    .item("Delete", |_, _| {})
+    .item("Delete", delete)
     .align_right();
 
     // Save and Open folder share an id, so keyboard focus stays on the button when a save finishes.
@@ -205,6 +223,7 @@ pub fn render(
     let second = if saved { second } else { second.primary() };
     let open_editor_by_click = act(cx, move |this, cx| this.open_editor(id, cx));
     let actions = div()
+        .on_any_mouse_down(keep_press)
         .flex()
         .flex_wrap()
         .justify_end()
@@ -252,6 +271,7 @@ pub fn render(
         // The box sits where the mockups put it, inside a target the minimum size (§7).
         let margin = (MIN_TARGET - CHECKBOX_SIZE) / 2.;
         div()
+            .on_any_mouse_down(keep_press)
             .absolute()
             .left(px(CHECK_INSET - margin))
             .top(px(CHECK_INSET - margin))
@@ -271,10 +291,13 @@ pub fn render(
         .role(Role::Group)
         .aria_label(card.name.read(cx).value())
         .track_focus(&focus)
-        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-            make_current(window, cx)
-        })
-        .on_click(move |event, window, cx| press(event.modifiers(), window, cx));
+        // On the way down, so it runs for a press a control keeps to itself.
+        .capture_any_mouse_down(move |_, window, cx| make_current(window, cx))
+        .on_click(move |event, window, cx| {
+            if counts_as_press(event) {
+                press(event.modifiers(), window, cx);
+            }
+        });
     shadowed(card_element, &theme.shadows.card, radius)
         .relative()
         .flex_1()
@@ -421,7 +444,21 @@ fn thumbnail(
 
 #[cfg(test)]
 mod tests {
+    use gpui::{Bounds, KeyboardButton, KeyboardClickEvent, MouseClickEvent};
+
     use super::*;
+
+    #[test]
+    fn a_key_released_on_a_card_is_not_a_second_press() {
+        let keyboard = ClickEvent::Keyboard(KeyboardClickEvent {
+            button: KeyboardButton::Space,
+            bounds: Bounds::default(),
+        });
+        assert!(!counts_as_press(&keyboard));
+        assert!(counts_as_press(&ClickEvent::Mouse(
+            MouseClickEvent::default()
+        )));
+    }
 
     #[test]
     fn file_sizes_read_like_a_file_manager() {

@@ -341,6 +341,32 @@ impl Store {
             .map(drop)
     }
 
+    /// `delete`, then the file the user saved the capture to, if any. The record goes first, so a
+    /// failure can only leave a file without a record. Returns whether the file is gone; `false`
+    /// doesn't undo the delete. A file already missing counts as gone. A file another capture is
+    /// saved to stays, and counts as not gone: the path may have been reused since this capture
+    /// was saved, so the file there may be the other capture's.
+    pub fn delete_with_file(&self, id: CaptureId) -> Result<bool> {
+        let saved = match self.capture(id) {
+            Ok(capture) => capture.saved_path,
+            Err(StoreError::NotFound) => None,
+            Err(error) => return Err(error),
+        };
+        // Asked before the record goes, so a failure here changes nothing.
+        let shared = match &saved {
+            Some(path) => self.saved_by_another(id, path)?,
+            None => false,
+        };
+        self.delete(id)?;
+        if shared {
+            return Ok(false);
+        }
+        Ok(saved.is_none_or(|path| match fs::remove_file(path) {
+            Ok(()) => true,
+            Err(error) => error.kind() == io::ErrorKind::NotFound,
+        }))
+    }
+
     /// Deletes the session's unsaved captures and their files.
     pub fn discard_unsaved(&self, session: SessionId) -> Result<()> {
         self.delete_rows(
@@ -414,6 +440,20 @@ impl Store {
         }
         transaction.commit()?;
         Ok(())
+    }
+
+    // Case is ignored, as Windows ignores it: two spellings of a path are one file.
+    fn saved_by_another(&self, id: CaptureId, path: &Path) -> Result<bool> {
+        let wanted = fold_case(path_text(path)?);
+        let db = self.db();
+        let mut others = db
+            .prepare("SELECT saved_path FROM captures WHERE saved_path IS NOT NULL AND id <> ?1")?;
+        for other in others.query_map([id.0], |row| row.get::<_, String>(0))? {
+            if fold_case(&other?) == wanted {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     // A panic can't leave the connection mid-change, since an open transaction rolls back when
@@ -1299,6 +1339,99 @@ mod tests {
         assert!(store.session_captures(session).unwrap().is_empty());
         assert!(!store.thumbnail_path(id).exists());
         assert_eq!(fs::read(path).unwrap(), b"the user's file");
+    }
+
+    #[test]
+    fn delete_with_file_removes_the_record_and_the_users_file() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot", TODAY, (9, 0));
+        let path = saved_copy(&store, id, &dir, "shot.png");
+
+        assert!(store.delete_with_file(id).unwrap());
+
+        assert!(store.session_captures(session).unwrap().is_empty());
+        assert!(!path.exists());
+        assert!(!store.thumbnail_path(id).exists());
+    }
+
+    #[test]
+    fn delete_with_file_leaves_a_file_another_capture_now_has() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        let session = store.new_session().unwrap();
+        let moved = add(&store, session, "moved", TODAY, (9, 0));
+        let owner = add(&store, session, "owner", TODAY, (10, 0));
+        // The user moves the first file away and the second capture is saved to that name.
+        fs::remove_file(saved_copy(&store, moved, &dir, "shot.png")).unwrap();
+        let path = saved_copy(&store, owner, &dir, "shot.png");
+
+        assert!(!store.delete_with_file(moved).unwrap());
+
+        assert_eq!(names(&store.session_captures(session).unwrap()), ["owner"]);
+        assert_eq!(fs::read(&path).unwrap(), b"the user's file");
+
+        assert!(store.delete_with_file(owner).unwrap());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn delete_with_file_treats_paths_differing_in_case_as_one_file() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        let session = store.new_session().unwrap();
+        let moved = add(&store, session, "moved", TODAY, (9, 0));
+        let owner = add(&store, session, "owner", TODAY, (10, 0));
+        fs::remove_file(saved_copy(&store, moved, &dir, "shot.png")).unwrap();
+        let path = saved_copy(&store, owner, &dir, "SHOT.PNG");
+
+        assert!(!store.delete_with_file(moved).unwrap());
+
+        assert_eq!(fs::read(&path).unwrap(), b"the user's file");
+    }
+
+    #[test]
+    fn delete_with_file_on_an_unsaved_capture_touches_only_its_temp_files() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot", TODAY, (9, 0));
+
+        assert!(store.delete_with_file(id).unwrap());
+
+        assert!(store.session_captures(session).unwrap().is_empty());
+        assert!(!store.image_path(id).exists());
+    }
+
+    #[test]
+    fn delete_with_file_counts_a_missing_file_as_gone_and_tolerates_unknown_ids() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot", TODAY, (9, 0));
+        let path = saved_copy(&store, id, &dir, "shot.png");
+        fs::remove_file(path).unwrap();
+
+        assert!(store.delete_with_file(id).unwrap());
+        assert!(store.delete_with_file(id).unwrap());
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_removed_is_reported_but_the_record_still_goes() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot", TODAY, (9, 0));
+        let path = saved_copy(&store, id, &dir, "shot.png");
+        // `remove_file` refuses a folder, as it would a file another program holds open.
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+
+        assert!(!store.delete_with_file(id).unwrap());
+
+        assert!(store.session_captures(session).unwrap().is_empty());
+        assert!(path.is_dir());
     }
 
     #[test]

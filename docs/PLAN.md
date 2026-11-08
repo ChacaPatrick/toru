@@ -43,7 +43,7 @@ The local date and time come from `GetLocalTime` in `crates/toru/src/platform.rs
 - [x] 5.3 Window capture, with the overlay highlighting the window under the cursor **[Fable for visuals]**
 - [x] 5.4 Delayed capture with mode choice
 - [x] 5.5 Card Copy and Save, Save all, Copy all, Clear unsaved, Open folder, formats, name pattern, rename, auto-save
-- [ ] 5.6 Bulk actions, card menu (Rename, Reveal, Delete), New session, changing the Save to folder
+- [x] 5.6 Bulk actions, card menu (Rename, Reveal, Delete), New session, changing the Save to folder
 
 ## Phase 6: Tray and shortcuts
 - [x] 6.1 Tray, keep running, On close options, and a second launch showing the running app

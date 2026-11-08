@@ -698,6 +698,9 @@ mod windows {
     }
 }
 
+/// Between the lines of text put on the clipboard.
+pub const LINE_BREAK: &str = if cfg!(windows) { "\r\n" } else { "\n" };
+
 /// How long a capture waits after `exclude_windows_from_capture(true)`. Exclusion took effect with
 /// no wait in every trial (`docs/spikes.md` §5.1); this is a margin of a few frames that nobody
 /// will notice.

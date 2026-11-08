@@ -137,19 +137,26 @@ impl MainWindow {
             Exit::Quit => cx.quit(),
             Exit::DiscardThenQuit => self.discard_and_quit(cx),
             Exit::Ask => {
+                // One dialog at a time: the question about quitting replaces this one.
+                self.delete_prompt = None;
                 self.quit_prompt = Some(unsaved);
                 platform::show_main_window();
-                // A close request arrives inside the window's own update, which the window
-                // can't be updated again from, so the focus waits until that is over.
-                let (window, focus) = (self.window, self.dialog_focus.clone());
-                cx.defer(move |cx| {
-                    window
-                        .update(cx, |_, window, cx| focus.focus(window, cx))
-                        .ok();
-                });
+                self.focus_dialog(cx);
                 cx.notify();
             }
         }
+    }
+
+    /// Focuses a dialog that has just opened, on its first action. Deferred, because a close
+    /// request or a press arrives inside the window's own update, which the window can't be
+    /// updated again from.
+    pub(super) fn focus_dialog(&self, cx: &mut Context<Self>) {
+        let (window, focus) = (self.window, self.dialog_focus.clone());
+        cx.defer(move |cx| {
+            window
+                .update(cx, |_, window, cx| focus.focus(window, cx))
+                .ok();
+        });
     }
 
     /// Deletes the session's unsaved captures and quits. Done here and now rather than on the

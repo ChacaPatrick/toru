@@ -1,9 +1,9 @@
 //! `.bulk` (DESIGN.md §4): the dark floating bar that takes the bottom bar's place while
 //! anything is selected. "N selected · x saved · y unsaved", then Copy as files as the main
 //! action, Copy paths with the saved count, Save with the unsaved count, Delete and ✕, which
-//! clears the selection. Merge is v2 (CLAUDE.md). The counts are real; the actions are mock
-//! until 5.6. The bar lies over the gallery, centred on the window as the mockups place it, so a
-//! press on it stops there while the wheel still scrolls the list beneath. It is wider than the
+//! clears the selection. Merge is v2 (CLAUDE.md). The bar lies over the gallery, centred on the
+//! window as the mockups place it, so a press on it stops there while the wheel still scrolls
+//! the list beneath. It is wider than the
 //! gallery at the 900px minimum, so at widths under about 1450px it lies over the settings
 //! column's foot too; the column keeps room for it (`settings_column`).
 
@@ -46,8 +46,6 @@ pub fn bulk_bar(counts: &Counts, cx: &Context<MainWindow>) -> impl IntoElement {
             .mx(px(4.))
             .bg(c.bulk_sep)
     };
-    // Both copies are mock until 5.6: the feedback alone.
-    let copy = || act(cx, |this, cx| this.report_copy(Ok(()), cx));
     let clear = {
         let view = cx.entity();
         move |window: &mut gpui::Window, cx: &mut gpui::App| {
@@ -105,28 +103,28 @@ pub fn bulk_bar(counts: &Counts, cx: &Context<MainWindow>) -> impl IntoElement {
                     Button::new("copy-files", "Copy as files")
                         .icon(Icon::Copy)
                         .bulk(true)
-                        .on_click(copy()),
+                        .on_click(act(cx, |this, cx| this.copy_selected(cx))),
                 )
                 .child(
                     Button::new("copy-paths", "Copy paths")
                         .icon(Icon::Paths)
                         .note(format!("({})", counts.saved))
                         .bulk(false)
-                        .on_click(copy()),
+                        .on_click(act(cx, |this, cx| this.copy_selected_paths(cx))),
                 )
                 .child(
                     Button::new("save-selected", "Save")
                         .icon(Icon::Save)
                         .note(format!("({} new)", counts.unsaved()))
                         .bulk(false)
-                        .on_click(|_, _| {}),
+                        .on_click(act(cx, |this, cx| this.save_selected(cx))),
                 )
                 .child(separator())
                 .child(
                     Button::new("delete-selected", "Delete")
                         .icon(Icon::Trash)
                         .bulk(false)
-                        .on_click(|_, _| {}),
+                        .on_click(act(cx, |this, cx| this.delete_selected(cx))),
                 )
                 .child(
                     Button::glyph_only("clear-selection", "✕", "Clear selection")

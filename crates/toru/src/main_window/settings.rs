@@ -184,12 +184,12 @@ pub fn settings_column(
                     .flex()
                     .gap(px(8.))
                     .child(folder_field(theme, this.save_folder()))
-                    // The folder picker arrives in 5.6.
-                    .child(
-                        Button::new("change-folder", "Change")
-                            .small()
-                            .on_click(|_, _| {}),
-                    ),
+                    .child(Button::new("change-folder", "Change").small().on_click({
+                        let view = cx.entity();
+                        move |window, cx| {
+                            view.update(cx, |this, cx| this.change_save_folder(window, cx))
+                        }
+                    })),
             ),
         )
         .child(
