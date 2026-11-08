@@ -26,7 +26,7 @@ use xcap::{
 };
 
 use super::{
-    MainWindow,
+    MainWindow, closing,
     gallery::{CardFiles, NewCard},
     settings::pattern_message,
 };
@@ -120,6 +120,7 @@ impl MainWindow {
         // `xcap`'s monitor id is GPUI's `DisplayId`, cut to 32 bits (`docs/spikes.md` §1.2).
         let monitor_id = u64::from(display.id) as u32;
         self.capturing = true;
+        let pending = closing::begin(&self.pending);
         platform::exclude_windows_from_capture(true);
         cx.spawn(async move |this, cx| {
             cx.background_executor()
@@ -142,6 +143,7 @@ impl MainWindow {
                 }
             })
             .ok();
+            drop(pending);
         })
         .detach();
     }
@@ -289,18 +291,21 @@ impl MainWindow {
         })
     }
 
-    /// Runs `job` once everything queued before it has finished.
+    /// Runs `job` once everything queued before it has finished. Quitting waits for the queue
+    /// to run dry (`closing`).
     pub(super) fn enqueue(
         &mut self,
         cx: &mut Context<Self>,
         job: impl AsyncFnOnce(WeakEntity<Self>, &mut AsyncApp) + 'static,
     ) {
         let previous = self.queue.take();
+        let pending = closing::begin(&self.pending);
         self.queue = Some(cx.spawn(async move |this, cx| {
             if let Some(previous) = previous {
                 previous.await;
             }
             job(this, cx).await;
+            drop(pending);
         }));
     }
 

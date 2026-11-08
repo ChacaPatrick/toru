@@ -8,6 +8,7 @@ mod actions;
 mod bottom_bar;
 mod captures;
 mod card;
+mod closing;
 mod delayed;
 mod gallery;
 mod mock;
@@ -15,7 +16,7 @@ mod settings;
 mod title_bar;
 mod toolbar;
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{cell::Cell, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
 use gpui::{
     AnyWindowHandle, App, Context, DisplayId, Entity, FocusHandle, Focusable, Pixels, ScrollHandle,
@@ -82,9 +83,19 @@ pub struct MainWindow {
     queue: Option<Task<()>>,
     /// A full-screen capture is under way, so a second press doesn't overlap it.
     capturing: bool,
+    /// How many captures and store jobs are under way, which quitting waits for (`closing`).
+    pending: Rc<Cell<usize>>,
     /// `Pictures\Screenshots`, where captures go unless the Save to setting says otherwise.
     default_save_folder: Option<PathBuf>,
     countdown: Option<delayed::RunningCountdown>,
+    /// Quitting is waiting for `pending` work before it applies the On close setting.
+    quitting: bool,
+    /// The tray icon is there to bring the window back from, so closing may hide it.
+    has_tray: bool,
+    /// The quit dialog is up, asking about this many unsaved captures (`closing`).
+    quit_prompt: Option<usize>,
+    /// The quit dialog's first action, focused when the dialog opens.
+    dialog_focus: FocusHandle,
 }
 
 impl MainWindow {
@@ -120,6 +131,13 @@ impl MainWindow {
             }
         })
         .detach();
+        // Closing the window hides it in the tray or quits, by the settings (`closing`); GPUI
+        // itself never closes it.
+        let this = cx.weak_entity();
+        window.on_window_should_close(cx, move |_, cx| {
+            this.update(cx, |this, cx| this.on_close_requested(cx))
+                .unwrap_or(true)
+        });
         let now = platform::local_now();
         let gallery = cx.new(|cx| {
             let mut gallery = Gallery::new(now.date, window, cx);
@@ -170,8 +188,13 @@ impl MainWindow {
             window: window.window_handle(),
             queue: None,
             capturing: false,
+            pending: closing::pending_counter(),
             default_save_folder: platform::default_save_folder(),
             countdown: None,
+            quitting: false,
+            has_tray: true,
+            quit_prompt: None,
+            dialog_focus: cx.focus_handle().tab_stop(true),
         }
     }
 
@@ -399,5 +422,9 @@ impl Render for MainWindow {
             .child(bottom_bar::bottom_bar(self, cx))
             // Absolute, so showing it moves nothing (DESIGN.md §2).
             .children(self.toast.get().cloned())
+            .children(
+                self.quit_prompt
+                    .map(|unsaved| self.quit_dialog(unsaved, cx)),
+            )
     }
 }

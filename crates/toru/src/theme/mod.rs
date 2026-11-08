@@ -84,6 +84,15 @@ pub fn hover_tint(text: Hsla) -> Hsla {
     }
 }
 
+/// How strongly a dialog's backdrop lays the text colour over the window behind it: enough to
+/// say the window is waiting, while what is behind stays readable.
+pub const SCRIM: f32 = 0.4;
+
+/// The backdrop behind a dialog, in a palette whose text colour is `text`.
+pub fn scrim(text: Hsla) -> Hsla {
+    Hsla { a: SCRIM, ..text }
+}
+
 /// Makes `theme` the active one and redraws every window with it.
 pub fn set_theme(theme: Theme, cx: &mut App) {
     kit::sync_kit_theme(&theme, cx);

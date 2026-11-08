@@ -94,13 +94,15 @@ pub fn title_bar(title: SharedString, window: &Window, cx: &App) -> impl IntoEle
                         }
                     },
                 ))
+                // Through the same close request as the caption's X, so the On close and tray
+                // settings apply (`main_window::closing`).
                 .child(control(
                     "close",
                     "Close",
                     "✕",
                     WindowControlArea::Close,
                     theme,
-                    |window, _| window.remove_window(),
+                    |window, _| platform::request_close(window),
                 )),
         )
 }

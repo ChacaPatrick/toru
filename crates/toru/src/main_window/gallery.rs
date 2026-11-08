@@ -218,6 +218,16 @@ impl Gallery {
 
     /// How wide a thumbnail has to be to stay sharp on a card, and no wider, since GPU memory
     /// grows quickly with it (`docs/spikes.md` §1.3): the card's width in physical pixels.
+    /// How many of this session's captures aren't saved to the user's folder.
+    pub fn unsaved_in_session(&self) -> usize {
+        self.groups
+            .iter()
+            .filter(|group| matches!(group.kind, GroupKind::Session))
+            .flat_map(|group| &group.cards)
+            .filter(|card| !card.capture.is_saved())
+            .count()
+    }
+
     pub fn thumbnail_width(&self) -> u32 {
         physical_width(self.card_width(), self.scale)
     }

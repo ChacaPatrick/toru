@@ -46,7 +46,7 @@ The local date and time come from `GetLocalTime` in `crates/toru/src/platform.rs
 - [ ] 5.6 Bulk actions, card menu (Rename, Reveal, Delete), New session, changing the Save to folder
 
 ## Phase 6: Tray and shortcuts
-- [ ] 6.1 Tray, keep running, On close options, and a second launch showing the running app
+- [x] 6.1 Tray, keep running, On close options, and a second launch showing the running app
 - [ ] 6.2 Rebindable shortcuts, including per-display shortcuts and their setting, and conflict messages **[Fable for the dialog]**
 
 ## Phase 7: History

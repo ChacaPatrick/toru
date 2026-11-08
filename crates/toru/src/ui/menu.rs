@@ -14,7 +14,10 @@ use gpui::{
     point, prelude::*, px,
 };
 
-use super::{Button, Handler, Icon, button::MenuTrigger, focus_ring, keyboard_focus, keyed_focus};
+use super::{
+    Button, Handler, Icon, button::MenuTrigger, focus_ring, keyboard_focus, keyed_focus,
+    menu_opened,
+};
 use crate::theme::{ActiveTheme, ThemedText};
 
 actions!(menu, [NextItem, PreviousItem]);
@@ -162,6 +165,9 @@ impl RenderOnce for Menu {
                 *open = value;
                 cx.notify();
             });
+            if value {
+                menu_opened(&open, cx);
+            }
         });
         let close = Rc::new({
             let set_open = set_open.clone();

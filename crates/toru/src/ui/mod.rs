@@ -13,6 +13,7 @@
 
 mod button;
 mod chip;
+mod dialog;
 mod fill;
 mod flash;
 mod icons;
@@ -30,9 +31,9 @@ mod tooltip;
 use std::{collections::HashSet, rc::Rc, sync::Arc};
 
 use gpui::{
-    AnyElement, App, Bounds, BoxShadow, ElementId, FocusHandle, Global, KeyBinding, MouseDownEvent,
-    MouseUpEvent, Pixels, Refineable, StyleRefinement, Window, WindowId, canvas, div, prelude::*,
-    px,
+    AnyElement, App, Bounds, BoxShadow, ElementId, Entity, FocusHandle, Global, KeyBinding,
+    MouseDownEvent, MouseUpEvent, Pixels, Refineable, StyleRefinement, WeakEntity, Window,
+    WindowId, canvas, div, prelude::*, px,
 };
 
 use crate::theme::Theme;
@@ -40,6 +41,7 @@ use crate::theme::Theme;
 #[cfg(test)]
 pub use button::SUB_OPACITY;
 pub use button::{Button, SMALL_HEIGHT as BUTTON_SMALL_HEIGHT};
+pub use dialog::Dialog;
 pub use icons::Icon;
 pub use jump::{HEIGHT as JUMP_HEIGHT, Jump};
 pub use menu::Menu;
@@ -72,6 +74,13 @@ pub fn init(cx: &mut App) {
         // Inside an open menu, Tab steps through the items instead of leaving it.
         KeyBinding::new("tab", menu::NextItem, Some(menu::KEY_CONTEXT)),
         KeyBinding::new("shift-tab", menu::PreviousItem, Some(menu::KEY_CONTEXT)),
+        // Inside an open dialog, Tab stays among its actions.
+        KeyBinding::new("tab", dialog::NextAction, Some(dialog::KEY_CONTEXT)),
+        KeyBinding::new(
+            "shift-tab",
+            dialog::PreviousAction,
+            Some(dialog::KEY_CONTEXT),
+        ),
     ]);
 }
 
@@ -115,6 +124,46 @@ fn arrow_target(key: &str, selected: usize, count: usize) -> Option<usize> {
 fn refined<E: Styled>(mut element: E, style: &StyleRefinement) -> E {
     element.style().refine(style);
     element
+}
+
+/// The open menus' open flags, so a dialog can close them all (`close_menus`).
+#[derive(Default)]
+struct OpenMenus(Vec<WeakEntity<bool>>);
+
+impl Global for OpenMenus {}
+
+/// Notes that the menu whose open flag this is has opened.
+fn menu_opened(open: &Entity<bool>, cx: &mut App) {
+    let mut menus = std::mem::take(&mut cx.default_global::<OpenMenus>().0);
+    // Menus closed by their own means leave their entry behind until now.
+    menus.retain(|menu| menu.upgrade().is_some_and(|menu| *menu.read(cx)));
+    menus.push(open.downgrade());
+    cx.default_global::<OpenMenus>().0 = menus;
+}
+
+/// Whether any menu is open.
+pub fn menus_open(cx: &App) -> bool {
+    cx.try_global::<OpenMenus>().is_some_and(|menus| {
+        menus
+            .0
+            .iter()
+            .any(|menu| menu.upgrade().is_some_and(|menu| *menu.read(cx)))
+    })
+}
+
+/// Closes every open menu, without moving focus. A dialog does this as it opens: a menu would
+/// paint above its backdrop, still take clicks, and put focus behind the dialog on a click
+/// outside itself. Called between frames, not during a draw, so the menus are redrawn closed.
+pub fn close_menus(cx: &mut App) {
+    let menus = std::mem::take(&mut cx.default_global::<OpenMenus>().0);
+    for menu in menus.iter().filter_map(WeakEntity::upgrade) {
+        menu.update(cx, |open, cx| {
+            if *open {
+                *open = false;
+                cx.notify();
+            }
+        });
+    }
 }
 
 /// The windows whose last press was a key rather than a mouse button, where focus shows the ring.

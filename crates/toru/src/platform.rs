@@ -1,8 +1,10 @@
 //! The little the app needs from the operating system that GPUI 0.3.11 doesn't offer: restoring
 //! a maximized window, a display's size in physical pixels, the local time, the app-data and
 //! default save folders, showing a file in the file manager, keeping Toru's own windows out of a
-//! capture, bringing the capture overlay to the foreground and telling which windows a user can
-//! pick. Windows is done here; the other platforms get the fallbacks at the bottom until they are.
+//! capture, bringing the capture overlay to the foreground, telling which windows a user can
+//! pick, hiding the main window in the tray and showing it again, and telling a running Toru
+//! that a second one was launched. Windows is done here; the other platforms get the fallbacks
+//! at the bottom until they are.
 
 use std::{path::PathBuf, time::Duration};
 
@@ -14,14 +16,19 @@ use toru_core::time::LocalDateTime;
 mod windows {
     use std::{
         ffi::OsString,
+        fs,
+        hash::{DefaultHasher, Hash, Hasher},
         io,
         os::windows::{ffi::OsStringExt, process::CommandExt},
         path::{Path, PathBuf},
         process::Command,
+        thread,
     };
 
     use gpui::{App, PlatformDisplay, Window};
     use toru_core::time::{LocalDate, LocalDateTime};
+
+    use crate::main_window::WINDOW_TITLE;
 
     /// `GUID`.
     #[repr(C)]
@@ -66,7 +73,18 @@ mod windows {
         milliseconds: u16,
     }
 
+    const SW_HIDE: i32 = 0;
     const SW_NORMAL: i32 = 1;
+    const SW_SHOW: i32 = 5;
+    const SW_RESTORE: i32 = 9;
+    const WM_CLOSE: u32 = 0x0010;
+    const EVENT_MODIFY_STATE: u32 = 0x0002;
+    const WAIT_OBJECT_0: u32 = 0;
+    const INFINITE: u32 = u32::MAX;
+    const ASFW_ANY: u32 = u32::MAX;
+    /// GPUI's window class on Windows.
+    const GPUI_WINDOW_CLASS: &str = "Zed::Window";
+    const WS_EX_APPWINDOW: u32 = 0x0004_0000;
     const MONITOR_DEFAULTTONULL: u32 = 0;
     const WDA_NONE: u32 = 0;
     const WDA_EXCLUDEFROMCAPTURE: u32 = 0x11;
@@ -85,8 +103,14 @@ mod windows {
             param: isize,
         ) -> i32;
         fn IsZoomed(hwnd: isize) -> i32;
+        fn IsIconic(hwnd: isize) -> i32;
         fn MonitorFromWindow(hwnd: isize, flags: u32) -> isize;
+        fn ShowWindow(hwnd: isize, cmd: i32) -> i32;
         fn ShowWindowAsync(hwnd: isize, cmd: i32) -> i32;
+        fn SetForegroundWindow(hwnd: isize) -> i32;
+        fn AllowSetForegroundWindow(process: u32) -> i32;
+        fn PostMessageW(hwnd: isize, message: u32, wparam: usize, lparam: isize) -> i32;
+        fn GetClassNameW(hwnd: isize, name: *mut u16, max: i32) -> i32;
         fn GetMonitorInfoW(monitor: isize, info: *mut MonitorInfo) -> i32;
         fn SetWindowDisplayAffinity(hwnd: isize, affinity: u32) -> i32;
         fn MessageBoxW(hwnd: isize, text: *const u16, caption: *const u16, kind: u32) -> i32;
@@ -96,7 +120,6 @@ mod windows {
         fn GetWindowThreadProcessId(hwnd: isize, process: *mut u32) -> u32;
         fn IsHungAppWindow(hwnd: isize) -> i32;
         fn AttachThreadInput(attach: u32, attach_to: u32, on: i32) -> i32;
-        fn SetForegroundWindow(hwnd: isize) -> i32;
         fn GetWindowLongPtrW(hwnd: isize, index: i32) -> isize;
         fn GetLayeredWindowAttributes(
             hwnd: isize,
@@ -110,6 +133,145 @@ mod windows {
     unsafe extern "system" {
         fn GetCurrentThreadId() -> u32;
         fn GetLocalTime(time: *mut SystemTime);
+        fn CreateEventW(
+            attributes: *const u8,
+            manual_reset: i32,
+            initial_state: i32,
+            name: *const u16,
+        ) -> isize;
+        fn OpenEventW(access: u32, inherit: i32, name: *const u16) -> isize;
+        fn SetEvent(event: isize) -> i32;
+        fn WaitForSingleObject(handle: isize, milliseconds: u32) -> u32;
+        fn CloseHandle(handle: isize) -> i32;
+    }
+
+    fn wide(text: &str) -> Vec<u16> {
+        text.encode_utf16().chain([0]).collect()
+    }
+
+    /// `GetClassNameW`, as a `String`.
+    fn class_name(hwnd: isize) -> String {
+        let mut buffer = [0u16; 64];
+        // SAFETY: the buffer is writable and its length is passed along.
+        let length = unsafe { GetClassNameW(hwnd, buffer.as_mut_ptr(), buffer.len() as i32) };
+        String::from_utf16_lossy(&buffer[..length.max(0) as usize])
+    }
+
+    /// The extended style GPUI gives a `WindowKind::Normal` window, which only the main window
+    /// is: the overlays are pop-ups (`is_overlay_style`), and the hidden windows GPUI and the
+    /// tray keep for their messages are tool windows. The style survives retitling, hiding and
+    /// minimizing, which the title the window is opened with does not: a delayed capture counts
+    /// down in it.
+    pub fn is_main_window_style(ex_style: u32) -> bool {
+        ex_style & WS_EX_APPWINDOW != 0
+    }
+
+    unsafe extern "system" fn find_main(hwnd: isize, param: isize) -> i32 {
+        // SAFETY: plain user32 calls on a handle the enumeration just handed over.
+        let matches = unsafe {
+            is_main_window_style(GetWindowLongW(hwnd, GWL_EXSTYLE) as u32)
+                && class_name(hwnd) == GPUI_WINDOW_CLASS
+        };
+        if matches {
+            // SAFETY: `param` is the `isize` that `main_window` passed and still holds.
+            unsafe { *(param as *mut isize) = hwnd };
+        }
+        i32::from(!matches)
+    }
+
+    /// The main window's handle: the one GPUI window of this thread's with an app window's
+    /// style (GPUI opens all of them on this thread). A hidden or retitled window is found too.
+    fn main_window() -> Option<isize> {
+        let mut found: isize = 0;
+        // SAFETY: `found` outlives the enumeration, which runs to completion before returning.
+        unsafe {
+            EnumThreadWindows(
+                GetCurrentThreadId(),
+                find_main,
+                &mut found as *mut isize as isize,
+            );
+        }
+        (found != 0).then_some(found)
+    }
+
+    /// Takes the main window off the screen, the taskbar and Alt+Tab; the app keeps running in
+    /// the tray. Posted rather than sent, since this runs inside the window's own close handling.
+    pub fn hide_main_window() {
+        if let Some(hwnd) = main_window() {
+            // SAFETY: a plain user32 call on a window of this thread's.
+            unsafe { ShowWindowAsync(hwnd, SW_HIDE) };
+        }
+    }
+
+    /// Shows the main window, restoring it if minimized, and brings it forward. Windows only
+    /// lets the foreground move when the user asked for it, as a tray click or a second launch
+    /// did; otherwise the taskbar button flashes instead, which is Windows' own answer.
+    pub fn show_main_window() {
+        if let Some(hwnd) = main_window() {
+            // SAFETY: plain user32 calls on a window of this thread's.
+            unsafe {
+                let cmd = if IsIconic(hwnd) != 0 {
+                    SW_RESTORE
+                } else {
+                    SW_SHOW
+                };
+                ShowWindow(hwnd, cmd);
+                SetForegroundWindow(hwnd);
+            }
+        }
+    }
+
+    /// Asks the main window to close the way its caption's X does, so the close goes through
+    /// `Window::on_window_should_close`. GPUI's `remove_window` would skip that.
+    pub fn request_close(_window: &mut Window) {
+        if let Some(hwnd) = main_window() {
+            // SAFETY: a plain user32 call on a window of this thread's.
+            unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) };
+        }
+    }
+
+    /// The named event a second launch signals, one per data folder so two Torus on different
+    /// folders (the owner's and a test's) don't reach each other.
+    fn show_event_name(data_dir: &Path) -> Vec<u16> {
+        let key = fs::canonicalize(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());
+        let mut hasher = DefaultHasher::new();
+        key.as_os_str().hash(&mut hasher);
+        wide(&format!("Local\\Toru.Show.{:016x}", hasher.finish()))
+    }
+
+    /// Creates the event a second launch signals, and runs `on_show` on a background thread
+    /// each time it is signalled, for the life of the process.
+    pub fn watch_for_show(data_dir: &Path, on_show: impl Fn() + Send + 'static) {
+        let name = show_event_name(data_dir);
+        // SAFETY: the name is NUL-terminated. An auto-reset event, so each signal is one show.
+        let event = unsafe { CreateEventW(std::ptr::null(), 0, 0, name.as_ptr()) };
+        if event == 0 {
+            return;
+        }
+        thread::spawn(move || {
+            // SAFETY: `event` is a handle this process owns and never closes.
+            while unsafe { WaitForSingleObject(event, INFINITE) } == WAIT_OBJECT_0 {
+                on_show();
+            }
+        });
+    }
+
+    /// Tells the Toru already running on `data_dir` to show its window, and lets it take the
+    /// foreground, since this process was just launched by the user. `false` if none is
+    /// listening.
+    pub fn signal_running_instance(data_dir: &Path) -> bool {
+        let name = show_event_name(data_dir);
+        // SAFETY: the name is NUL-terminated, and the handle is closed once used.
+        unsafe {
+            let event = OpenEventW(EVENT_MODIFY_STATE, 0, name.as_ptr());
+            if event == 0 {
+                return false;
+            }
+            AllowSetForegroundWindow(ASFW_ANY);
+            let signalled = SetEvent(event) != 0;
+            CloseHandle(event);
+            signalled
+        }
     }
 
     #[link(name = "shell32")]
@@ -272,8 +434,7 @@ mod windows {
     /// Tells the user why the app can't start, since a release build has no console.
     pub fn show_startup_error(message: &str) {
         const MB_ICONERROR: u32 = 0x10;
-        let wide = |text: &str| text.encode_utf16().chain([0]).collect::<Vec<u16>>();
-        let (text, caption) = (wide(message), wide("Toru"));
+        let (text, caption) = (wide(message), wide(WINDOW_TITLE));
         // SAFETY: both strings are NUL-terminated and outlive the call.
         unsafe { MessageBoxW(0, text.as_ptr(), caption.as_ptr(), MB_ICONERROR) };
     }
@@ -392,7 +553,8 @@ pub const EXCLUDE_SETTLE: Duration = Duration::from_millis(50);
 #[cfg(windows)]
 pub use windows::{
     bring_overlay_to_foreground, default_save_folder, exclude_windows_from_capture,
-    is_window_pickable, local_now, restore_window, reveal_file, show_startup_error,
+    hide_main_window, is_window_pickable, local_now, request_close, restore_window, reveal_file,
+    show_main_window, show_startup_error, signal_running_instance, watch_for_show,
 };
 
 #[cfg(not(windows))]
@@ -418,6 +580,25 @@ pub fn exclude_windows_from_capture(_exclude: bool) {}
 #[cfg(not(windows))]
 pub fn is_window_pickable(_id: u32) -> bool {
     true
+}
+
+#[cfg(not(windows))]
+pub fn hide_main_window() {}
+
+#[cfg(not(windows))]
+pub fn show_main_window() {}
+
+#[cfg(not(windows))]
+pub fn request_close(window: &mut gpui::Window) {
+    window.remove_window();
+}
+
+#[cfg(not(windows))]
+pub fn watch_for_show(_data_dir: &std::path::Path, _on_show: impl Fn() + Send + 'static) {}
+
+#[cfg(not(windows))]
+pub fn signal_running_instance(_data_dir: &std::path::Path) -> bool {
+    false
 }
 
 #[cfg(not(windows))]
@@ -457,8 +638,31 @@ pub fn display_pixels(display: &dyn PlatformDisplay) -> (u32, u32) {
 #[cfg(all(test, windows))]
 mod tests {
     use std::path::Path;
+    use std::sync::mpsc;
+    use std::time::Duration;
 
     use super::*;
+
+    fn unique_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("toru-platform-{}-{name}", std::process::id()))
+    }
+
+    #[test]
+    fn a_signal_with_nobody_listening_is_reported() {
+        assert!(!signal_running_instance(&unique_dir("nobody")));
+    }
+
+    #[test]
+    fn a_signal_reaches_the_watcher_for_the_same_folder_only() {
+        let dir = unique_dir("watched");
+        let (sender, receiver) = mpsc::channel();
+        watch_for_show(&dir, move || {
+            sender.send(()).ok();
+        });
+        assert!(!signal_running_instance(&unique_dir("other")));
+        assert!(signal_running_instance(&dir));
+        assert!(receiver.recv_timeout(Duration::from_secs(5)).is_ok());
+    }
 
     #[test]
     fn the_local_time_is_a_real_date() {
@@ -493,6 +697,20 @@ mod tests {
         assert!(!windows::is_overlay_style(0x8));
         assert!(!windows::is_overlay_style(0x80));
         assert!(!windows::is_overlay_style(APP_WINDOW));
+    }
+
+    #[test]
+    fn only_an_app_window_counts_as_the_main_window() {
+        const TOPMOST_TOOL: u32 = 0x88;
+        const APP_WINDOW: u32 = 0x40000;
+        const NO_REDIRECTION_BITMAP: u32 = 0x0020_0000;
+        assert!(windows::is_main_window_style(APP_WINDOW));
+        assert!(windows::is_main_window_style(
+            APP_WINDOW | NO_REDIRECTION_BITMAP
+        ));
+        assert!(!windows::is_main_window_style(TOPMOST_TOOL));
+        assert!(!windows::is_main_window_style(0x80));
+        assert!(!windows::is_main_window_style(0));
     }
 
     #[test]
