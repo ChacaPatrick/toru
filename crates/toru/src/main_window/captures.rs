@@ -463,7 +463,7 @@ fn capture_monitor(id: u32) -> Option<RgbaImage> {
 
 /// `set_image` fails if another window holds the clipboard open, which is the failure the message
 /// covers. It already retries for about 150 ms first (`docs/spikes.md` §1.4).
-fn copy_image(image: RgbaImage) -> CopyResult {
+pub(super) fn copy_image(image: RgbaImage) -> CopyResult {
     ClipboardContext::new()?.set_image(RustImageData::from_dynamic_image(DynamicImage::ImageRgba8(
         image,
     )))

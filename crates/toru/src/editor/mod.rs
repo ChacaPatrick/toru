@@ -29,12 +29,12 @@ use gpui::{
 };
 use gpui_kit::component::input::InputState;
 use tiny_skia::{IntRect, Pixmap};
-use toru_core::capture::Capture;
+use toru_core::{settings::SaveFormat, store::CaptureId};
 
 use crate::theme::{ActiveTheme, Family, Theme};
 use crate::ui::{Flash, FocusInView, fill};
 use annotation::{Annotation, Badge, HandleIndex, Kind, Shape, Style, Text, in_picture};
-use document::{Document, skia_color};
+use document::{Document, Edits, Flattened, skia_color};
 use sticker::Sticker;
 use text::Font;
 pub use tools::Tool;
@@ -63,10 +63,13 @@ const STICKER_SIZES: f32 = 4.;
 pub const TRAY_ICON: f32 = 28.;
 
 pub enum EditorEvent {
-    /// Back to session.
-    Back,
-    /// The picture was copied, as a mock until 8.5; the main window shows the toast.
-    Copied,
+    /// Back to session, with the picture if the card doesn't show it yet.
+    Back(Option<Flattened>),
+    Copy(Flattened),
+    Save(Flattened),
+    /// Save pressed with the file already showing this.
+    NothingToSave,
+    SaveAs(Flattened, SaveFormat),
 }
 
 /// What holds the selected mark while it is dragged.
@@ -122,7 +125,7 @@ struct TrayKey {
 }
 
 pub struct Editor {
-    capture: Capture,
+    stored: CaptureId,
     /// The card's name field, shared, so a rename here is the card's too.
     name: Entity<InputState>,
     /// Why the store refused the name being typed, shown in the top bar while it stands.
@@ -181,11 +184,12 @@ impl Focusable for Editor {
 }
 
 impl Editor {
-    /// Opens `capture`'s picture, `base`, with no annotations yet.
+    /// Opens the picture of the capture `stored` holds, with no annotations yet. `document` says
+    /// what the card and the saved file show.
     pub fn new(
-        capture: Capture,
+        stored: CaptureId,
         name: Entity<InputState>,
-        base: Pixmap,
+        document: Document,
         cx: &mut Context<Self>,
     ) -> Self {
         let theme = cx.theme();
@@ -193,10 +197,10 @@ impl Editor {
             .filter_map(|tool| Some((tool, StrokeOptions::for_kind(tool.kind()?, theme))))
             .collect();
         Editor {
-            capture,
+            stored,
             name,
             name_error: None,
-            document: Document::new(base),
+            document,
             image: None,
             overlay: None,
             stale_images: Vec::new(),
@@ -277,6 +281,11 @@ impl Editor {
         }
     }
 
+    /// Which capture is being edited.
+    pub fn stored(&self) -> CaptureId {
+        self.stored
+    }
+
     /// The card's name field.
     pub fn name_field(&self) -> Entity<InputState> {
         self.name.clone()
@@ -306,7 +315,7 @@ impl Editor {
         if self.document.is_edited() {
             parts.push("edited".into());
         }
-        parts.push(if self.capture.is_saved() {
+        parts.push(if self.document.is_saved() {
             "saved".into()
         } else {
             "not saved".into()
@@ -533,15 +542,15 @@ impl Editor {
         if self.drag.is_some() {
             return;
         }
-        let crop = self.document.crop();
+        let (crop, shown) = (self.document.crop(), self.shown());
         if !step(&mut self.document) {
             return;
         }
         self.select(None, cx);
-        if self.document.crop() == crop {
-            self.document_changed(cx);
-        } else if self.tool == Tool::Crop {
+        if self.tool == Tool::Crop && self.document.crop() != crop {
             self.crop_draft = self.document_crop_draft();
+        }
+        if self.shown() == shown {
             self.document_changed(cx);
         } else {
             self.shown_changed(cx);
@@ -710,15 +719,52 @@ impl Editor {
         }
     }
 
-    fn back(&mut self, cx: &mut Context<Self>) {
-        cx.emit(EditorEvent::Back);
+    /// Text being typed goes on the document first, so what leaves is what the user sees; a
+    /// drag waits, as the mark under the pointer isn't on the document yet.
+    fn flattened(&mut self, cx: &mut Context<Self>) -> Option<Flattened> {
+        self.finish_typing(cx);
+        self.drag.is_none().then(|| self.document.flatten())
     }
 
-    /// Mock until 8.5: the feedback is real, the clipboard untouched.
+    fn back(&mut self, cx: &mut Context<Self>) {
+        self.finish_typing(cx);
+        let changed = self.document.is_unwritten();
+        cx.emit(EditorEvent::Back(changed.then(|| self.document.flatten())));
+    }
+
     fn copy(&mut self, cx: &mut Context<Self>) {
+        if let Some(flattened) = self.flattened(cx) {
+            cx.emit(EditorEvent::Copy(flattened));
+        }
+    }
+
+    /// The Copy button's check mark, once the clipboard has taken the picture.
+    pub fn show_copied(&mut self, cx: &mut Context<Self>) {
         self.copied
             .show((), COPIED_FOR, cx, |this| &mut this.copied);
-        cx.emit(EditorEvent::Copied);
+    }
+
+    fn save(&mut self, cx: &mut Context<Self>) {
+        let Some(flattened) = self.flattened(cx) else {
+            return;
+        };
+        cx.emit(if self.document.is_saved() {
+            EditorEvent::NothingToSave
+        } else {
+            EditorEvent::Save(flattened)
+        });
+    }
+
+    /// The file now shows `edits`, which the user may have changed since.
+    pub fn saved(&mut self, edits: Edits, cx: &mut Context<Self>) {
+        self.document.mark_saved(edits);
+        cx.notify();
+    }
+
+    fn save_as(&mut self, format: SaveFormat, cx: &mut Context<Self>) {
+        if let Some(flattened) = self.flattened(cx) {
+            cx.emit(EditorEvent::SaveAs(flattened, format));
+        }
     }
 
     /// The part of the whole picture the canvas shows: the crop, or all of it while the Crop
@@ -1087,6 +1133,7 @@ impl Editor {
         }
         if m.control {
             match keystroke.key.as_str() {
+                "c" if !m.shift => self.copy(cx),
                 "z" if m.shift => self.redo(cx),
                 "z" => self.undo(cx),
                 "y" => self.redo(cx),

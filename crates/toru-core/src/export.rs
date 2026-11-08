@@ -5,10 +5,12 @@ use std::fs::{self, File};
 use std::io::{self, Cursor, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
+use image::RgbaImage;
+use image::buffer::ConvertBuffer;
 use image::codecs::jpeg::JpegEncoder;
 
 use crate::settings::SaveFormat;
-use crate::store::{CaptureId, Result, Store, path_text};
+use crate::store::{CaptureId, Result, Store, encode_png, path_text};
 
 const JPEG_QUALITY: u8 = 90;
 
@@ -54,6 +56,52 @@ pub fn save_capture(
     }))
 }
 
+/// Writes the editor's `edited` picture into `folder` as the capture's saved file, under a new
+/// name if a file has it, and shows it on the card. `original` is the capture as it was taken,
+/// kept for Reset edits, or `None` if `edited` is that picture. A capture saved before keeps its
+/// earlier file, which is never overwritten, and the record moves to the new one.
+pub fn save_edited(
+    store: &Store,
+    id: CaptureId,
+    edited: &RgbaImage,
+    original: Option<&RgbaImage>,
+    folder: &Path,
+    format: SaveFormat,
+    max_thumbnail_width: u32,
+) -> Result<SavedFile> {
+    let capture = store.capture(id)?;
+    let bytes = encoded_pixels(edited, format)?;
+    store.keep_original(id, original)?;
+    fs::create_dir_all(folder)?;
+    let path = write_new_file(folder, &capture.name, format, &bytes)?;
+    if let Err(error) = store.mark_saved(id, &path) {
+        let _ = fs::remove_file(&path);
+        return Err(error);
+    }
+    // The file is what was asked for; a thumbnail that couldn't follow is only out of date.
+    let _ = store.replace_thumbnail(id, edited, max_thumbnail_width);
+    Ok(SavedFile {
+        path,
+        bytes: bytes.len() as u64,
+    })
+}
+
+/// Save as: `edited` written to `folder` as `name`, under a new name if a file has it. The
+/// capture and its card don't change, as this is a copy.
+pub fn save_copy(
+    edited: &RgbaImage,
+    folder: &Path,
+    name: &str,
+    format: SaveFormat,
+) -> Result<SavedFile> {
+    let bytes = encoded_pixels(edited, format)?;
+    let path = write_new_file(folder, name, format, &bytes)?;
+    Ok(SavedFile {
+        path,
+        bytes: bytes.len() as u64,
+    })
+}
+
 /// Gets `captures` ready to copy as files: a saved capture is its own file, and an unsaved one is
 /// written to a new folder from `Store::new_copy_folder` under its name.
 pub fn prepare_copy_set(
@@ -84,7 +132,12 @@ fn fill_copy_set(
     let mut missing = 0;
     for &id in captures {
         let capture = store.capture(id)?;
-        match capture.saved_path {
+        // Edits waiting for Save are what the card shows, so the temp copy goes in place of the
+        // file.
+        match capture
+            .saved_path
+            .filter(|_| !store.image_path(id).is_file())
+        {
             Some(path) if path.is_file() => files.push(path_text(&path)?.to_string()),
             Some(_) => missing += 1,
             None => {
@@ -102,22 +155,23 @@ fn encoded(source: &Path, format: SaveFormat) -> Result<Vec<u8>> {
     if format == SaveFormat::Png {
         return Ok(fs::read(source)?);
     }
-    let image = image::open(source)?;
+    encoded_pixels(&image::open(source)?.to_rgba8(), format)
+}
+
+fn encoded_pixels(pixels: &RgbaImage, format: SaveFormat) -> Result<Vec<u8>> {
     match format {
-        SaveFormat::Png => unreachable!("returned above"),
+        SaveFormat::Png => encode_png(pixels),
         // JPEG has no alpha channel.
         SaveFormat::Jpg => {
+            let rgb: image::RgbImage = pixels.convert();
             let mut bytes = Cursor::new(Vec::new());
-            image
-                .to_rgb8()
-                .write_with_encoder(JpegEncoder::new_with_quality(&mut bytes, JPEG_QUALITY))?;
+            rgb.write_with_encoder(JpegEncoder::new_with_quality(&mut bytes, JPEG_QUALITY))?;
             Ok(bytes.into_inner())
         }
         // Lossless, because screenshots are mostly text and flat colour.
         SaveFormat::WebP => {
-            let rgba = image.to_rgba8();
-            let (width, height) = rgba.dimensions();
-            webp::Encoder::from_rgba(&rgba, width, height)
+            let (width, height) = pixels.dimensions();
+            webp::Encoder::from_rgba(pixels, width, height)
                 .encode_simple(true, 75.)
                 .map(|memory| memory.to_vec())
                 .map_err(|error| io::Error::other(format!("WebP encoding: {error:?}")).into())
@@ -189,6 +243,11 @@ mod tests {
         fn folder(&self) -> PathBuf {
             self.0.join("Pictures").join("Screenshots")
         }
+
+        fn folder_made(&self) -> PathBuf {
+            fs::create_dir_all(self.folder()).unwrap();
+            self.folder()
+        }
     }
 
     impl Drop for TestDir {
@@ -225,6 +284,234 @@ mod tests {
     fn session_ids(store: &Store, session: SessionId) -> Vec<CaptureId> {
         let captures = store.session_captures(session).unwrap();
         captures.iter().map(|stored| stored.id).collect()
+    }
+
+    /// Solid red: an edited picture that is easy to tell from `frame`.
+    fn edited() -> RgbaImage {
+        RgbaImage::from_pixel(10, 10, Rgba([255, 0, 0, 255]))
+    }
+
+    fn png_at(path: &Path) -> RgbaImage {
+        image::open(path).unwrap().to_rgba8()
+    }
+
+    #[test]
+    fn saving_an_edit_writes_it_keeps_the_original_and_shows_it_on_the_card() {
+        let dir = TestDir::new();
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot");
+
+        let saved = save_edited(
+            &store,
+            id,
+            &edited(),
+            Some(&frame()),
+            &dir.folder(),
+            SaveFormat::Png,
+            8,
+        )
+        .unwrap();
+
+        assert_eq!(saved.path, dir.folder().join("shot.png"));
+        assert_eq!(png_at(&saved.path), edited());
+        assert_eq!(png_at(&store.original_path(id)), frame());
+        assert_eq!(
+            store.capture(id).unwrap().saved_path,
+            Some(saved.path.clone())
+        );
+        assert_eq!(store.full_image_path(id).unwrap(), saved.path);
+        assert!(!store.image_path(id).exists());
+        let capture = store.capture(id).unwrap();
+        assert_eq!((capture.width, capture.height), (10, 10));
+        assert_eq!(png_at(&store.thumbnail_path(id)).dimensions(), (8, 8));
+    }
+
+    #[test]
+    fn a_later_save_never_overwrites_and_the_first_original_stays() {
+        let dir = TestDir::new();
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot");
+        let save = |picture: &RgbaImage, original: &RgbaImage| {
+            save_edited(
+                &store,
+                id,
+                picture,
+                Some(original),
+                &dir.folder(),
+                SaveFormat::Png,
+                8,
+            )
+            .unwrap()
+        };
+
+        let first = save(&edited(), &frame());
+        let second = save(&RgbaImage::new(3, 3), &edited());
+
+        assert_eq!(file_name(&first.path), "shot.png");
+        assert_eq!(file_name(&second.path), "shot_2.png");
+        assert_eq!(png_at(&first.path), edited());
+        assert_eq!(store.capture(id).unwrap().saved_path, Some(second.path));
+        assert_eq!(png_at(&store.original_path(id)), frame());
+    }
+
+    #[test]
+    fn a_failed_edit_save_leaves_the_capture_unsaved() {
+        let dir = TestDir::new();
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot");
+        // A file where the folder should be.
+        let blocked = dir.0.join("blocked");
+        fs::write(&blocked, b"").unwrap();
+
+        let result = save_edited(
+            &store,
+            id,
+            &edited(),
+            Some(&frame()),
+            &blocked,
+            SaveFormat::Png,
+            8,
+        );
+
+        assert!(result.is_err());
+        assert_eq!(store.capture(id).unwrap().saved_path, None);
+        assert_eq!(png_at(&store.image_path(id)), frame());
+    }
+
+    #[test]
+    fn an_edit_kept_on_a_saved_capture_leaves_its_file_and_survives_a_restart() {
+        let dir = TestDir::new();
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot");
+        let file = save_capture(&store, id, &dir.folder(), SaveFormat::Png)
+            .unwrap()
+            .unwrap();
+        let before = fs::read(&file.path).unwrap();
+
+        store.store_edit(id, &edited(), Some(&frame()), 8).unwrap();
+
+        assert_eq!(fs::read(&file.path).unwrap(), before);
+        assert_eq!(store.full_image_path(id).unwrap(), store.image_path(id));
+        assert_eq!(png_at(&store.image_path(id)), edited());
+        // What the card shows is what Copy as files takes.
+        let set = prepare_copy_set(&store, &[id], SaveFormat::Png).unwrap();
+        assert_ne!(Path::new(&set.files[0]), file.path);
+        assert_eq!(png_at(Path::new(&set.files[0])), edited());
+
+        drop(store);
+        let store = dir.store();
+        assert_eq!(png_at(&store.full_image_path(id).unwrap()), edited());
+        assert_eq!(png_at(&store.original_path(id)), frame());
+
+        // Saving takes the waiting edit to a new file and the temp copy goes.
+        let saved = save_edited(
+            &store,
+            id,
+            &edited(),
+            Some(&frame()),
+            &dir.folder(),
+            SaveFormat::Png,
+            8,
+        )
+        .unwrap();
+        assert_eq!(file_name(&saved.path), "shot_2.png");
+        assert!(!store.image_path(id).exists());
+    }
+
+    #[test]
+    fn an_unsaved_capture_edited_then_reset_keeps_nothing_extra() {
+        let dir = TestDir::new();
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot");
+
+        store.store_edit(id, &edited(), Some(&frame()), 8).unwrap();
+        assert!(store.original_path(id).is_file());
+        assert_eq!(png_at(&store.image_path(id)), edited());
+
+        store.store_edit(id, &frame(), None, 8).unwrap();
+        assert!(!store.original_path(id).exists());
+        assert_eq!(png_at(&store.image_path(id)), frame());
+        let capture = store.capture(id).unwrap();
+        assert_eq!((capture.width, capture.height), (32, 20));
+    }
+
+    #[test]
+    fn a_saved_capture_reset_keeps_its_original_while_its_file_differs() {
+        let dir = TestDir::new();
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot");
+        save_edited(
+            &store,
+            id,
+            &edited(),
+            Some(&frame()),
+            &dir.folder(),
+            SaveFormat::Png,
+            8,
+        )
+        .unwrap();
+
+        store.store_edit(id, &frame(), None, 8).unwrap();
+
+        assert!(store.original_path(id).is_file());
+        drop(store);
+        let store = dir.store();
+        assert_eq!(png_at(&store.full_image_path(id).unwrap()), frame());
+    }
+
+    #[test]
+    fn deleting_a_capture_takes_its_kept_original() {
+        let dir = TestDir::new();
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot");
+        store.store_edit(id, &edited(), Some(&frame()), 8).unwrap();
+        let original = store.original_path(id);
+        assert!(original.is_file());
+
+        store.delete(id).unwrap();
+
+        assert!(!original.exists());
+    }
+
+    #[test]
+    fn saving_a_copy_leaves_the_capture_alone_and_never_overwrites() {
+        let dir = TestDir::new();
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot");
+        fs::create_dir_all(dir.folder()).unwrap();
+
+        let first = save_copy(&edited(), &dir.folder(), "copy", SaveFormat::Png).unwrap();
+        let second = save_copy(&edited(), &dir.folder(), "copy", SaveFormat::Png).unwrap();
+
+        assert_eq!(file_name(&first.path), "copy.png");
+        assert_eq!(file_name(&second.path), "copy_2.png");
+        assert_eq!(png_at(&first.path), edited());
+        assert_eq!(store.capture(id).unwrap().saved_path, None);
+        assert_eq!(png_at(&store.image_path(id)), frame());
+    }
+
+    #[test]
+    fn an_edit_saves_in_each_format() {
+        let dir = TestDir::new();
+        for (format, extension) in [
+            (SaveFormat::Png, "png"),
+            (SaveFormat::Jpg, "jpg"),
+            (SaveFormat::WebP, "webp"),
+        ] {
+            let saved = save_copy(&edited(), &dir.folder_made(), "shot", format).unwrap();
+            assert_eq!(saved.path.extension().unwrap(), extension);
+            let image = image::open(&saved.path).unwrap().to_rgb8();
+            assert_eq!(image.dimensions(), (10, 10));
+            assert!(image.get_pixel(5, 5).0[0] > 200, "{extension}");
+        }
     }
 
     fn file_name(path: &Path) -> &str {

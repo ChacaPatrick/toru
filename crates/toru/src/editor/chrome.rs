@@ -1,9 +1,11 @@
 //! The editor's frame around the canvas (DESIGN.md §5): the top bar, the floating tool pill, the
-//! zoom and undo corners and the hint chip. Save, Save as and Copy are stand-ins until 8.5.
+//! zoom and undo corners and the hint chip.
 
 use gpui::{
     AnyElement, Context, Div, Hsla, SharedString, Stateful, Window, div, prelude::*, px, relative,
 };
+
+use toru_core::settings::SaveFormat;
 
 use super::{Editor, act, on, tools::*};
 use crate::theme::{ActiveTheme, Theme, ThemedText, contrast};
@@ -42,9 +44,15 @@ pub fn top_bar(editor: &Editor, window: &Window, cx: &Context<Editor>) -> Div {
         Button::new("save-as-button", "Save as ▾"),
     )
     .header("Save a copy as")
-    .item("PNG…", |_, _| {})
-    .item("JPEG…", |_, _| {})
-    .item("WebP…", |_, _| {})
+    .item("PNG…", on(cx, |this, cx| this.save_as(SaveFormat::Png, cx)))
+    .item(
+        "JPEG…",
+        on(cx, |this, cx| this.save_as(SaveFormat::Jpg, cx)),
+    )
+    .item(
+        "WebP…",
+        on(cx, |this, cx| this.save_as(SaveFormat::WebP, cx)),
+    )
     .align_right();
     let _ = window;
     div()
@@ -79,7 +87,11 @@ pub fn top_bar(editor: &Editor, window: &Window, cx: &Context<Editor>) -> Div {
                 .check_mark(editor.copied.get().is_some())
                 .on_click(on(cx, |this, cx| this.copy(cx))),
         )
-        .child(Button::new("save", "Save").primary().on_click(|_, _| {}))
+        .child(
+            Button::new("save", "Save")
+                .primary()
+                .on_click(on(cx, |this, cx| this.save(cx))),
+        )
         .child(save_as)
 }
 

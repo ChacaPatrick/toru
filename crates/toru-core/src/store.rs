@@ -174,14 +174,7 @@ impl Store {
         let image_png = (!capture.is_saved())
             .then(|| encode_png(pixels))
             .transpose()?;
-        let thumbnail_width = width.min(max_thumbnail_width);
-        let thumbnail_height =
-            (u64::from(height) * u64::from(thumbnail_width) / u64::from(width)).max(1) as u32;
-        let thumbnail_png = encode_png(&imageops::thumbnail(
-            pixels,
-            thumbnail_width,
-            thumbnail_height,
-        ))?;
+        let thumbnail_png = thumbnail_png(pixels, max_thumbnail_width)?;
 
         let number = self.next_partial.fetch_add(1, Ordering::Relaxed);
         let partial_image = self.temp_dir.join(format!("{number}.png{PARTIAL_SUFFIX}"));
@@ -208,8 +201,8 @@ impl Store {
         stored
     }
 
-    /// The full image in the temp folder. It exists only until the capture is saved; after that
-    /// the image is the file at `saved_path`.
+    /// The full image in the temp folder. It exists until the capture is saved, after which the
+    /// image is the file at `saved_path`, unless edits are waiting for another Save.
     pub fn image_path(&self, id: CaptureId) -> PathBuf {
         self.temp_dir.join(format!("{}.png", id.0))
     }
@@ -233,10 +226,79 @@ impl Store {
         remove_copy_folders_except(&self.copies_dir, keep);
     }
 
-    /// Where the capture's full image is now: the file it was saved to, or else its temp copy.
+    /// The capture as it was taken, kept here once it has been edited, for Reset edits.
+    pub fn original_path(&self, id: CaptureId) -> PathBuf {
+        self.temp_dir.join(format!("{}.original.png", id.0))
+    }
+
+    /// Where the capture's full image is now: its temp copy while there is one, which on a saved
+    /// capture holds edits not yet saved, or else the file it was saved to.
     pub fn full_image_path(&self, id: CaptureId) -> Result<PathBuf> {
-        let saved = self.capture(id)?.saved_path;
-        Ok(saved.unwrap_or_else(|| self.image_path(id)))
+        let temp = self.image_path(id);
+        Ok(match self.capture(id)?.saved_path {
+            Some(saved) if !temp.is_file() => saved,
+            _ => temp,
+        })
+    }
+
+    /// Makes `edited` the capture's picture in the temp folder and the thumbnail, leaving any
+    /// file the user saved as it is until they save again. `original` is the capture as it was
+    /// taken, kept for Reset edits; `None` says `edited` is that picture again, so an unsaved
+    /// capture needs nothing kept. A saved capture keeps it, as its file may still differ.
+    /// Returns the size of the picture written.
+    pub fn store_edit(
+        &self,
+        id: CaptureId,
+        edited: &RgbaImage,
+        original: Option<&RgbaImage>,
+        max_thumbnail_width: u32,
+    ) -> Result<u64> {
+        if original.is_some() || !self.capture(id)?.is_saved() {
+            self.keep_original(id, original)?;
+        }
+        let png = encode_png(edited)?;
+        self.publish(&self.image_path(id), &png)?;
+        self.replace_thumbnail(id, edited, max_thumbnail_width)?;
+        Ok(png.len() as u64)
+    }
+
+    /// Keeps `original` for Reset edits, the first time it is given. `None` drops what was kept.
+    pub(crate) fn keep_original(&self, id: CaptureId, original: Option<&RgbaImage>) -> Result<()> {
+        let path = self.original_path(id);
+        match original {
+            Some(original) if !path.is_file() => self.publish(&path, &encode_png(original)?)?,
+            Some(_) => {}
+            // A leftover only costs disk until the capture is deleted.
+            None => drop(fs::remove_file(path)),
+        }
+        Ok(())
+    }
+
+    /// The card's thumbnail and recorded size, now that its picture is `edited`.
+    pub fn replace_thumbnail(
+        &self,
+        id: CaptureId,
+        edited: &RgbaImage,
+        max_thumbnail_width: u32,
+    ) -> Result<()> {
+        let png = thumbnail_png(edited, max_thumbnail_width)?;
+        self.publish(&self.thumbnail_path(id), &png)?;
+        self.db().execute(
+            "UPDATE captures SET width = ?1, height = ?2 WHERE id = ?3",
+            params![edited.width(), edited.height(), id.0],
+        )?;
+        Ok(())
+    }
+
+    /// Replaces the file at `path` in one step, so a crash leaves the old one whole.
+    fn publish(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+        let number = self.next_partial.fetch_add(1, Ordering::Relaxed);
+        let partial = self.temp_dir.join(format!("{number}.edit{PARTIAL_SUFFIX}"));
+        let published = write_file(&partial, bytes).and_then(|()| fs::rename(&partial, path));
+        if published.is_err() {
+            let _ = fs::remove_file(&partial);
+        }
+        published
     }
 
     pub fn capture(&self, id: CaptureId) -> Result<Capture> {
@@ -538,16 +600,23 @@ impl Store {
     fn remove_temp_files(&self, id: CaptureId) {
         let _ = fs::remove_file(self.image_path(id));
         let _ = fs::remove_file(self.thumbnail_path(id));
+        let _ = fs::remove_file(self.original_path(id));
     }
 
     fn remove_stray_files(&self) -> Result<()> {
-        let saved_by_id: HashMap<i64, bool> = {
+        let mut saved_by_id: HashMap<i64, bool> = {
             let db = self.db();
             let mut statement = db.prepare("SELECT id, saved_path IS NOT NULL FROM captures")?;
             statement
                 .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
                 .collect::<rusqlite::Result<_>>()?
         };
+        // The temp image of a saved capture with its original kept holds edits awaiting Save.
+        for (&id, saved) in &mut saved_by_id {
+            if *saved && self.original_path(CaptureId(id)).is_file() {
+                *saved = false;
+            }
+        }
         for entry in fs::read_dir(&self.temp_dir)? {
             let entry = entry?;
             if is_stray(&entry.file_name().to_string_lossy(), &saved_by_id) {
@@ -585,6 +654,8 @@ fn is_stray(file_name: &str, saved_by_id: &HashMap<i64, bool>) -> bool {
         true
     } else if let Some(id) = file_name.strip_suffix(".thumb.png").and_then(parse) {
         !saved_by_id.contains_key(&id)
+    } else if let Some(id) = file_name.strip_suffix(".original.png").and_then(parse) {
+        !saved_by_id.contains_key(&id)
     } else if let Some(id) = file_name.strip_suffix(".png").and_then(parse) {
         saved_by_id.get(&id) != Some(&false)
     } else {
@@ -592,7 +663,20 @@ fn is_stray(file_name: &str, saved_by_id: &HashMap<i64, bool>) -> bool {
     }
 }
 
-fn encode_png(pixels: &RgbaImage) -> Result<Vec<u8>> {
+/// `pixels` as a thumbnail PNG no wider than `max_width`.
+fn thumbnail_png(pixels: &RgbaImage, max_width: u32) -> Result<Vec<u8>> {
+    let (width, height) = pixels.dimensions();
+    let thumbnail_width = width.min(max_width);
+    let thumbnail_height =
+        (u64::from(height) * u64::from(thumbnail_width) / u64::from(width)).max(1) as u32;
+    encode_png(&imageops::thumbnail(
+        pixels,
+        thumbnail_width,
+        thumbnail_height,
+    ))
+}
+
+pub(crate) fn encode_png(pixels: &RgbaImage) -> Result<Vec<u8>> {
     let mut png = Cursor::new(Vec::new());
     pixels.write_to(&mut png, ImageFormat::Png)?;
     Ok(png.into_inner())

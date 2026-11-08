@@ -527,6 +527,30 @@ impl Gallery {
             .and_then(|card| card.name_error.clone())
     }
 
+    /// The card's picture has changed: its size, and the thumbnail, read afresh from its file.
+    /// A saved card's `bytes` are its file's, which going Back doesn't touch.
+    pub fn picture_changed(
+        &mut self,
+        capture: CaptureId,
+        (width, height): (u32, u32),
+        bytes: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(card) = self.stored_card(capture) else {
+            return;
+        };
+        card.capture.width = width;
+        card.capture.height = height;
+        if !card.capture.is_saved() {
+            card.bytes = bytes;
+        }
+        let source = Resource::from(card.files.thumbnail.clone());
+        self.thumbnails
+            .update(cx, |thumbnails, cx| thumbnails.remove(&source, window, cx));
+        cx.notify();
+    }
+
     /// Turns a card to Saved once its file is written.
     pub fn mark_saved(&mut self, capture: CaptureId, file: SavedFile, cx: &mut Context<Self>) {
         if let Some(card) = self.stored_card(capture) {

@@ -1,9 +1,10 @@
 //! What the editor edits: the capture's pixels, untouched, plus the list of annotations laid
 //! over them and the crop that chooses what of the picture is kept, with undo and redo over
 //! both. `render` draws them into one bitmap with `tiny-skia`, and that same bitmap is what the
-//! canvas shows and what Save (8.5) writes, so the screen and the file can't differ. The crop
-//! is a rectangle of the whole picture and the marks stay in the whole picture's pixels, so
-//! cropping, and undoing it, moves nothing.
+//! canvas shows and what Save writes, so the screen and the file can't differ. The crop is a
+//! rectangle of the whole picture and the marks stay in the whole picture's pixels, so cropping,
+//! and undoing it, moves nothing. A picture edited before opens flattened, with the capture as
+//! it was taken held beside it for Reset edits.
 
 use std::{path::Path, sync::Arc};
 
@@ -77,25 +78,73 @@ impl<T: Clone> History<T> {
     }
 }
 
-/// The undoable state: the marks, bottom to top, and the crop, if any, as a rectangle of the
-/// whole picture.
-#[derive(Clone, PartialEq, Debug, Default)]
-struct Edits {
+/// The undoable state: the picture under the marks, the marks, bottom to top, and the crop, if
+/// any, as a rectangle of the whole picture. Reset edits changes the picture, so undo can bring
+/// back one flattened earlier.
+#[derive(Clone)]
+pub struct Edits {
+    base: Arc<Pixmap>,
     annotations: Vec<Annotation>,
     crop: Option<IntRect>,
 }
 
+impl PartialEq for Edits {
+    /// A picture is only ever swapped whole, so which one it is says whether it changed.
+    fn eq(&self, other: &Edits) -> bool {
+        Arc::ptr_eq(&self.base, &other.base)
+            && self.annotations == other.annotations
+            && self.crop == other.crop
+    }
+}
+
+/// The result of the edits, taken for Copy, Save or going Back.
+#[derive(Clone)]
+pub struct Flattened {
+    pub picture: Arc<Pixmap>,
+    /// The capture as it was taken, for Reset edits.
+    pub original: Arc<Pixmap>,
+    /// Whether `picture` differs from `original`.
+    pub is_edited: bool,
+    /// The state flattened, to say so once it is written.
+    pub edits: Edits,
+}
+
 pub struct Document {
-    base: Pixmap,
+    /// The capture as it was taken: what Reset edits returns to.
+    original: Arc<Pixmap>,
     edits: History<Edits>,
+    /// The state the card's picture and thumbnail show, so Back writes only what changed.
+    written: Edits,
+    /// The state the user's saved file shows, if there is a file and it shows one of these.
+    saved: Option<Edits>,
 }
 
 impl Document {
+    #[cfg(test)]
     pub fn new(base: Pixmap) -> Document {
-        Document {
+        Document::opened(base, None, false)
+    }
+
+    /// `base` is the picture as the card shows it, and `original` the capture as it was taken,
+    /// if that was kept apart from it. `in_file` says the saved file shows `base`.
+    pub fn opened(base: Pixmap, original: Option<Pixmap>, in_file: bool) -> Document {
+        let base = Arc::new(base);
+        let original = original.map_or_else(|| base.clone(), Arc::new);
+        let start = Edits {
             base,
-            edits: History::new(Edits::default()),
+            annotations: Vec::new(),
+            crop: None,
+        };
+        Document {
+            original,
+            written: start.clone(),
+            saved: in_file.then(|| start.clone()),
+            edits: History::new(start),
         }
+    }
+
+    fn base(&self) -> &Pixmap {
+        &self.edits.get().base
     }
 
     /// The width of what is shown and saved: the crop's, or the whole picture's.
@@ -109,13 +158,13 @@ impl Document {
 
     /// The whole picture, as captured.
     pub fn whole(&self) -> IntRect {
-        IntRect::from_xywh(0, 0, self.base.width(), self.base.height())
+        IntRect::from_xywh(0, 0, self.base().width(), self.base().height())
             .expect("a pixmap is at least one pixel")
     }
 
     /// The whole picture's size in picture pixels: what a mark may be moved within, crop or no.
     pub fn size(&self) -> Size<f32> {
-        size(self.base.width() as f32, self.base.height() as f32)
+        size(self.base().width() as f32, self.base().height() as f32)
     }
 
     /// The part of the picture that is kept: the crop, or the whole picture without one.
@@ -141,9 +190,38 @@ impl Document {
         true
     }
 
-    /// Whether any annotation or crop is on the picture.
+    /// Whether the picture differs from the capture as it was taken.
     pub fn is_edited(&self) -> bool {
-        *self.edits.get() != Edits::default()
+        let edits = self.edits.get();
+        !edits.annotations.is_empty()
+            || edits.crop.is_some()
+            || !Arc::ptr_eq(&edits.base, &self.original)
+    }
+
+    /// Whether the card's picture shows something other than this.
+    pub fn is_unwritten(&self) -> bool {
+        *self.edits.get() != self.written
+    }
+
+    /// Whether the user's saved file shows exactly this.
+    pub fn is_saved(&self) -> bool {
+        self.saved.as_ref() == Some(self.edits.get())
+    }
+
+    /// `edits` have been written to the user's file, and so to the card.
+    pub fn mark_saved(&mut self, edits: Edits) {
+        self.written = edits.clone();
+        self.saved = Some(edits);
+    }
+
+    /// The picture as it stands.
+    pub fn flatten(&self) -> Flattened {
+        Flattened {
+            picture: Arc::new(self.render()),
+            original: self.original.clone(),
+            is_edited: self.is_edited(),
+            edits: self.edits.get().clone(),
+        }
     }
 
     /// The marks on the picture, bottom to top.
@@ -220,19 +298,25 @@ impl Document {
         self.edits.redo()
     }
 
-    /// Reset edits: takes every annotation and the crop off, as one undoable step. `false`
-    /// when there were none.
+    /// Reset edits: back to the capture as it was taken, with every annotation and the crop
+    /// off, as one undoable step. `false` when it is already so.
     pub fn reset(&mut self) -> bool {
         if !self.is_edited() {
             return false;
         }
-        self.edits.edit(|edits| *edits = Edits::default());
+        let base = self.original.clone();
+        self.edits.edit(|edits| {
+            *edits = Edits {
+                base,
+                annotations: Vec::new(),
+                crop: None,
+            }
+        });
         true
     }
 
     /// The picture with its annotations, within the crop, as the canvas shows it and Save
-    /// (8.5) writes it.
-    #[allow(dead_code)]
+    /// writes it.
     pub fn render(&self) -> Pixmap {
         self.render_region(self.crop(), None, None)
             .expect("the crop is within the picture")
@@ -257,7 +341,7 @@ impl Document {
         picture.draw_pixmap(
             -region.x(),
             -region.y(),
-            self.base.as_ref(),
+            self.base().as_ref(),
             &PixmapPaint {
                 opacity: 1.,
                 blend_mode: BlendMode::Source,
@@ -293,13 +377,13 @@ impl Document {
             marks.insert(i.min(marks.len()), preview);
         }
         let blocks = marks.iter().filter(|mark| mark.shape.is_block()).count();
-        let mut hidden = (blocks > 1).then(|| self.base.clone());
+        let mut hidden = (blocks > 1).then(|| self.base().clone());
         for mark in marks {
             if !mark.shape.is_block() {
                 mark.draw_at(picture, origin);
                 continue;
             }
-            let Some((rect, pixels)) = mark.block_pixels(hidden.as_ref().unwrap_or(&self.base))
+            let Some((rect, pixels)) = mark.block_pixels(hidden.as_ref().unwrap_or(self.base()))
             else {
                 continue;
             };
@@ -322,6 +406,13 @@ pub fn render_image(pixmap: &Pixmap) -> Arc<RenderImage> {
     let buffer = RgbaImage::from_raw(pixmap.width(), pixmap.height(), data)
         .expect("a pixmap's data is width × height × 4 bytes");
     Arc::new(RenderImage::new([Frame::new(buffer)]))
+}
+
+/// A `tiny-skia` bitmap as an image to encode or copy. The picture is opaque, so premultiplying
+/// changed nothing.
+pub fn to_rgba(pixmap: &Pixmap) -> RgbaImage {
+    RgbaImage::from_raw(pixmap.width(), pixmap.height(), pixmap.data().to_vec())
+        .expect("a pixmap's data is width × height × 4 bytes")
 }
 
 /// A theme colour as `tiny-skia` takes it.
@@ -668,6 +759,95 @@ mod tests {
                 }
             }
             document.remove(index, false);
+        }
+    }
+
+    fn plain(width: u32, height: u32, red: u8) -> Pixmap {
+        let mut pixmap = Pixmap::new(width, height).unwrap();
+        pixmap.fill(Color::from_rgba8(red, 0, 0, 255));
+        pixmap
+    }
+
+    #[test]
+    fn reset_returns_a_flattened_picture_to_the_original_and_undo_brings_it_back() {
+        let mut document = Document::opened(plain(4, 3, 10), Some(plain(8, 6, 200)), false);
+        assert!(document.is_edited());
+        assert_eq!((document.width(), document.height()), (4, 3));
+
+        assert!(document.reset());
+        assert!(!document.is_edited());
+        assert_eq!((document.width(), document.height()), (8, 6));
+        assert_eq!(document.render().pixel(0, 0).unwrap().red(), 200);
+        assert!(!document.reset());
+
+        assert!(document.undo());
+        assert_eq!((document.width(), document.height()), (4, 3));
+        assert_eq!(document.render().pixel(0, 0).unwrap().red(), 10);
+    }
+
+    #[test]
+    fn a_picture_never_edited_has_nothing_to_reset() {
+        let mut document = Document::opened(plain(4, 3, 10), None, false);
+        assert!(!document.is_edited());
+        assert!(!document.reset());
+    }
+
+    #[test]
+    fn saved_and_unwritten_follow_the_edits() {
+        // A saved capture opens showing what its file shows.
+        let mut document = Document::opened(plain(40, 20, 0), None, true);
+        assert!(document.is_saved());
+        assert!(!document.is_unwritten());
+
+        document.set_crop(IntRect::from_xywh(0, 0, 10, 10));
+        assert!(!document.is_saved());
+        assert!(document.is_unwritten());
+
+        // Saved, then changed, then undone back to what was saved.
+        let flattened = document.flatten();
+        assert!(flattened.is_edited);
+        document.mark_saved(flattened.edits);
+        assert!(document.is_saved());
+        assert!(!document.is_unwritten());
+        document.set_crop(None);
+        assert!(!document.is_saved());
+        document.undo();
+        assert!(document.is_saved());
+
+        // Edits waiting for Save, or a capture never saved, match no file.
+        let opened = Document::opened(plain(4, 3, 0), None, false);
+        assert!(!opened.is_saved());
+        assert!(!opened.is_unwritten());
+    }
+
+    #[test]
+    fn the_flattened_picture_is_cropped_and_what_a_block_covers_is_gone() {
+        use super::super::block::BlockKind;
+        // One pixel of white on black and the next of black on white, so any kind of block
+        // leaves neither behind.
+        let image = RgbaImage::from_fn(96, 64, |x, y| {
+            let on = if (x + y) % 2 == 0 { 255 } else { 0 };
+            xcap::image::Rgba([on, on, on, 255])
+        });
+        let base = pixmap_from_rgba(image).unwrap();
+        for kind in [BlockKind::Blur, BlockKind::Pixelate, BlockKind::Solid] {
+            let mut document = Document::new(base.clone());
+            document.add(block(kind, (10., 10.), (80., 50.)));
+            document.set_crop(IntRect::from_xywh(0, 0, 90, 60));
+            let written = to_rgba(&document.flatten().picture);
+            assert_eq!(written.dimensions(), (90, 60));
+            for y in 20..40 {
+                for x in 20..70 {
+                    let [r, g, b, a] = written.get_pixel(x, y).0;
+                    assert_eq!(a, 255, "{kind:?} is opaque");
+                    assert!(
+                        [r, g, b] != [255, 255, 255] && [r, g, b] != [0, 0, 0],
+                        "{kind:?} left the picture at ({x}, {y})"
+                    );
+                }
+            }
+            // Outside the block the picture is as it was.
+            assert_eq!(written.get_pixel(4, 3).0, [0, 0, 0, 255]);
         }
     }
 

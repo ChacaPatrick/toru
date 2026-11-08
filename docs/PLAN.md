@@ -60,7 +60,7 @@ Drawn with `tiny-skia`, so the screen matches the saved file exactly.
 - [x] 8.2 Arrow, line, rectangle, ellipse, pen, highlighter, and the Select tool to move and resize them
 - [x] 8.3 Text, number badges, stickers
 - [x] 8.4 Crop, blur/pixelate/solid, eraser
-- [ ] 8.5 Save, Save as, Copy, Reset, updated thumbnail
+- [x] 8.5 Save, Save as, Copy, Reset, updated thumbnail
 
 ## Phase 9: Appearance [Fable]
 - [x] 9.1 Look and palette pickers in settings

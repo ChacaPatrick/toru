@@ -17,6 +17,7 @@ mod closing;
 mod custom_palette;
 mod delayed;
 mod delete;
+mod edit_actions;
 mod gallery;
 mod history;
 mod retention;
@@ -33,16 +34,18 @@ use gpui::{
     RenderImage, ScrollHandle, SharedString, Task, Window, div, prelude::*, px,
 };
 use gpui_kit::component::input::{InputEvent, InputState};
-use tiny_skia::Pixmap;
 use toru_core::{
-    capture::{Capture, CaptureMode},
+    capture::CaptureMode,
     naming::{NameError, validate_pattern},
     settings::Settings,
-    store::{SessionId, Store},
+    store::{CaptureId, SessionId, Store},
     time::{LocalDate, LocalDateTime},
 };
 
-use crate::editor::{Editor, EditorEvent, document};
+use crate::editor::{
+    Editor, EditorEvent,
+    document::{self, Document},
+};
 use crate::overlay;
 use crate::platform;
 use crate::shortcuts::{Hotkeys, Planned};
@@ -128,6 +131,8 @@ pub struct MainWindow {
     dialog_focus: FocusHandle,
     /// The Save to folder picker is open, so a second Change doesn't open another.
     picking_folder: bool,
+    /// The editor's Save or Save as is under way, so a second press can't write a second file.
+    saving_edit: bool,
     /// The custom palette editor, while it is open over the window.
     custom_editor: Option<CustomEditor>,
     /// The editor's file picker while it is open, one per window whatever the editor does.
@@ -300,6 +305,7 @@ impl MainWindow {
             delete_prompt: None,
             dialog_focus: cx.focus_handle().tab_stop(true),
             picking_folder: false,
+            saving_edit: false,
             custom_editor: None,
             background_picker: BackgroundPicker::default(),
             backdrop: None,
@@ -358,11 +364,11 @@ impl MainWindow {
     /// the editor doesn't open and a toast says so, as Copy does. "Open editor after capture"
     /// calls this with the new card's id.
     pub fn open_editor(&mut self, id: usize, cx: &mut Context<Self>) {
-        let Some((capture, name, stored)) = self
+        let Some((name, stored)) = self
             .gallery
             .read(cx)
             .card(id)
-            .map(|card| (card.capture.clone(), card.name.clone(), card.files.id))
+            .map(|card| (card.name.clone(), card.files.id))
         else {
             return;
         };
@@ -371,12 +377,18 @@ impl MainWindow {
         self.enqueue(cx, async move |this, cx| {
             let picture = cx
                 .background_spawn(async move {
-                    document::load_picture(&store.full_image_path(stored).ok()?)
+                    let base = document::load_picture(&store.full_image_path(stored).ok()?)?;
+                    let original = document::load_picture(&store.original_path(stored));
+                    let in_file = !store.image_path(stored).is_file();
+                    Some((base, original, in_file))
                 })
                 .await;
             cx.update_window(window, |_, window, cx| {
                 this.update(cx, |this, cx| match picture {
-                    Some(base) => this.show_editor(capture, name, base, window, cx),
+                    Some((base, original, in_file)) => {
+                        let document = Document::opened(base, original, in_file);
+                        this.show_editor(stored, name, document, window, cx)
+                    }
                     None => this.report_failure(captures::FILE_GONE, cx),
                 })
             })
@@ -386,16 +398,16 @@ impl MainWindow {
 
     fn show_editor(
         &mut self,
-        capture: Capture,
+        stored: CaptureId,
         name: Entity<InputState>,
-        base: Pixmap,
+        document: Document,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.close_editor(window, cx);
         let demo = std::mem::take(&mut self.demo_marks);
         let editor = cx.new(|cx| {
-            let mut editor = Editor::new(capture, name, base, cx);
+            let mut editor = Editor::new(stored, name, document, cx);
             if demo {
                 editor.add_demo_marks(cx);
             }
@@ -404,9 +416,8 @@ impl MainWindow {
         cx.subscribe_in(
             &editor,
             window,
-            |this, _, event: &EditorEvent, window, cx| match event {
-                EditorEvent::Back => this.close_editor(window, cx),
-                EditorEvent::Copied => this.report_copy(Ok(()), cx),
+            |this, editor, event: &EditorEvent, window, cx| {
+                this.editor_event(editor, event, window, cx)
             },
         )
         .detach();
@@ -441,7 +452,7 @@ impl MainWindow {
 
     /// Back to session. Focus returns to the first control through `on_focus_lost`, and the
     /// picture leaves the GPU.
-    fn close_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn close_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = self.editor.take() {
             editor.update(cx, |editor, _| editor.release_images(window));
         }

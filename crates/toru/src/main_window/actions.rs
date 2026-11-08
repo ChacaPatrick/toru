@@ -27,7 +27,7 @@ use super::{
 use crate::platform;
 use crate::ui::Toast;
 
-const SAVE_FAILED: &str = "Couldn't save. Check the Save to folder and its free space.";
+pub(super) const SAVE_FAILED: &str = "Couldn't save. Check the Save to folder and its free space.";
 const NO_SAVE_FOLDER: &str = "Couldn't find your Pictures folder to save to.";
 const COPY_ALL_FAILED: &str = "Couldn't copy those files. Check for free space.";
 const NO_PATHS: &str = "None of those are saved yet, so they have no paths";
@@ -38,16 +38,16 @@ const BAD_FOLDER: &str = "Toru can't use a folder with that name";
 
 /// Where and how captures are saved, fixed when the user asks.
 #[derive(Clone)]
-struct SaveTarget {
-    store: Arc<Store>,
-    folder: PathBuf,
+pub(super) struct SaveTarget {
+    pub(super) store: Arc<Store>,
+    pub(super) folder: PathBuf,
     /// The user picked this folder, as opposed to the default, which is made when first needed.
-    chosen: bool,
-    format: SaveFormat,
+    pub(super) chosen: bool,
+    pub(super) format: SaveFormat,
 }
 
 impl MainWindow {
-    fn save_target(&mut self, cx: &mut Context<Self>) -> Option<SaveTarget> {
+    pub(super) fn save_target(&mut self, cx: &mut Context<Self>) -> Option<SaveTarget> {
         let Some(folder) = self.save_folder() else {
             self.show_toast(Toast::failed(NO_SAVE_FOLDER), cx);
             return None;
@@ -444,7 +444,7 @@ fn copy_text(text: String) -> CopyResult {
     ClipboardContext::new()?.set(vec![ClipboardContent::Text(text)])
 }
 
-fn saved_message(file: &SavedFile) -> String {
+pub(super) fn saved_message(file: &SavedFile) -> String {
     let name = file
         .path
         .file_name()
