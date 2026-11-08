@@ -7,7 +7,7 @@
 use gpui::{App, Entity, Focusable, SharedString, StyleRefinement, Window, div, prelude::*, px};
 use gpui_kit::component::input::{Input, InputState};
 
-use super::{focus_ring, refined};
+use super::{focus_note, focus_ring, refined};
 use crate::theme::{ActiveTheme, ThemedText};
 
 #[derive(IntoElement)]
@@ -15,6 +15,7 @@ pub struct TextField {
     state: Entity<InputState>,
     aria_label: SharedString,
     height: gpui::Pixels,
+    tab_stop: bool,
     /// Sizing for the field as a whole, such as a width or `flex_1`.
     style: StyleRefinement,
 }
@@ -26,6 +27,7 @@ impl TextField {
             state: state.clone(),
             aria_label: aria_label.into(),
             height: px(34.),
+            tab_stop: true,
             style: StyleRefinement::default(),
         }
     }
@@ -33,6 +35,12 @@ impl TextField {
     /// The mockups use 34px for names, 36px for the folder field and 32px for search.
     pub fn height(mut self, height: gpui::Pixels) -> TextField {
         self.height = height;
+        self
+    }
+
+    /// Whether Tab reaches the field; see `Button::tab_stop`.
+    pub fn tab_stop(mut self, tab_stop: bool) -> TextField {
+        self.tab_stop = tab_stop;
         self
     }
 }
@@ -49,7 +57,13 @@ impl RenderOnce for TextField {
         let c = &theme.colors;
         let border = theme.borders.input;
         let radius = theme.radii.md;
-        let focused = self.state.focus_handle(cx).is_focused(window);
+        // The kit's text element clones the state's handle when it renders, so the flag set on
+        // the shared entry here is what it registers.
+        let focused = self
+            .state
+            .focus_handle(cx)
+            .tab_stop(self.tab_stop)
+            .is_focused(window);
 
         let mut input = Input::new(&self.state)
             .aria_label(self.aria_label)
@@ -76,6 +90,7 @@ impl RenderOnce for TextField {
             .child(input)
             .when(focused, |this| {
                 this.children(focus_ring(theme, radius, px(0.)))
+                    .child(focus_note(px(0.)))
             });
         refined(field, &self.style)
     }

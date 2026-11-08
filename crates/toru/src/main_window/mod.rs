@@ -1,8 +1,9 @@
-//! The main window (DESIGN.md §2): title bar, capture toolbar, then the body with the gallery
-//! and the settings column; the bottom bar follows in 4.4. This session's captures are real
-//! (`captures`); the earlier groups are mock until 7.1. Each choice that is a setting reads and
-//! writes `Settings`, every write going through `change_settings` to the store.
+//! The main window (DESIGN.md §2): title bar, capture toolbar, the body with the gallery and the
+//! settings column, then the bottom bar, with the toast above it. This session's captures are
+//! real (`captures`); the earlier groups are mock until 7.1. Each choice that is a setting reads
+//! and writes `Settings`, every write going through `change_settings` to the store.
 
+mod bottom_bar;
 mod captures;
 mod card;
 mod gallery;
@@ -80,9 +81,16 @@ impl MainWindow {
         first.focus(window, cx);
         // Something must hold focus for Tab to work (`docs/spikes.md` §1.5). This fires in the
         // draw where the focused element stops being rendered, as a collapsed group's card or a
-        // name field scrolled out of the list does, so focus returns to the first control at once.
-        cx.on_focus_lost(window, |this, window, cx| this.first.focus(window, cx))
-            .detach();
+        // name field scrolled out of the list does. Focus goes to the nearest focusable ancestor
+        // still drawn, the gallery or the settings column, so Tab carries on from there, and to
+        // the first control when there is none.
+        cx.on_focus_lost(window, |this, window, cx| {
+            let target = window
+                .focus_lost_restore_target(cx)
+                .unwrap_or_else(|| this.first.clone());
+            target.focus(window, cx)
+        })
+        .detach();
         let now = platform::local_now();
         let gallery = cx.new(|cx| {
             let mut gallery = Gallery::new(now.date, window, cx);
@@ -203,9 +211,9 @@ impl Render for MainWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let width = gallery_width(&self.settings, window);
         let show_previous = self.settings.show_previous;
-        self.gallery.update(cx, |gallery, _| {
+        self.gallery.update(cx, |gallery, cx| {
             gallery.set_width(width, window.scale_factor());
-            gallery.set_show_previous(show_previous);
+            gallery.set_show_previous(show_previous, cx);
         });
         let theme = cx.theme();
         let c = &theme.colors;
@@ -235,7 +243,8 @@ impl Render for MainWindow {
                         body.child(settings::settings_column(self, window, cx))
                     }),
             )
-            // The bottom bar arrives in 4.4; until then the toast sits where it will be above it.
+            .child(bottom_bar::bottom_bar(self, cx))
+            // Absolute, so showing it moves nothing (DESIGN.md §2).
             .children(self.toast.get().cloned())
     }
 }

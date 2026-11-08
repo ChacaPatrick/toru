@@ -46,6 +46,8 @@ pub struct Button {
     check_mark: bool,
     expanded: Option<bool>,
     focus: Option<FocusHandle>,
+    /// `Some(false)` keeps the button out of the tab order (`tab_stop`).
+    tab_stop: Option<bool>,
     on_click: Option<Handler>,
     /// `Some` for a split button: what the sub is called for assistive technology.
     sub_name: Option<SharedString>,
@@ -68,6 +70,7 @@ impl Button {
             check_mark: false,
             expanded: None,
             focus: None,
+            tab_stop: None,
             on_click: None,
             sub_name: None,
             sub_menu: None,
@@ -166,6 +169,18 @@ impl Button {
         self
     }
 
+    /// Whether Tab reaches the button. A card's buttons are tab stops only while the card is the
+    /// gallery's current one, so Tab doesn't walk every control of every card (DESIGN.md §7).
+    pub fn tab_stop(mut self, tab_stop: bool) -> Button {
+        self.tab_stop = Some(tab_stop);
+        self
+    }
+
+    /// Whether `tab_stop` was set, and to what; a `Menu` applies it to the trigger it focuses.
+    pub(super) fn tab_stop_setting(&self) -> Option<bool> {
+        self.tab_stop
+    }
+
     /// Use `focus` instead of the button's own handle, to focus it from elsewhere.
     pub fn track_focus(mut self, focus: &FocusHandle) -> Button {
         self.focus = Some(focus.clone());
@@ -186,9 +201,12 @@ impl Styled for Button {
 
 impl RenderOnce for Button {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let focus = self
+        let mut focus = self
             .focus
             .unwrap_or_else(|| keyed_focus(window, cx, &self.id));
+        if let Some(tab_stop) = self.tab_stop {
+            focus = focus.tab_stop(tab_stop);
+        }
         let theme = cx.theme();
         let c = &theme.colors;
         let (bg, text, border, shadow) = if self.primary {

@@ -4,10 +4,12 @@
 //! Keyboard focus shows the ring from `DESIGN.md` §7: 3px of `focus` 3px outside the control, with
 //! `focus_halo` filling the gap. It is drawn as absolute children, so showing it never moves layout.
 //! Like CSS `:focus-visible`, a key press turns the ring on and a mouse press turns it off; moving
-//! the mouse changes nothing. (GPUI's own `last_input_was_keyboard` drops on a mouse move.) Each
-//! ring also notes where it was drawn, so a scrolling container can bring it into view
-//! (`FocusInView`). `init` binds the keys the controls handle as actions and starts watching for
-//! key presses.
+//! the mouse changes nothing. (GPUI's own `last_input_was_keyboard` drops on a mouse move.) A
+//! focused control also notes where its ring is, shown or not, so a scrolling container can bring
+//! it into view (`FocusInView`) when a key or assistive technology moved the focus; a mouse press
+//! already has the control under the pointer, and scrolling then would move it away before the
+//! release. `init` binds the keys the controls handle as actions and starts watching for key
+//! presses.
 
 mod button;
 mod chip;
@@ -15,6 +17,7 @@ mod fill;
 mod flash;
 mod icons;
 mod input;
+mod jump;
 mod menu;
 mod radio;
 mod segmented;
@@ -26,7 +29,8 @@ use std::{collections::HashSet, rc::Rc, sync::Arc};
 
 use gpui::{
     AnyElement, App, Bounds, BoxShadow, ElementId, FocusHandle, Global, KeyBinding, MouseDownEvent,
-    Pixels, Refineable, StyleRefinement, Window, WindowId, canvas, div, prelude::*, px,
+    MouseUpEvent, Pixels, Refineable, StyleRefinement, Window, WindowId, canvas, div, prelude::*,
+    px,
 };
 
 use crate::theme::Theme;
@@ -35,6 +39,7 @@ use crate::theme::Theme;
 pub use button::SUB_OPACITY;
 pub use button::{Button, SMALL_HEIGHT as BUTTON_SMALL_HEIGHT};
 pub use icons::Icon;
+pub use jump::{HEIGHT as JUMP_HEIGHT, Jump};
 pub use menu::Menu;
 pub use {
     chip::Chip, fill::fill, flash::Flash, input::TextField, radio::RadioGroup,
@@ -107,7 +112,14 @@ struct KeyboardFocus(HashSet<WindowId>);
 
 impl Global for KeyboardFocus {}
 
-/// Which control last drew the focus ring and where the ring's outer edge was, so a scrolling
+/// The windows where a mouse button is held down right now. Focus taken during a press came
+/// from the press, so `FocusInView` leaves it where it is.
+#[derive(Default)]
+struct MouseHeld(HashSet<WindowId>);
+
+impl Global for MouseHeld {}
+
+/// Which focused control last noted its place and where its ring's outer edge is, so a scrolling
 /// container can bring the control, ring and all, into view (`FocusInView`).
 #[derive(Default)]
 struct FocusRing(Option<(FocusHandle, Bounds<Pixels>)>);
@@ -117,8 +129,11 @@ impl Global for FocusRing {}
 /// Keeps a scrolling container's keyboard-focused control in view: GPUI's Tab and the arrow keys
 /// only move focus, so without this a control below the fold takes focus with no ring in sight.
 /// It scrolls once per focus change, the least that shows the whole ring, and leaves the user's
-/// own scrolling alone after that. The container's element must `track_focus` the handle from
-/// `focus`, which is how a focus inside it is told from one elsewhere; it is not a tab stop.
+/// own scrolling alone after that. A focus taken while a mouse button is held came from the
+/// press, so it is left alone too: the control is under the pointer already, and scrolling it
+/// away before the release would lose the click. The container's element must `track_focus` the
+/// handle from `focus`, which is how a focus inside it is told from one elsewhere; it is not a
+/// tab stop.
 pub struct FocusInView {
     focus: FocusHandle,
     /// What was focused inside the container at the last render, so a change of focus is told
@@ -150,11 +165,13 @@ impl FocusInView {
             .focused(cx)
             .filter(|focused| self.focus.contains(focused, window));
         if focused != self.last {
-            // A ring noted before the focus changed may be from before the user scrolled, so
-            // only one painted from now on counts. The control that paints it asks for another
-            // frame, and the scroll happens then.
+            // A place noted before the focus changed may be from before the user scrolled, so
+            // only one noted from now on counts. The control that notes it asks for another
+            // frame, and the scroll happens then. A key press counts even while a button is
+            // held, as Tab during a drag does; a press with no key counts for nothing.
             self.last = focused.clone();
-            self.pending = focused.is_some();
+            self.pending =
+                focused.is_some() && (keyboard_focus(window, cx) || !mouse_held(window, cx));
             cx.default_global::<FocusRing>().0 = None;
             return px(0.);
         }
@@ -181,8 +198,8 @@ impl FocusInView {
     }
 }
 
-/// Records where a focus ring was painted and, when the focus has moved since the last ring,
-/// asks for another frame so the control's container can scroll to it.
+/// Records where the focused control's ring is or would be and, when the focus has moved since
+/// the last note, asks for another frame so the control's container can scroll to it.
 fn note_focus_ring(bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
     let Some(focused) = window.focused(cx) else {
         return;
@@ -213,11 +230,28 @@ fn set_keyboard_focus(on: bool, window: &mut Window, cx: &mut App) {
     }
 }
 
-/// What a control draws for keyboard focus: the ring when `focused` and the last press was a key,
-/// and while the last press was a key, a zero-size watcher that turns the ring off at the next
-/// mouse press anywhere in the window. Every control draws the watcher, so the rule holds whatever
-/// view is the window's root.
-fn focus_marks(
+fn mouse_held(window: &Window, cx: &App) -> bool {
+    cx.try_global::<MouseHeld>()
+        .is_some_and(|held| held.0.contains(&window.window_handle().window_id()))
+}
+
+fn set_mouse_held(on: bool, window: &Window, cx: &mut App) {
+    let id = window.window_handle().window_id();
+    let windows = &mut cx.default_global::<MouseHeld>().0;
+    if on {
+        windows.insert(id);
+    } else {
+        windows.remove(&id);
+    }
+}
+
+/// What a control draws for focus: a zero-paint note of where it is whenever it is focused, so a
+/// scrolling container can bring it into view (`FocusInView`); a zero-size watcher that notes a
+/// mouse press anywhere in the window, which turns the ring off and, until the release, marks
+/// any focus taken as the press's own; and the ring when `focused` and the last press was a key.
+/// Every control draws the watcher, so the rules hold whatever view is the window's root. Public
+/// for the gallery's cards, which are focusable themselves.
+pub fn focus_marks(
     focused: bool,
     theme: &Theme,
     radius: Pixels,
@@ -225,8 +259,9 @@ fn focus_marks(
     window: &Window,
     cx: &App,
 ) -> Vec<AnyElement> {
-    if !keyboard_focus(window, cx) {
-        return Vec::new();
+    let mut marks = Vec::new();
+    if focused {
+        marks.push(focus_note(border));
     }
     let watcher = canvas(
         |_, _, _| (),
@@ -234,14 +269,20 @@ fn focus_marks(
             window.on_mouse_event(|_: &MouseDownEvent, phase, window, cx| {
                 if phase.capture() {
                     set_keyboard_focus(false, window, cx);
+                    set_mouse_held(true, window, cx);
+                }
+            });
+            window.on_mouse_event(|_: &MouseUpEvent, phase, window, cx| {
+                if phase.capture() {
+                    set_mouse_held(false, window, cx);
                 }
             });
         },
     )
     .absolute()
     .size_0();
-    let mut marks = vec![watcher.into_any_element()];
-    if focused {
+    marks.push(watcher.into_any_element());
+    if focused && keyboard_focus(window, cx) {
         marks.extend(focus_ring(theme, radius, border));
     }
     marks
@@ -257,10 +298,26 @@ fn ring_inset(offset: f32, border: Pixels) -> Pixels {
     px(-offset) - border
 }
 
+/// The size of the outer ring, which is what must be in view, noted where it was drawn
+/// (`FocusInView`) without painting anything.
+fn focus_note(border: Pixels) -> AnyElement {
+    let outer = ring_inset(RING_GAP, border);
+    canvas(
+        |_, _, _| (),
+        |bounds, (), window, cx| note_focus_ring(bounds, window, cx),
+    )
+    .absolute()
+    .top(outer)
+    .left(outer)
+    .right(outer)
+    .bottom(outer)
+    .into_any_element()
+}
+
 /// The ring and its halo, for a `relative()` control whose corners are rounded by `radius` and
-/// whose own border is `border` wide, plus a zero-paint child the size of the outer ring that
-/// notes where it was drawn (`FocusInView`). Every focused control draws all three.
-fn focus_ring(theme: &Theme, radius: Pixels, border: Pixels) -> [AnyElement; 3] {
+/// whose own border is `border` wide. `focus_marks` adds the note; a text field, which always
+/// shows its ring, draws these alone.
+fn focus_ring(theme: &Theme, radius: Pixels, border: Pixels) -> [AnyElement; 2] {
     let ring = |offset: f32, color| {
         let inset = ring_inset(offset, border);
         div()
@@ -278,20 +335,8 @@ fn focus_ring(theme: &Theme, radius: Pixels, border: Pixels) -> [AnyElement; 3] 
             .border(px(RING_WIDTH))
             .border_color(color)
     };
-    // The same size as the outer ring, so what it records is what must be in view.
-    let outer = ring_inset(RING_GAP, border);
-    let note = canvas(
-        |_, _, _| (),
-        |bounds, (), window, cx| note_focus_ring(bounds, window, cx),
-    )
-    .absolute()
-    .top(outer)
-    .left(outer)
-    .right(outer)
-    .bottom(outer);
     [
         ring(RING_GAP, theme.colors.focus).into_any_element(),
         ring(RING_WIDTH, theme.colors.focus_halo).into_any_element(),
-        note.into_any_element(),
     ]
 }

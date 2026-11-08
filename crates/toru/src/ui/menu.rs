@@ -131,7 +131,10 @@ impl RenderOnce for Menu {
 
         let open: Entity<bool> = window.use_keyed_state(child_id("open"), cx, |_, _| false);
         let is_open = *open.read(cx);
-        let trigger_focus = keyed_focus(window, cx, &self.id);
+        let mut trigger_focus = keyed_focus(window, cx, &self.id);
+        if let Some(tab_stop) = self.trigger.tab_stop_setting() {
+            trigger_focus = trigger_focus.tab_stop(tab_stop);
+        }
         let item_count = self
             .rows
             .iter()

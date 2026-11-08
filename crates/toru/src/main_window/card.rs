@@ -3,10 +3,14 @@
 //! thumbnail and at the top of the menu. The gallery's list needs every row's height before it
 //! is laid out, so `height` works a card's height out from the theme, and every card in a look
 //! gets the same height whatever its status, as DESIGN.md §2 asks.
+//!
+//! The card is focusable itself, for the gallery's arrow keys, and shows the §7 ring when it has
+//! keyboard focus. Only the gallery's current card and its controls are tab stops; a press
+//! anywhere on a card makes it the current one.
 
 use gpui::{
-    AnyElement, App, Context, ObjectFit, Pixels, Window, div, img, linear_color_stop,
-    linear_gradient, prelude::*, px,
+    AnyElement, App, Context, MouseButton, ObjectFit, Pixels, Role, Window, div, img,
+    linear_color_stop, linear_gradient, prelude::*, px,
 };
 use toru_core::time::LocalDate;
 
@@ -15,7 +19,9 @@ use super::{
     gallery::{Card, Gallery},
 };
 use crate::theme::{ActiveTheme, Theme, ThemedText, TypeStyle};
-use crate::ui::{BUTTON_SMALL_HEIGHT, Button, Chip, Menu, TextField, Tooltip, fill, shadowed};
+use crate::ui::{
+    BUTTON_SMALL_HEIGHT, Button, Chip, Menu, TextField, Tooltip, fill, focus_marks, shadowed,
+};
 
 const PADDING: f32 = 10.;
 const GAP: f32 = 8.;
@@ -105,16 +111,31 @@ pub fn file_size(bytes: u64) -> String {
     }
 }
 
-/// `position` is the card's place in its group, which chooses among the look's thumbnail fills;
-/// `earlier` marks a group whose session has ended.
+/// What varies between two cards of one capture: `earlier` marks a group whose session has
+/// ended, `copied` shows the check mark, and `active` makes the card and its controls the
+/// grid's tab stops.
+#[derive(Clone, Copy)]
+pub struct State {
+    pub earlier: bool,
+    pub copied: bool,
+    pub active: bool,
+}
+
+/// `position` is the card's place in its group, which chooses among the look's thumbnail fills.
 pub fn render(
     card: &Card,
     position: usize,
-    earlier: bool,
     today: LocalDate,
-    copied: bool,
+    state: State,
+    window: &Window,
     cx: &Context<Gallery>,
 ) -> AnyElement {
+    let State {
+        earlier,
+        copied,
+        active,
+    } = state;
+    let focus = card.focus.clone().tab_stop(active);
     let theme = cx.theme();
     let c = &theme.colors;
     let border = theme.borders.card;
@@ -124,6 +145,7 @@ pub fn render(
 
     let id = card.id;
     let copy = act(cx, move |this, cx| this.copy(id, cx));
+    let make_current = act(cx, move |this, cx| this.set_current(id, cx));
     let rename = {
         let name = card.name.clone();
         move |window: &mut Window, cx: &mut gpui::App| {
@@ -136,7 +158,9 @@ pub fn render(
     let menu = Menu::new(
         "more",
         "More actions",
-        Button::glyph_only("more-button", "⋯", "More").small(),
+        Button::glyph_only("more-button", "⋯", "More")
+            .small()
+            .tab_stop(active),
     )
     .header(size.clone())
     .item("Open in editor", |_, _| {})
@@ -150,7 +174,8 @@ pub fn render(
         Button::new("open-folder", "Open folder").small()
     } else {
         Button::new("save", "Save").small().primary()
-    };
+    }
+    .tab_stop(active);
     let actions = div()
         .flex()
         .flex_wrap()
@@ -160,6 +185,7 @@ pub fn render(
             Button::new("copy", "Copy")
                 .small()
                 .check_mark(copied)
+                .tab_stop(active)
                 .on_click(copy),
         )
         .child(second.on_click(|_, _| {}))
@@ -173,7 +199,14 @@ pub fn render(
         .child(Chip::new("status", if saved { "Saved ✓" } else { "Unsaved" }).saved(saved))
         .child(actions);
 
-    let card_element = div().id(("card", card.id));
+    let card_element = div()
+        .id(("card", card.id))
+        .role(Role::Group)
+        .aria_label(card.name.read(cx).value())
+        .track_focus(&focus)
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            make_current(window, cx)
+        });
     shadowed(card_element, &theme.shadows.card, radius)
         .relative()
         .flex_1()
@@ -194,9 +227,18 @@ pub fn render(
         .child(
             TextField::new(&card.name, "Screenshot name")
                 .height(px(NAME_HEIGHT))
+                .tab_stop(active)
                 .w_full(),
         )
         .child(status)
+        .children(focus_marks(
+            focus.is_focused(window),
+            theme,
+            radius,
+            border.width,
+            window,
+            cx,
+        ))
         .into_any_element()
 }
 

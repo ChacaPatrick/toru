@@ -20,6 +20,13 @@ pub const TODAY: LocalDate = LocalDate {
     day: 8,
 };
 
+/// The day the mock loading row says it is fetching: the one after the oldest group below.
+pub const LOADING_DAY: LocalDate = LocalDate {
+    year: 2026,
+    month: 10,
+    day: 29,
+};
+
 pub struct MockCapture {
     pub capture: Capture,
     pub bytes: u64,

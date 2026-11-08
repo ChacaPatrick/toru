@@ -35,7 +35,9 @@ impl RenderOnce for Toast {
         let c = &theme.colors;
         let border = theme.borders.toast;
         let font = theme.type_scale.toast;
-        // The row spans the window so the toast can sit at its centre; it takes no clicks.
+        // The row spans the window so the toast can sit at its centre; it takes no clicks. The
+        // toast itself lies over the gallery, so a press on it stops there rather than reaching
+        // a card beneath, while the wheel still scrolls the list.
         div()
             .absolute()
             .left_0()
@@ -46,6 +48,7 @@ impl RenderOnce for Toast {
             .child(
                 div()
                     .id("toast")
+                    .block_mouse_except_scroll()
                     .role(Role::Status)
                     .aria_label(self.message.clone())
                     .a11y_synthetic_children(|builder| {
