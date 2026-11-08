@@ -300,7 +300,7 @@ pub fn hint_chip(editor: &Editor, cx: &Context<Editor>) -> AnyElement {
                 .rounded(theme.radii.md)
                 .shadow(theme.shadows.pop.clone())
                 .type_style(theme, theme.type_scale.hint)
-                .child(editor.tool.hint()),
+                .child(editor.hint()),
         )
         .into_any_element()
 }

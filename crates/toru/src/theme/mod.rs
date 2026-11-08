@@ -24,7 +24,7 @@ use gpui::{
 use toru_core::settings::{BUILT_IN_PALETTES, Look, LookAppearance, PaletteChoice, Settings};
 
 pub use custom::CustomPalette;
-pub use fonts::install_fonts;
+pub use fonts::{FONTS, bundled_font, install_fonts};
 
 /// `Theme::palette` when the custom palette is shown: one past the built-in ones.
 pub const CUSTOM_PALETTE: usize = BUILT_IN_PALETTES;
@@ -259,6 +259,12 @@ impl Colors {
         ]
     }
 
+    /// The digits on a number badge: the mockups write `#fff` out for every look rather than
+    /// naming a token.
+    pub fn badge_text(&self) -> Hsla {
+        gpui::white()
+    }
+
     /// The on-states as the base CSS draws them: the accent fill with the accent text. A look
     /// whose `extra_css` pins them to other colours sets those after this.
     pub fn follow_accent(&mut self) {
@@ -431,7 +437,7 @@ impl Fonts {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Family {
     Display,
     Body,
@@ -550,7 +556,7 @@ pub struct TypeScale {
     pub readout: TypeStyle,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Case {
     AsWritten,
     Upper,

@@ -26,7 +26,7 @@ use toru_core::{
     store::{Store, StoreError},
 };
 
-use main_window::MainWindow;
+use main_window::{EditorStart, MainWindow};
 use shortcuts::Hotkeys;
 use theme::{Theme, install_fonts, set_theme};
 use tray::{Request, Tray};
@@ -36,15 +36,22 @@ const WINDOW_SIZE: (f32, f32) = (1280., 940.);
 /// Wide enough for three usable cards beside the open settings column; the toolbar wraps.
 const MIN_WINDOW_SIZE: (f32, f32) = (900., 480.);
 
-/// `toru [japandi|pixel_art|neo_brutalism] [palette|custom] [editor]` opens the window in that
-/// look and palette, and straight in the editor if asked, so each can be checked against the mockups
+/// `toru [japandi|pixel_art|neo_brutalism] [palette|custom] [editor [demo]]` opens the window in
+/// that look and palette, and straight in the editor if asked, with the sample marks of the
+/// Editor mockup on the picture if `demo` is given too, so each can be checked against the mockups
 /// without clicking through. It only changes what is shown, so the saved settings keep their own
 /// look until a look or palette is picked in settings, which saves what is shown.
-fn appearance_from_args(settings: &Settings) -> (Settings, bool) {
+fn appearance_from_args(settings: &Settings) -> (Settings, Option<EditorStart>) {
     let mut appearance = settings.clone();
     let mut args: Vec<String> = std::env::args().skip(1).collect();
-    let open_editor = args.iter().any(|arg| arg == "editor");
-    args.retain(|arg| arg != "editor");
+    let open_editor = args.iter().any(|arg| arg == "editor").then(|| {
+        if args.iter().any(|arg| arg == "demo") {
+            EditorStart::Demo
+        } else {
+            EditorStart::Plain
+        }
+    });
+    args.retain(|arg| arg != "editor" && arg != "demo");
     let mut args = args.into_iter();
     appearance.look = match args.next().as_deref() {
         Some("japandi") => Look::Japandi,
@@ -126,8 +133,8 @@ fn main() {
                 cx.new(|cx| {
                     let mut main = MainWindow::new(store, session, settings, hotkeys, window, cx);
                     main.clean_up_history(cx);
-                    if open_editor {
-                        main.open_newest_in_editor(cx);
+                    if let Some(start) = open_editor {
+                        main.open_newest_in_editor(start, cx);
                     }
                     main
                 })

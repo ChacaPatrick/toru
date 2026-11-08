@@ -143,6 +143,19 @@ pub struct MainWindow {
     shortcuts: Vec<Planned>,
     /// The Edit shortcuts dialog, while it is open (`shortcuts_dialog`).
     shortcuts_dialog: Option<ShortcutsDialog>,
+    /// The `editor` start-up argument asked for a card before history had loaded one; the first
+    /// card to arrive opens, as asked.
+    editor_awaits_history: Option<EditorStart>,
+    /// The next editor to open gets the mockup's sample marks.
+    demo_marks: bool,
+}
+
+/// How the `editor` start-up argument opens the editor.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EditorStart {
+    Plain,
+    /// With the sample marks of the Editor mockup placed on the picture.
+    Demo,
 }
 
 impl MainWindow {
@@ -227,6 +240,9 @@ impl MainWindow {
                 let error = gallery.read(cx).name_error_of(&name);
                 editor.update(cx, |editor, cx| editor.set_name_error(error, cx));
             }
+            if let Some(start) = this.editor_awaits_history {
+                this.open_newest_in_editor(start, cx);
+            }
         })
         .detach();
         let pattern =
@@ -292,6 +308,8 @@ impl MainWindow {
             hotkeys,
             shortcuts: Vec::new(),
             shortcuts_dialog: None,
+            editor_awaits_history: None,
+            demo_marks: false,
         };
         this.refresh_hotkeys(cx);
         this.announce_shortcut_problems(cx);
@@ -375,7 +393,14 @@ impl MainWindow {
         cx: &mut Context<Self>,
     ) {
         self.close_editor(window, cx);
-        let editor = cx.new(|cx| Editor::new(capture, name, base, cx));
+        let demo = std::mem::take(&mut self.demo_marks);
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::new(capture, name, base, cx);
+            if demo {
+                editor.add_demo_marks(cx);
+            }
+            editor
+        });
         cx.subscribe_in(
             &editor,
             window,
@@ -390,8 +415,9 @@ impl MainWindow {
         cx.notify();
     }
 
-    /// The `editor` start-up argument: straight into the editor on the newest card.
-    pub fn open_newest_in_editor(&mut self, cx: &mut Context<Self>) {
+    /// The `editor` start-up argument: straight into the editor on the newest card. History
+    /// loads after the window opens, so with no card yet the first to arrive is opened.
+    pub fn open_newest_in_editor(&mut self, start: EditorStart, cx: &mut Context<Self>) {
         let newest = self
             .gallery
             .read(cx)
@@ -399,7 +425,9 @@ impl MainWindow {
             .flat_map(|group| group.cards.first())
             .next()
             .map(|card| card.id);
+        self.editor_awaits_history = newest.is_none().then_some(start);
         if let Some(id) = newest {
+            self.demo_marks = start == EditorStart::Demo;
             self.open_editor(id, cx);
         }
     }

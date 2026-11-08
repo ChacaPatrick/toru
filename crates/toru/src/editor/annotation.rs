@@ -1,15 +1,18 @@
-//! The marks the drawing tools leave (DESIGN.md §5): arrows, lines, rectangles, ellipses, pen and
-//! highlighter trails. Each is a shape, its points in picture pixels and a style, and knows how
+//! The marks the tools leave (DESIGN.md §5): arrows, lines, rectangles, ellipses, pen and
+//! highlighter trails, which are dragged out, and text, number badges and stickers, which are
+//! placed with a click. Each is a shape, its points in picture pixels and a style, and knows how
 //! to draw itself with `tiny-skia`, where its handles are, how to move and resize, and whether a
 //! point hits it. Everything here is plain arithmetic on picture pixels, so the same code serves
 //! the canvas, the saved file and the tests.
 
 use gpui::{Bounds, Point, Size, point, size};
 use tiny_skia::{
-    BlendMode, Color, FilterQuality, IntRect, LineCap, LineJoin, Paint, Path, PathBuilder, Pixmap,
-    PixmapPaint, Rect, Stroke, StrokeDash, Transform,
+    BlendMode, Color, FillRule, FilterQuality, IntRect, LineCap, LineJoin, Paint, Path,
+    PathBuilder, Pixmap, PixmapPaint, Rect, Stroke, StrokeDash, Transform,
 };
 
+use super::sticker::{self, Part, Sticker};
+use super::text::{self, Font};
 use super::tools::{Head, LineStyle, Width};
 
 /// How many picture pixels wide the highlighter is for each `Width`, against the other tools' 1.
@@ -41,18 +44,59 @@ const ELLIPSE_HIT_ERROR: f32 = 0.5;
 /// pixel at a layer's edge a little differently from one inside, so the edge is kept out of
 /// sight and a region of the picture comes out the same as the whole.
 const LAYER_MARGIN: i32 = 2;
+/// How far past its line box text may paint, as a share of its size: a glyph's side bearing
+/// can be negative and a swash can rise above the ascent.
+const TEXT_OVERHANG: f32 = 0.25;
 
 /// How a mark is drawn: the panel's choices, with the swatch resolved to its colour.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Style {
+    /// The stroke, the text, a badge's disc or a sticker's fill.
     pub color: Color,
+    /// A badge's digits and a sticker's outline; the strokes and text have no use for it.
+    pub second: Color,
     pub width: Width,
     pub line: LineStyle,
     /// 0 to 1.
     pub opacity: f32,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// A text annotation's content and how it is set, in picture pixels.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Text {
+    pub content: String,
+    pub font: Font,
+    /// The font size in picture pixels.
+    pub size: f32,
+    /// Set in capitals, as NeoBrutalism's `.anno.text` is.
+    pub upper: bool,
+}
+
+impl Text {
+    /// The content as it is set: in capitals if the look asks.
+    pub fn shown(&self) -> String {
+        if self.upper {
+            self.content.to_uppercase()
+        } else {
+            self.content.clone()
+        }
+    }
+
+    fn layout(&self) -> text::Layout {
+        text::layout(&self.shown(), &self.font, self.size)
+    }
+}
+
+/// A number badge: a disc with its number in it.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Badge {
+    pub number: u32,
+    /// The disc's diameter in picture pixels; the digits are half as tall.
+    pub diameter: f32,
+    pub font: Font,
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub enum Shape {
     Arrow(Head),
     Line,
@@ -60,18 +104,58 @@ pub enum Shape {
     Ellipse,
     Pen,
     Highlighter,
+    /// Its point is the text's top-left corner.
+    Text(Text),
+    /// Its point is the disc's centre.
+    Number(Badge),
+    /// Its two points are the sticker's box, always square.
+    Sticker(Sticker),
+}
+
+/// A shape's kind alone, for what the panel shows and the options a tool keeps.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Kind {
+    Arrow,
+    Line,
+    Rectangle,
+    Ellipse,
+    Pen,
+    Highlighter,
+    Text,
+    Number,
+    Sticker,
 }
 
 impl Shape {
+    pub fn kind(&self) -> Kind {
+        match self {
+            Shape::Arrow(_) => Kind::Arrow,
+            Shape::Line => Kind::Line,
+            Shape::Rectangle => Kind::Rectangle,
+            Shape::Ellipse => Kind::Ellipse,
+            Shape::Pen => Kind::Pen,
+            Shape::Highlighter => Kind::Highlighter,
+            Shape::Text(_) => Kind::Text,
+            Shape::Number(_) => Kind::Number,
+            Shape::Sticker(_) => Kind::Sticker,
+        }
+    }
+
     /// Whether the mark is a trail of points rather than two ends.
-    pub fn is_trail(self) -> bool {
+    pub fn is_trail(&self) -> bool {
         matches!(self, Shape::Pen | Shape::Highlighter)
     }
 
     /// Whether the mark's two points are a line's ends, which the handles sit on, rather than a
     /// box's corners.
-    fn is_line(self) -> bool {
+    fn is_line(&self) -> bool {
         matches!(self, Shape::Arrow(_) | Shape::Line)
+    }
+
+    /// Whether the mark is placed with a click and has a size of its own, rather than dragged
+    /// out: text, a badge or a sticker.
+    pub fn is_placed(&self) -> bool {
+        matches!(self, Shape::Text(_) | Shape::Number(_) | Shape::Sticker(_))
     }
 }
 
@@ -122,20 +206,74 @@ impl Annotation {
         self.points.push(end);
     }
 
-    /// Whether the mark is big enough to keep: a click without a drag draws nothing.
-    pub fn is_drawn(&self) -> bool {
-        let bounds = self.bounds();
-        bounds.size.width >= 1. || bounds.size.height >= 1.
+    /// A text, badge or sticker placed with a click: text at its top-left corner, a badge and a
+    /// sticker centred on the click, the sticker `side` wide.
+    pub fn placed(shape: Shape, at: Point<f32>, side: f32, style: Style) -> Annotation {
+        let points = match &shape {
+            Shape::Sticker(_) => vec![
+                point(at.x - side / 2., at.y - side / 2.),
+                point(at.x + side / 2., at.y + side / 2.),
+            ],
+            _ => vec![at],
+        };
+        Annotation {
+            shape,
+            points,
+            style,
+        }
     }
 
-    /// The box around the mark's points.
+    /// Whether the mark is big enough to keep: a click without a drag draws nothing, but a
+    /// placed mark has its own size.
+    pub fn is_drawn(&self) -> bool {
+        let bounds = self.bounds();
+        self.shape.is_placed() || bounds.size.width >= 1. || bounds.size.height >= 1.
+    }
+
+    /// The box around the mark: its points, or what a placed mark takes up.
     pub fn bounds(&self) -> Bounds<f32> {
-        let (mut min, mut max) = (self.points[0], self.points[0]);
-        for p in &self.points {
-            min = point(min.x.min(p.x), min.y.min(p.y));
-            max = point(max.x.max(p.x), max.y.max(p.y));
+        match &self.shape {
+            Shape::Text(text) => Bounds::new(self.points[0], text.layout().size),
+            Shape::Number(badge) => {
+                let r = badge.diameter / 2.;
+                Bounds::new(
+                    point(self.points[0].x - r, self.points[0].y - r),
+                    size(badge.diameter, badge.diameter),
+                )
+            }
+            _ => {
+                let (mut min, mut max) = (self.points[0], self.points[0]);
+                for p in &self.points {
+                    min = point(min.x.min(p.x), min.y.min(p.y));
+                    max = point(max.x.max(p.x), max.y.max(p.y));
+                }
+                Bounds::new(min, size(max.x - min.x, max.y - min.y))
+            }
         }
-        Bounds::new(min, size(max.x - min.x, max.y - min.y))
+    }
+
+    /// The text of a text mark, to show or edit.
+    pub fn text(&self) -> Option<&Text> {
+        match &self.shape {
+            Shape::Text(text) => Some(text),
+            _ => None,
+        }
+    }
+
+    /// The text mark with `content` in place of its own.
+    pub fn with_content(&self, content: String) -> Annotation {
+        let mut out = self.clone();
+        if let Shape::Text(text) = &mut out.shape {
+            text.content = content;
+        }
+        out
+    }
+
+    /// Where the caret stands after a text mark's last character: its top, and its height, in
+    /// picture pixels.
+    pub fn caret(&self) -> Option<(Point<f32>, f32)> {
+        let layout = self.text()?.layout();
+        Some((self.points[0] + layout.caret, layout.line_height))
     }
 
     /// Where the handles are: a line's two ends, else the four corners of the box, top-left,
@@ -153,18 +291,63 @@ impl Annotation {
         ]
     }
 
-    /// The mark shifted by `delta`; `constrain` is Shift, which keeps the move to a multiple of
-    /// 45°.
-    pub fn moved(&self, delta: Point<f32>, constrain: bool) -> Annotation {
+    /// The mark shifted by `delta`, kept within a picture `within` big. `constrain` is Shift,
+    /// which keeps the move to a multiple of 45°: a snapped move that would leave the picture is
+    /// cut short along its direction, where a free one slides along the edge.
+    pub fn moved(&self, delta: Point<f32>, constrain: bool, within: Size<f32>) -> Annotation {
+        let b = self.bounds();
+        // How far the box may go each way on each axis without leaving the picture.
+        let (left, right) = (-b.left(), within.width - b.right());
+        let (up, down) = (-b.top(), within.height - b.bottom());
         let delta = if constrain {
-            snap_angle(point(0., 0.), delta)
+            let delta = snap_angle(point(0., 0.), delta);
+            let room = |d: f32, back: f32, forward: f32| {
+                if d > 0. {
+                    forward.max(0.) / d
+                } else if d < 0. {
+                    back.min(0.) / d
+                } else {
+                    1.
+                }
+            };
+            let t = room(delta.x, left, right)
+                .min(room(delta.y, up, down))
+                .clamp(0., 1.);
+            point(delta.x * t, delta.y * t)
         } else {
-            delta
+            // A box bigger than the picture has no room either way and moves freely.
+            let held = |d: f32, back: f32, forward: f32| {
+                if back <= forward {
+                    d.clamp(back, forward)
+                } else {
+                    d
+                }
+            };
+            point(held(delta.x, left, right), held(delta.y, up, down))
         };
         Annotation {
             points: self.points.iter().map(|p| *p + delta).collect(),
             ..self.clone()
         }
+    }
+
+    /// A placed mark scaled to fill `b`, which keeps its proportions: text by its font size, a
+    /// badge by its diameter, a sticker by its box.
+    fn fitted_to(&self, b: Bounds<f32>) -> Annotation {
+        let old = self.bounds();
+        let mut out = self.clone();
+        match &mut out.shape {
+            Shape::Text(text) => {
+                text.size *= b.size.width / old.size.width;
+                out.points = vec![b.origin];
+            }
+            Shape::Number(badge) => {
+                badge.diameter = b.size.width;
+                out.points = vec![b.center()];
+            }
+            _ => out.points = vec![b.origin, b.bottom_right()],
+        }
+        out
     }
 
     /// The mark with handle `handle` dragged to `to`: a line's end moves, a box's corner moves
@@ -201,6 +384,18 @@ impl Annotation {
             if left { old.right() } else { old.left() },
             if top { old.bottom() } else { old.top() },
         );
+        if self.shape.is_placed() {
+            // A placed mark keeps its proportions, Shift or not; text with nothing in it yet has
+            // no width to scale by.
+            if old.size.width < 1. || old.size.height < 1. {
+                return self.clone();
+            }
+            let to = fit(anchor, proportional(anchor, to, old.size), within);
+            return self.fitted_to(Bounds::from_corners(
+                point(anchor.x.min(to.x), anchor.y.min(to.y)),
+                point(anchor.x.max(to.x), anchor.y.max(to.y)),
+            ));
+        }
         if !self.shape.is_trail() {
             let to = if constrain {
                 fit(anchor, square(anchor, to), within)
@@ -248,6 +443,19 @@ impl Annotation {
     /// segments the mark is drawn from, so an arrow's head counts as well as its shaft. The
     /// ellipse is tested against a polygon fine enough to pass for the curve.
     pub fn hit(&self, at: Point<f32>, tolerance: f32) -> bool {
+        if let Shape::Number(badge) = &self.shape {
+            let c = self.points[0];
+            return ((at.x - c.x).powi(2) + (at.y - c.y).powi(2)).sqrt()
+                <= badge.diameter / 2. + tolerance;
+        }
+        if self.shape.is_placed() {
+            // Text and stickers are solid: anywhere in their box picks them.
+            let b = self.bounds();
+            return at.x >= b.left() - tolerance
+                && at.x <= b.right() + tolerance
+                && at.y >= b.top() - tolerance
+                && at.y <= b.bottom() + tolerance;
+        }
         let reach = tolerance + self.pixel_width() / 2.;
         let outline = if self.shape == Shape::Ellipse {
             let b = self.bounds();
@@ -267,21 +475,35 @@ impl Annotation {
             .any(|(points, closed)| polyline_distance(at, points, *closed) <= reach)
     }
 
-    /// The stroke's width in picture pixels.
+    /// The stroke's width in picture pixels; a placed mark has none.
     pub fn pixel_width(&self) -> f32 {
         let widths = match self.shape {
             Shape::Highlighter => HIGHLIGHTER_WIDTHS,
+            _ if self.shape.is_placed() => 0.,
             _ => 1.,
         };
         self.style.width.pixels() * widths
     }
 
     /// How far past its points the mark may paint: half its stroke, and an arrow's head, the
-    /// curl of a curly shaft and the sketchy wobble, with a pixel over for anti-aliasing.
+    /// curl of a curly shaft and the sketchy wobble, with a pixel over for anti-aliasing. Text
+    /// may overhang its line box by a little of its size; a sticker by half its outline.
     pub fn reach(&self) -> f32 {
-        let width = self.pixel_width();
-        let head = (width * HEAD_WIDTHS).max(HEAD_MIN) * LONG_HEAD;
-        width / 2. + head + CURL_AMPLITUDE + SKETCH_AMPLITUDE + 1.
+        match &self.shape {
+            Shape::Text(text) => text.size * TEXT_OVERHANG + 1.,
+            Shape::Number(_) => 1.,
+            Shape::Sticker(_) => self.sticker_unit() * sticker::OUTLINE / 2. + 1.,
+            _ => {
+                let width = self.pixel_width();
+                let head = (width * HEAD_WIDTHS).max(HEAD_MIN) * LONG_HEAD;
+                width / 2. + head + CURL_AMPLITUDE + SKETCH_AMPLITUDE + 1.
+            }
+        }
+    }
+
+    /// A sticker's design unit in picture pixels: its box over the design box.
+    fn sticker_unit(&self) -> f32 {
+        self.bounds().size.width / sticker::UNITS
     }
 
     /// The whole pixels the mark may paint.
@@ -321,7 +543,7 @@ impl Annotation {
         let Some(mut layer) = Pixmap::new(rect.width(), rect.height()) else {
             return;
         };
-        self.stroke(
+        self.paint(
             &mut layer,
             Transform::from_translate(-rect.x() as f32, -rect.y() as f32),
         );
@@ -344,13 +566,73 @@ impl Annotation {
         );
     }
 
-    /// Strokes the mark's paths opaque onto `layer`, through `transform`.
-    fn stroke(&self, layer: &mut Pixmap, transform: Transform) {
+    /// Paints the mark opaque onto `layer`, through `transform`: a stroke's paths stroked, text
+    /// and a badge filled, a sticker's parts each its own way.
+    fn paint(&self, layer: &mut Pixmap, transform: Transform) {
         let mut paint = Paint {
             anti_alias: true,
             ..Paint::default()
         };
         paint.set_color(self.style.color);
+        let mut second = paint.clone();
+        second.set_color(self.style.second);
+        let fill = |layer: &mut Pixmap, path: &Path, paint: &Paint| {
+            layer.fill_path(path, paint, FillRule::Winding, transform, None);
+        };
+        match &self.shape {
+            Shape::Text(text) => {
+                if let Some(path) =
+                    text::outline(&text.shown(), &text.font, text.size, self.points[0])
+                {
+                    fill(layer, &path, &paint);
+                }
+                return;
+            }
+            Shape::Number(badge) => {
+                let c = self.points[0];
+                if let Some(disc) = PathBuilder::from_circle(c.x, c.y, badge.diameter / 2.) {
+                    fill(layer, &disc, &paint);
+                }
+                // The digits, half the disc tall, centred on it as the mockup's flex box does.
+                let digits = badge.number.to_string();
+                let size = badge.diameter / 2.;
+                let layout = text::layout(&digits, &badge.font, size);
+                let origin = point(c.x - layout.size.width / 2., c.y - layout.size.height / 2.);
+                if let Some(path) = text::outline(&digits, &badge.font, size, origin) {
+                    fill(layer, &path, &second);
+                }
+                return;
+            }
+            Shape::Sticker(sticker) => {
+                let unit = self.sticker_unit();
+                let line = |width: f32| Stroke {
+                    width: width * unit,
+                    line_cap: LineCap::Round,
+                    line_join: LineJoin::Round,
+                    ..Stroke::default()
+                };
+                for (path, part) in sticker.parts(self.bounds()) {
+                    match part {
+                        Part::Body => {
+                            fill(layer, &path, &paint);
+                            layer.stroke_path(
+                                &path,
+                                &second,
+                                &line(sticker::OUTLINE),
+                                transform,
+                                None,
+                            );
+                        }
+                        Part::Mark => {
+                            layer.stroke_path(&path, &second, &line(sticker::MARK), transform, None)
+                        }
+                        Part::Dot => fill(layer, &path, &second),
+                    }
+                }
+                return;
+            }
+            _ => {}
+        }
         let width = self.pixel_width();
         let mut stroke = Stroke {
             width,
@@ -405,9 +687,9 @@ impl Annotation {
     /// wobbles and what the solid and dashed styles draw as they are.
     fn polylines(&self) -> Vec<(Vec<Point<f32>>, bool)> {
         let b = self.bounds();
-        match self.shape {
+        match &self.shape {
             Shape::Line => vec![(self.points.clone(), false)],
-            Shape::Arrow(head) => arrow(self.points[0], self.points[1], head, self.pixel_width()),
+            Shape::Arrow(head) => arrow(self.points[0], self.points[1], *head, self.pixel_width()),
             Shape::Rectangle => vec![(
                 vec![
                     b.origin,
@@ -419,6 +701,7 @@ impl Annotation {
             )],
             Shape::Ellipse => vec![(ellipse(b, ELLIPSE_SIDES), true)],
             Shape::Pen | Shape::Highlighter => vec![(self.points.clone(), false)],
+            Shape::Text(_) | Shape::Number(_) | Shape::Sticker(_) => vec![],
         }
     }
 }
@@ -691,6 +974,7 @@ mod tests {
     fn style(line: LineStyle) -> Style {
         Style {
             color: Color::from_rgba8(200, 0, 0, 255),
+            second: Color::WHITE,
             width: Width::Medium,
             line,
             opacity: 1.,
@@ -832,12 +1116,12 @@ mod tests {
 
     #[test]
     fn moving_shifts_every_point_and_shift_keeps_it_to_45_degrees() {
-        let line = mark(Shape::Line, (0., 0.), (10., 10.));
-        let moved = line.moved(point(5., -5.), false);
-        assert_eq!(moved.points, vec![point(5., -5.), point(15., 5.)]);
-        let constrained = line.moved(point(20., 3.), true);
-        assert!((constrained.points[0].y).abs() < 1e-3);
-        assert!((constrained.points[0].x - (400f32 + 9.).sqrt()).abs() < 1e-3);
+        let line = mark(Shape::Line, (10., 10.), (20., 20.));
+        let moved = line.moved(point(5., -5.), false, PICTURE);
+        assert_eq!(moved.points, vec![point(15., 5.), point(25., 15.)]);
+        let constrained = line.moved(point(20., 3.), true, PICTURE);
+        assert!((constrained.points[0].y - 10.).abs() < 1e-3);
+        assert!((constrained.points[0].x - 10. - (400f32 + 9.).sqrt()).abs() < 1e-3);
     }
 
     #[test]
@@ -984,7 +1268,8 @@ mod tests {
         // shifted by the move.
         let moved = {
             let mut picture = white(130, 40);
-            let mut line = mark(Shape::Line, (10., 15.), (110., 15.)).moved(point(7., 3.), false);
+            let mut line =
+                mark(Shape::Line, (10., 15.), (110., 15.)).moved(point(7., 3.), false, PICTURE);
             line.style.line = LineStyle::Sketchy;
             line.draw(&mut picture);
             picture
@@ -1146,21 +1431,23 @@ mod tests {
         assert!(is_red(&picture, 10, 10));
     }
 
-    /// Writes every shape in every style to the PNG named by `TORU_SAMPLE_SHEET`, for looking at
-    /// the drawing by eye and for pull request screenshots. Run with `--ignored`.
+    /// Writes every shape in every style, with text in each bundled face, badges and the
+    /// stickers, to the PNG named by `TORU_SAMPLE_SHEET`, for looking at the drawing by eye.
+    /// Run with `--ignored`.
     #[test]
     #[ignore]
     fn writes_a_sample_sheet() {
         let Some(path) = std::env::var_os("TORU_SAMPLE_SHEET") else {
             return;
         };
-        let mut picture = white(760, 470);
+        let mut picture = white(760, 640);
         let ink = Color::from_rgba8(0x2b, 0x2a, 0x26, 255);
         let red = Color::from_rgba8(0x7a, 0x5c, 0x3e, 255);
         let blue = Color::from_rgba8(0x2e, 0x86, 0xde, 255);
         let yellow = Color::from_rgba8(0xf1, 0xc4, 0x0f, 255);
         let styled = |color, width, line, opacity| Style {
             color,
+            second: Color::WHITE,
             width,
             line,
             opacity,
@@ -1181,8 +1468,11 @@ mod tests {
                 let y = 20. + row as f32 * 60.;
                 let color = [ink, red, blue][column];
                 let width = Width::ALL[row % 3];
-                let mut mark =
-                    Annotation::new(*shape, point(x, y + 36.), styled(color, width, *line, 1.));
+                let mut mark = Annotation::new(
+                    shape.clone(),
+                    point(x, y + 36.),
+                    styled(color, width, *line, 1.),
+                );
                 mark.extend(point(x + 200., y + 4.), false, PICTURE);
                 mark.draw(&mut picture);
             }
@@ -1211,15 +1501,225 @@ mod tests {
             styled(yellow, Width::Medium, LineStyle::Solid, 0.5),
         );
         highlighter.extend(point(740., 445.), false, PICTURE);
-        let mut text = Annotation::new(
+        let mut underline = Annotation::new(
             Shape::Line,
             point(410., 445.),
             styled(ink, Width::Thin, LineStyle::Dashed, 1.),
         );
-        text.extend(point(730., 445.), false, PICTURE);
-        text.draw(&mut picture);
+        underline.extend(point(730., 445.), false, PICTURE);
+        underline.draw(&mut picture);
         highlighter.draw(&mut picture);
+        // Text in each bundled family, at the mockup's size and double it.
+        let mut x = 20.;
+        for font in crate::theme::FONTS.iter().step_by(2) {
+            let mut label = text("Total", (x, 470.), 16.);
+            if let Shape::Text(t) = &mut label.shape {
+                t.font = Font {
+                    family: font.family.into(),
+                    weight: font.weight,
+                };
+            }
+            label.style.color = red;
+            label.draw(&mut picture);
+            x += label.bounds().size.width + 24.;
+        }
+        let mut big = text("Wrong 123", (20., 500.), 32.);
+        big.style.color = ink;
+        big.draw(&mut picture);
+        for n in 1..=3 {
+            let mut badge = badge(n, (300. + n as f32 * 40., 520.), 28.);
+            badge.style.color = red;
+            badge.draw(&mut picture);
+        }
+        let fill = Color::from_rgba8(0xc4, 0x85, 0x5a, 255);
+        for (i, kind) in Sticker::ALL.iter().enumerate() {
+            let mut sticker = sticker(*kind, (50. + i as f32 * 64., 590.), 56.);
+            sticker.style.color = fill;
+            sticker.style.second = ink;
+            sticker.draw(&mut picture);
+        }
         picture.save_png(path).unwrap();
+    }
+
+    fn inter() -> Font {
+        Font {
+            family: "Inter".into(),
+            weight: gpui::FontWeight::SEMIBOLD,
+        }
+    }
+
+    fn text(content: &str, at: (f32, f32), size: f32) -> Annotation {
+        let shape = Shape::Text(Text {
+            content: content.into(),
+            font: inter(),
+            size,
+            upper: false,
+        });
+        Annotation::placed(shape, point(at.0, at.1), 0., style(LineStyle::Solid))
+    }
+
+    fn badge(number: u32, at: (f32, f32), diameter: f32) -> Annotation {
+        let shape = Shape::Number(Badge {
+            number,
+            diameter,
+            font: inter(),
+        });
+        Annotation::placed(shape, point(at.0, at.1), 0., style(LineStyle::Solid))
+    }
+
+    fn sticker(kind: Sticker, at: (f32, f32), side: f32) -> Annotation {
+        Annotation::placed(
+            Shape::Sticker(kind),
+            point(at.0, at.1),
+            side,
+            style(LineStyle::Solid),
+        )
+    }
+
+    #[test]
+    fn a_shift_move_near_the_edge_keeps_its_angle() {
+        let picture = size(1000., 600.);
+        let rect = mark(Shape::Rectangle, (900., 100.), (950., 150.));
+        // Only 50 fit to the right, so the 45° move stops at 50 on both axes.
+        let moved = rect.moved(point(100., 100.), true, picture);
+        assert_eq!(moved.bounds().origin, point(950., 150.));
+        // A free move slides along the edge instead.
+        let slid = rect.moved(point(100., 100.), false, picture);
+        assert_eq!(slid.bounds().origin, point(950., 200.));
+        // Pulled far up and left, the move stops where the box meets the top, still at 45°.
+        let back = rect.moved(point(-1000., -1000.), true, picture);
+        assert_eq!(back.bounds().origin, point(800., 0.));
+        // Within the picture, a snapped move is the snapped move.
+        let free = rect.moved(point(-20., -3.), true, picture);
+        assert!((free.bounds().origin.x - (900. - (400f32 + 9.).sqrt())).abs() < 1e-3);
+        assert!((free.bounds().origin.y - 100.).abs() < 1e-3);
+    }
+
+    #[test]
+    fn placed_marks_have_their_own_size_and_are_hit_inside() {
+        let text = text("Hi", (10., 20.), 16.);
+        assert!(text.is_drawn());
+        let b = text.bounds();
+        assert_eq!(b.origin, point(10., 20.));
+        assert!(b.size.width > 10. && b.size.height > 16.);
+        assert!(text.hit(b.center(), 0.));
+        assert!(!text.hit(point(b.right() + 5., b.center().y), 2.));
+        assert_eq!(text.handles().len(), 4);
+        let (caret, height) = text.caret().unwrap();
+        assert_eq!(caret, point(b.right(), 20.));
+        assert_eq!(height, b.size.height);
+        // Empty text still has a line of height, and a caret at its corner.
+        let empty = text.with_content(String::new());
+        assert!(empty.is_drawn());
+        assert_eq!(empty.bounds().size.width, 0.);
+        assert_eq!(empty.caret().unwrap().0, point(10., 20.));
+        let badge = badge(3, (50., 50.), 28.);
+        assert_eq!(badge.bounds(), Bounds::new(point(36., 36.), size(28., 28.)));
+        // 14 from the centre is in; the corner of its box at 14.1 is not.
+        assert!(badge.hit(point(59., 59.), 0.));
+        assert!(!badge.hit(point(60., 60.), 0.));
+        assert!(badge.hit(point(63., 63.), 6.));
+        let sticker = sticker(Sticker::Check, (100., 100.), 64.);
+        assert_eq!(
+            sticker.bounds(),
+            Bounds::new(point(68., 68.), size(64., 64.))
+        );
+        assert!(sticker.hit(point(70., 130.), 0.));
+    }
+
+    #[test]
+    fn placed_marks_resize_in_proportion_from_the_opposite_corner() {
+        let text = text("Hello", (10., 10.), 16.);
+        let b = text.bounds();
+        // The bottom-right handle dragged to twice the width: the size doubles, the top-left
+        // stays, and the height follows.
+        let bigger = text.resized(
+            3,
+            point(10. + b.size.width * 2., 10. + b.size.height * 2.),
+            false,
+            PICTURE,
+        );
+        assert_eq!(bigger.text().unwrap().size, 32.);
+        assert_eq!(bigger.bounds().origin, point(10., 10.));
+        assert!((bigger.bounds().size.height - b.size.height * 2.).abs() < 0.01);
+        // The top-left handle keeps the bottom-right still.
+        let smaller = text.resized(0, point(10. + b.size.width / 2., 0.), true, PICTURE);
+        assert_eq!(smaller.bounds().bottom_right(), b.bottom_right());
+        assert_eq!(smaller.text().unwrap().size, 8.);
+        // Empty text has nothing to scale by and stays as it is.
+        let empty = text.with_content(String::new());
+        assert_eq!(empty.resized(3, point(100., 100.), false, PICTURE), empty);
+        let badge = badge(1, (50., 50.), 20.);
+        let grown = badge.resized(3, point(80., 70.), false, PICTURE);
+        assert_eq!(grown.bounds(), Bounds::new(point(40., 40.), size(30., 30.)));
+        let sticker = sticker(Sticker::Cross, (50., 50.), 20.);
+        // Dragged 60 right but only 30 up, the square follows the shorter axis.
+        let grown = sticker.resized(1, point(100., 30.), false, PICTURE);
+        assert_eq!(grown.bounds(), Bounds::new(point(40., 30.), size(30., 30.)));
+        // Moving shifts a placed mark like any other.
+        assert_eq!(
+            badge.moved(point(5., 5.), false, PICTURE).points,
+            vec![point(55., 55.)]
+        );
+    }
+
+    #[test]
+    fn text_a_badge_and_a_sticker_draw_in_their_colours() {
+        let mut picture = white(120, 60);
+        text("Hello", (5., 5.), 24.).draw(&mut picture);
+        let b = text("Hello", (5., 5.), 24.).bounds();
+        let inked = (0..120)
+            .flat_map(|x| (0..60).map(move |y| (x, y)))
+            .filter(|(x, y)| is_red(&picture, *x, *y))
+            .collect::<Vec<_>>();
+        assert!(inked.len() > 50);
+        assert!(inked.iter().all(|(x, y)| {
+            (*x as f32) >= b.left() - 1.
+                && (*x as f32) <= b.right() + 1.
+                && (*y as f32) <= b.bottom() + 1.
+        }));
+        // The badge is a red disc with white digits in the middle.
+        let mut picture = white(60, 60);
+        badge(1, (30., 30.), 28.).draw(&mut picture);
+        assert!(is_red(&picture, 20, 30));
+        assert!(is_white(&picture, 2, 2));
+        assert!((26..35).any(|x| {
+            let p = picture.pixel(x, 30).unwrap();
+            p.red() > 200 && p.green() > 200
+        }));
+        // Capitals when asked.
+        let lower = text("ab", (0., 0.), 20.).bounds().size.width;
+        let mut upper = text("ab", (0., 0.), 20.);
+        if let Shape::Text(t) = &mut upper.shape {
+            t.upper = true;
+        }
+        assert!(upper.bounds().size.width > lower);
+        // A sticker fills with its colour, outlined in the second.
+        let mut picture = white(80, 80);
+        let mut hand = sticker(Sticker::Hand(0), (40., 40.), 64.);
+        hand.style.second = Color::from_rgba8(0, 0, 255, 255);
+        hand.draw(&mut picture);
+        assert!(is_red(&picture, 40, 55), "the fist is filled");
+        assert!(is_white(&picture, 70, 20), "nothing outside the hand");
+        let blue = (0..80)
+            .flat_map(|x| (0..80).map(move |y| (x, y)))
+            .filter(|(x, y)| {
+                let p = picture.pixel(*x, *y).unwrap();
+                p.blue() > 150 && p.red() < 100
+            })
+            .count();
+        assert!(blue > 50, "the outline shows");
+        let mut picture = white(80, 80);
+        sticker(Sticker::Warning, (40., 40.), 64.).draw(&mut picture);
+        // Above the exclamation mark the triangle is solid; at design (12, 17.6) the mark's dot
+        // is in the second colour, here white.
+        assert!(is_red(&picture, 40, 23), "the triangle is filled");
+        assert!(is_red(&picture, 30, 52), "the triangle is filled");
+        assert!(
+            is_white(&picture, 40, 55),
+            "the exclamation is in the second colour"
+        );
+        assert!(is_white(&picture, 40, 75), "nothing below the triangle");
     }
 
     #[test]

@@ -346,6 +346,7 @@ mod tests {
             gpui::point(from, y),
             Style {
                 color: Color::from_rgba8(255, 0, 0, 255),
+                second: Color::WHITE,
                 width: Width::Medium,
                 line: LineStyle::Solid,
                 opacity: 1.,

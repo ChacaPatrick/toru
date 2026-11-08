@@ -1,12 +1,14 @@
 //! The left context panel (DESIGN.md §5): the active tool's options in labelled groups. A
-//! drawing tool shows the groups its shape needs; Select shows the selected mark's, and changing
+//! tool shows the groups its kind of mark needs; Select shows the selected mark's, and changing
 //! one changes the mark. Later sections add their tools' groups here.
 
-use gpui::{AnyElement, Context, Div, ElementId, Hsla, Pixels, div, prelude::*, px};
+use gpui::{
+    AnyElement, Context, Div, ElementId, Hsla, Pixels, SharedString, div, img, prelude::*, px,
+};
 use gpui_kit::component::scroll::ScrollableElement;
 
-use super::{Editor, act, chrome, on, tools::*};
-use crate::theme::{ActiveTheme, Theme, ThemedText};
+use super::{Editor, TRAY_ICON, act, chrome, on, sticker::Sticker, tools::*};
+use crate::theme::{ActiveTheme, Family, Theme, ThemedText};
 use crate::ui::{Choices, MIN_TARGET, Pressable, Slider};
 
 pub const WIDTH: f32 = 200.;
@@ -29,6 +31,10 @@ const OPTION_GAP: f32 = 6.;
 const SWATCH_HIT: f32 = (MIN_TARGET - SWATCH) / 2.;
 const OPTION_HIT: f32 = (MIN_TARGET - OPTION_HEIGHT) / 2.;
 const WIDTH_BAR: f32 = 14.;
+/// A sticker's tile in the tray: §7's target, with the sticker drawn `TRAY_ICON` big in it.
+const STICKER_TILE: f32 = MIN_TARGET;
+/// The font options, in the panel's order.
+const FAMILIES: [Family; 2] = [Family::Display, Family::Body];
 
 /// The panel for the active tool, or nothing for a tool with no options yet. It is as tall as
 /// its groups need, up to the room above the zoom corner, and scrolls past that; a control that
@@ -38,7 +44,7 @@ pub fn panel(editor: &Editor, cx: &Context<Editor>) -> Option<AnyElement> {
     let (options, shown) = editor.panel_options(theme)?;
     let groups = shown
         .iter()
-        .map(|group| stroke_group(*group, options, theme, cx));
+        .map(|group| stroke_group(*group, options, editor, theme, cx));
     let pop = theme.borders.pop;
     let content = div()
         .id("panel-scroll")
@@ -81,7 +87,13 @@ fn max_height(canvas_height: Pixels) -> Pixels {
 }
 
 /// One of the panel's groups, showing `options` and changing them through the editor.
-fn stroke_group(which: Group, options: StrokeOptions, theme: &Theme, cx: &Context<Editor>) -> Div {
+fn stroke_group(
+    which: Group,
+    options: StrokeOptions,
+    editor: &Editor,
+    theme: &Theme,
+    cx: &Context<Editor>,
+) -> Div {
     let control: AnyElement = match which {
         Group::Stroke => {
             let swatch_count = theme.colors.stroke_swatches().len();
@@ -150,6 +162,72 @@ fn stroke_group(which: Group, options: StrokeOptions, theme: &Theme, cx: &Contex
             this.set_option(cx, |o| o.style = LineStyle::ALL[i])
         }))
         .into_any_element(),
+        // Each face is named in itself, so the choice shows what it does, at the label size:
+        // the display faces are wide, and the panel is narrow.
+        Group::Font => Choices::new(
+            "font",
+            "Font",
+            FAMILIES.len(),
+            index_of(&FAMILIES, options.font),
+            |i, on, theme| {
+                let name = theme.fonts.family(FAMILIES[i]);
+                option(theme, ("font", i), name.clone(), on).child(
+                    div()
+                        .font_family(name.clone())
+                        .text_size(theme.type_scale.label.size)
+                        .child(name),
+                )
+            },
+        )
+        .flex_wrap()
+        .gap(px(OPTION_GAP))
+        .on_change(act(cx, |this, i, cx| {
+            this.set_option(cx, |o| o.font = FAMILIES[i])
+        }))
+        .into_any_element(),
+        Group::Size => Choices::new(
+            "size",
+            "Size",
+            TextSize::ALL.len(),
+            index_of(&TextSize::ALL, options.size),
+            |i, on, theme| {
+                let size = TextSize::ALL[i];
+                option(theme, ("size", i), size.label(), on).child(size.glyph())
+            },
+        )
+        .gap(px(OPTION_GAP))
+        .on_change(act(cx, |this, i, cx| {
+            this.set_option(cx, |o| o.size = TextSize::ALL[i])
+        }))
+        .into_any_element(),
+        Group::Sticker => {
+            let images: Vec<_> = (0..Sticker::ALL.len())
+                .map(|i| editor.tray_image(i))
+                .collect();
+            Choices::new(
+                "sticker",
+                "Sticker",
+                Sticker::ALL.len(),
+                index_of(&Sticker::ALL, options.sticker),
+                move |i, on, theme| {
+                    let tile = option(theme, ("sticker", i), Sticker::ALL[i].label(), on)
+                        .size(px(STICKER_TILE))
+                        .px(px(0.));
+                    match &images[i] {
+                        Some(image) => {
+                            tile.child(img(image.clone()).size(px(TRAY_ICON)).flex_none())
+                        }
+                        None => tile,
+                    }
+                },
+            )
+            .flex_wrap()
+            .gap(px(OPTION_GAP))
+            .on_change(act(cx, |this, i, cx| {
+                this.set_option(cx, |o| o.sticker = Sticker::ALL[i])
+            }))
+            .into_any_element()
+        }
         // A drag of the slider is one undo step on a selected mark, however many moves it has.
         Group::Opacity => Slider::new("opacity", "Opacity", options.opacity)
             .on_change(act(cx, |this, value, cx| {
@@ -211,7 +289,12 @@ fn swatch(theme: &Theme, index: usize, on: bool) -> Pressable {
 }
 
 /// `.opt`: a small bordered option; chosen, it takes the accent.
-fn option(theme: &Theme, id: impl Into<ElementId>, label: &'static str, on: bool) -> Pressable {
+fn option(
+    theme: &Theme,
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    on: bool,
+) -> Pressable {
     let c = &theme.colors;
     let (bg, border) = if on {
         (c.accent_bg, theme.borders.accent)
