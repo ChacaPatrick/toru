@@ -1,6 +1,7 @@
 //! The main window (DESIGN.md §2): title bar, capture toolbar, the body with the gallery and the
-//! settings column, then the bottom bar, with the toast above it. This session's captures are
-//! real (`captures`, `actions`); the earlier groups are mock until 7.1. Each choice that is a
+//! settings column, then the bottom bar, with the toast above it. Opening a card in the editor
+//! (§5) replaces everything under the title bar with it. This session's captures are real
+//! (`captures`, `actions`); the earlier groups are mock until 7.1. Each choice that is a
 //! setting reads and writes `Settings`, every write going through `change_settings` to the store.
 
 mod actions;
@@ -17,17 +18,19 @@ mod toolbar;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use gpui::{
-    AnyWindowHandle, App, Context, DisplayId, Entity, FocusHandle, Pixels, ScrollHandle,
+    AnyWindowHandle, App, Context, DisplayId, Entity, FocusHandle, Focusable, Pixels, ScrollHandle,
     SharedString, Task, Window, div, prelude::*, px,
 };
 use gpui_kit::component::input::{InputEvent, InputState};
+use tiny_skia::Pixmap;
 use toru_core::{
-    capture::CaptureMode,
+    capture::{Capture, CaptureMode},
     naming::{NameError, validate_pattern},
     settings::Settings,
     store::{SessionId, Store},
 };
 
+use crate::editor::{Editor, EditorEvent, document};
 use crate::overlay;
 use crate::platform;
 use crate::theme::{ActiveTheme, ThemedText};
@@ -66,6 +69,8 @@ pub struct MainWindow {
     /// primary one.
     display: Option<DisplayId>,
     gallery: Entity<Gallery>,
+    /// The editor, while a capture is open in it, in place of the toolbar and gallery.
+    editor: Option<Entity<Editor>>,
     toast: Flash<Toast>,
     /// Whether the window is the active one, so a toast shown now would be seen.
     window_active: bool,
@@ -96,11 +101,15 @@ impl MainWindow {
         // draw where the focused element stops being rendered, as a collapsed group's card or a
         // name field scrolled out of the list does. Focus goes to the nearest focusable ancestor
         // still drawn, the gallery or the settings column, so Tab carries on from there, and to
-        // the first control when there is none.
+        // the first control when there is none: the editor's Back while it is open, else Region.
         cx.on_focus_lost(window, |this, window, cx| {
-            let target = window
-                .focus_lost_restore_target(cx)
-                .unwrap_or_else(|| this.first.clone());
+            let target =
+                window
+                    .focus_lost_restore_target(cx)
+                    .unwrap_or_else(|| match &this.editor {
+                        Some(editor) => editor.focus_handle(cx),
+                        None => this.first.clone(),
+                    });
             target.focus(window, cx)
         })
         .detach();
@@ -125,6 +134,7 @@ impl MainWindow {
             }
             GalleryEvent::Save { capture } => this.save_card(*capture, cx),
             GalleryEvent::OpenFolder { file } => this.open_folder(file.clone(), cx),
+            GalleryEvent::OpenEditor(id) => this.open_editor(*id, cx),
         })
         .detach();
         let pattern =
@@ -153,6 +163,7 @@ impl MainWindow {
             session_started: now.clock().into(),
             display: None,
             gallery,
+            editor: None,
             toast: Flash::new(),
             window_active: window.is_window_active(),
             missed_failures: Vec::new(),
@@ -162,6 +173,89 @@ impl MainWindow {
             default_save_folder: platform::default_save_folder(),
             countdown: None,
         }
+    }
+
+    /// Opens the card with `id` in the editor. A real card's picture is read back from where the
+    /// store keeps it, on the capture queue, since a Save queued ahead moves it; if it can't be
+    /// read the editor doesn't open and a toast says so, as Copy does. A mock card gets the
+    /// mockups' stand-in picture. "Open editor after capture" calls this with the new card's id.
+    pub fn open_editor(&mut self, id: usize, cx: &mut Context<Self>) {
+        let Some((capture, name, files)) = self.gallery.read(cx).card(id).map(|card| {
+            let files = card.files.as_ref().map(|files| files.id);
+            (card.capture.clone(), card.name.clone(), files)
+        }) else {
+            return;
+        };
+        let mock = files
+            .is_none()
+            .then(|| mock::image(capture.width, capture.height, cx.theme()));
+        let store = self.store.clone();
+        let window = self.window;
+        self.enqueue(cx, async move |this, cx| {
+            let picture = match (files, mock) {
+                (Some(capture), _) => {
+                    cx.background_spawn(async move {
+                        document::load_picture(&store.full_image_path(capture).ok()?)
+                    })
+                    .await
+                }
+                (None, mock) => mock,
+            };
+            cx.update_window(window, |_, window, cx| {
+                this.update(cx, |this, cx| match picture {
+                    Some(base) => this.show_editor(capture, name, base, window, cx),
+                    None => this.report_failure(captures::FILE_GONE, cx),
+                })
+            })
+            .ok();
+        });
+    }
+
+    fn show_editor(
+        &mut self,
+        capture: Capture,
+        name: Entity<InputState>,
+        base: Pixmap,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_editor(window, cx);
+        let editor = cx.new(|cx| Editor::new(capture, name, base, cx));
+        cx.subscribe_in(
+            &editor,
+            window,
+            |this, _, event: &EditorEvent, window, cx| match event {
+                EditorEvent::Back => this.close_editor(window, cx),
+                EditorEvent::Copied => this.report_copy(Ok(()), cx),
+            },
+        )
+        .detach();
+        editor.focus_handle(cx).focus(window, cx);
+        self.editor = Some(editor);
+        cx.notify();
+    }
+
+    /// The `editor` start-up argument: straight into the editor on the newest card.
+    pub fn open_newest_in_editor(&mut self, cx: &mut Context<Self>) {
+        let newest = self
+            .gallery
+            .read(cx)
+            .groups()
+            .flat_map(|group| group.cards.first())
+            .next()
+            .map(|card| card.id);
+        if let Some(id) = newest {
+            self.open_editor(id, cx);
+        }
+    }
+
+    /// Back to session. Focus returns to the first control through `on_focus_lost`, and the
+    /// picture leaves the GPU.
+    fn close_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(editor) = self.editor.take() {
+            editor.update(cx, |editor, _| editor.release_images(window));
+        }
+        cx.notify();
     }
 
     /// The displays as they are right now, since monitors come and go while Toru runs, and the
@@ -218,8 +312,11 @@ impl MainWindow {
         });
     }
 
-    fn title(&self) -> SharedString {
-        format!("Toru — session started {}", self.session_started).into()
+    fn title(&self, cx: &App) -> SharedString {
+        match &self.editor {
+            Some(editor) => editor.read(cx).title(cx),
+            None => format!("Toru — session started {}", self.session_started).into(),
+        }
     }
 
     /// Every change to a setting goes through here, and on to the store.
@@ -259,15 +356,9 @@ fn gallery_width(settings: &Settings, window: &Window) -> Pixels {
 
 impl Render for MainWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let width = gallery_width(&self.settings, window);
-        let show_previous = self.settings.show_previous;
-        self.gallery.update(cx, |gallery, cx| {
-            gallery.set_width(width, window.scale_factor());
-            gallery.set_show_previous(show_previous, cx);
-        });
         let theme = cx.theme();
         let c = &theme.colors;
-        div()
+        let frame = div()
             .relative()
             .size_full()
             .flex()
@@ -275,7 +366,19 @@ impl Render for MainWindow {
             .bg(c.bg)
             .text_color(c.text)
             .type_style(theme, theme.type_scale.body)
-            .child(title_bar::title_bar(self.title(), window, cx))
+            .child(title_bar::title_bar(self.title(cx), window, cx));
+        if let Some(editor) = &self.editor {
+            return frame
+                .child(div().flex_1().min_h_0().child(editor.clone()))
+                .children(self.toast.get().cloned());
+        }
+        let width = gallery_width(&self.settings, window);
+        let show_previous = self.settings.show_previous;
+        self.gallery.update(cx, |gallery, cx| {
+            gallery.set_width(width, window.scale_factor());
+            gallery.set_show_previous(show_previous, cx);
+        });
+        frame
             .child(toolbar::toolbar(self, cx))
             .child(
                 div()

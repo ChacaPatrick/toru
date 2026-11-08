@@ -9,8 +9,8 @@
 //! anywhere on a card makes it the current one.
 
 use gpui::{
-    AnyElement, App, Context, MouseButton, ObjectFit, Pixels, Role, Window, div, img,
-    linear_color_stop, linear_gradient, prelude::*, px,
+    AnyElement, App, Context, Div, MouseButton, ObjectFit, Pixels, Role, Stateful, Window, div,
+    img, linear_color_stop, linear_gradient, prelude::*, px,
 };
 use toru_core::time::LocalDate;
 
@@ -147,6 +147,7 @@ pub fn render(
     let copy = act(cx, move |this, cx| this.copy(id, cx));
     let make_current = act(cx, move |this, cx| this.set_current(id, cx));
     let save_or_open = act(cx, move |this, cx| this.save_or_open(id, cx));
+    let open_editor = act(cx, move |this, cx| this.open_editor(id, cx));
     let rename = {
         let name = card.name.clone();
         move |window: &mut Window, cx: &mut gpui::App| {
@@ -164,7 +165,7 @@ pub fn render(
             .tab_stop(active),
     )
     .header(size.clone())
-    .item("Open in editor", |_, _| {})
+    .item("Open in editor", open_editor)
     .item("Rename", rename)
     .item("Reveal", |_, _| {})
     .divider()
@@ -176,6 +177,7 @@ pub fn render(
         .small()
         .tab_stop(active);
     let second = if saved { second } else { second.primary() };
+    let open_editor_by_click = act(cx, move |this, cx| this.open_editor(id, cx));
     let actions = div()
         .flex()
         .flex_wrap()
@@ -223,7 +225,14 @@ pub fn render(
         .border(border.width)
         .border_color(border.color)
         .rounded(radius)
-        .child(thumbnail(card, position, today, size, theme, cx))
+        .child(
+            // A double-click on the thumbnail opens the editor (DESIGN.md §5).
+            thumbnail(card, position, today, size, theme, cx).on_click(move |event, window, cx| {
+                if event.click_count() == 2 {
+                    open_editor_by_click(window, cx);
+                }
+            }),
+        )
         .child(
             TextField::new(&card.name, "Screenshot name")
                 .height(px(NAME_HEIGHT))
@@ -261,7 +270,7 @@ fn thumbnail(
     size: String,
     theme: &Theme,
     cx: &App,
-) -> impl IntoElement {
+) -> Stateful<Div> {
     let c = &theme.colors;
     let radius = theme.radii.md;
     let border = theme.borders.thumb;

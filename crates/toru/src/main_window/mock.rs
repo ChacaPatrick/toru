@@ -3,12 +3,15 @@
 
 use std::path::PathBuf;
 
+use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Rect, Stroke, Transform};
 use toru_core::{
     capture::{Capture, CaptureMode},
     time::{LocalDate, LocalDateTime},
 };
 
 use super::gallery::GroupKind;
+use crate::editor::document::skia_color;
+use crate::theme::Theme;
 
 /// The folder the mock data calls the save folder, until 5.6 asks the system for the real one.
 pub const SAVE_FOLDER: &str = r"C:\Users\Pat\Pictures\Screenshots";
@@ -257,4 +260,38 @@ fn shot(
         // Roughly a PNG's weight: about 1.1 bytes per pixel.
         bytes: u64::from(width) * u64::from(height) * 11 / 10,
     }
+}
+
+/// The mockups' stand-in screenshot at a mock card's size, until 7.1 loads real history: the
+/// look's `shot` colours, with the Editor mockup's four window blocks scaled to fit.
+pub fn image(width: u32, height: u32, theme: &Theme) -> Pixmap {
+    // The blocks as the mockup lays them in its 760×475 shot.
+    const SHOT: (f32, f32) = (760., 475.);
+    const BLOCKS: [(f32, f32, f32, f32); 4] = [
+        (60., 60., 640., 44.),
+        (60., 130., 300., 280.),
+        (400., 130., 300., 130.),
+        (400., 290., 300., 120.),
+    ];
+    let c = &theme.colors;
+    let mut pixmap = Pixmap::new(width.max(1), height.max(1)).expect("a capture has a size");
+    pixmap.fill(skia_color(c.shot_bg));
+    let (sx, sy) = (width as f32 / SHOT.0, height as f32 / SHOT.1);
+    let mut fill = Paint::default();
+    fill.set_color(skia_color(c.shot_fill));
+    let mut line = Paint::default();
+    line.set_color(skia_color(c.shot_line));
+    let stroke = Stroke {
+        width: 1.5 * sx.min(sy).max(0.5),
+        ..Stroke::default()
+    };
+    for (x, y, w, h) in BLOCKS {
+        let Some(rect) = Rect::from_xywh(x * sx, y * sy, w * sx, h * sy) else {
+            continue;
+        };
+        let path = PathBuilder::from_rect(rect);
+        pixmap.fill_path(&path, &fill, FillRule::Winding, Transform::identity(), None);
+        pixmap.stroke_path(&path, &line, &stroke, Transform::identity(), None);
+    }
+    pixmap
 }

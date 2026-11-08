@@ -2,6 +2,7 @@
 
 // The theme carries the values for the cards, gallery and editor, and the controls include the
 // card, settings and bottom bar ones; the sections that use them follow (Phases 4 and 8).
+mod editor;
 mod main_window;
 mod overlay;
 mod platform;
@@ -27,12 +28,16 @@ const WINDOW_SIZE: (f32, f32) = (1280., 940.);
 /// Wide enough for three usable cards beside the open settings column; the toolbar wraps.
 const MIN_WINDOW_SIZE: (f32, f32) = (900., 480.);
 
-/// `toru [japandi|pixel_art|neo_brutalism] [palette]` opens the window in that look and palette,
-/// so each can be checked against the mockups without clicking through. It only changes what is
-/// shown, so the saved settings keep their own look.
-fn appearance_from_args(settings: &Settings) -> Settings {
+/// `toru [japandi|pixel_art|neo_brutalism] [palette] [editor]` opens the window in that look and
+/// palette, and straight in the editor if asked, so each can be checked against the mockups
+/// without clicking through. It only changes what is shown, so the saved settings keep their own
+/// look.
+fn appearance_from_args(settings: &Settings) -> (Settings, bool) {
     let mut appearance = settings.clone();
-    let mut args = std::env::args().skip(1);
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let open_editor = args.iter().any(|arg| arg == "editor");
+    args.retain(|arg| arg != "editor");
+    let mut args = args.into_iter();
     appearance.look = match args.next().as_deref() {
         Some("japandi") => Look::Japandi,
         Some("pixel_art") => Look::PixelArt,
@@ -42,7 +47,7 @@ fn appearance_from_args(settings: &Settings) -> Settings {
     if let Some(palette) = args.next().and_then(|arg| arg.parse().ok()) {
         appearance.appearance_mut(appearance.look).palette = PaletteChoice::BuiltIn(palette);
     }
-    appearance
+    (appearance, open_editor)
 }
 
 fn main() {
@@ -72,7 +77,8 @@ fn main() {
         gpui_kit::init(cx);
         ui::init(cx);
         install_fonts(cx);
-        set_theme(Theme::from_settings(&appearance_from_args(&settings)), cx);
+        let (appearance, open_editor) = appearance_from_args(&settings);
+        set_theme(Theme::from_settings(&appearance), cx);
         let bounds = Bounds::centered(None, size(px(WINDOW_SIZE.0), px(WINDOW_SIZE.1)), cx);
         gpui_kit::open_window(
             WindowOptions {
@@ -88,7 +94,15 @@ fn main() {
                 ..Default::default()
             },
             cx,
-            |window, cx| cx.new(|cx| MainWindow::new(store, session, settings, window, cx)),
+            |window, cx| {
+                cx.new(|cx| {
+                    let mut main = MainWindow::new(store, session, settings, window, cx);
+                    if open_editor {
+                        main.open_newest_in_editor(cx);
+                    }
+                    main
+                })
+            },
         )
         .expect("failed to open the main window");
         cx.activate(true);

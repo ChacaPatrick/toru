@@ -40,7 +40,7 @@ const STORE_FAILED: &str = "Couldn't store that capture";
 pub(super) const COPY_FAILED: &str = "Couldn't copy to the clipboard. Another app may be using it.";
 const STORE_AND_COPY_FAILED: &str = "Couldn't store that capture or copy it to the clipboard";
 const RENAME_FAILED: &str = "Couldn't rename that capture";
-const FILE_GONE: &str = "Couldn't read that image. Its file may have moved.";
+pub(super) const FILE_GONE: &str = "Couldn't read that image. Its file may have moved.";
 const AUTO_SAVE_FAILED: &str =
     "Couldn't auto-save. The capture is still here, unsaved. Check the Save to folder.";
 const SEVERAL_FAILED: &str = "Some captures failed while Toru was in the background";
@@ -53,6 +53,7 @@ impl MainWindow {
         let taken_at = platform::local_now();
         let pattern = self.settings.name_pattern.clone();
         let copy = self.settings.copy_on_capture;
+        let open_editor = self.settings.open_editor_after_capture;
         let auto_save = self.auto_save_target();
         let store = self.store.clone();
         let session = self.session;
@@ -76,7 +77,13 @@ impl MainWindow {
             let kept = stored.is_ok();
             let auto_saved = auto_saved.is_ok();
             if let Ok(card) = stored {
-                this.update(cx, |this, cx| this.show_card(card, cx)).ok();
+                this.update(cx, |this, cx| {
+                    // "Open editor after capture" (DESIGN.md §5), once the card exists.
+                    if let Some(id) = this.show_card(card, cx).filter(|_| open_editor) {
+                        this.open_editor(id, cx);
+                    }
+                })
+                .ok();
             }
             // The clipboard doesn't depend on the store, so a capture that couldn't be kept can
             // still be pasted.
@@ -297,13 +304,14 @@ impl MainWindow {
         }));
     }
 
-    fn show_card(&mut self, card: NewCard, cx: &mut Context<Self>) {
+    /// Adds the card to the session group and returns its id, or `None` if the window has gone.
+    fn show_card(&mut self, card: NewCard, cx: &mut Context<Self>) -> Option<usize> {
         let gallery = self.gallery.clone();
         self.window
             .update(cx, |_, window, cx| {
                 gallery.update(cx, |gallery, cx| gallery.add_session_card(card, window, cx))
             })
-            .ok();
+            .ok()
     }
 }
 

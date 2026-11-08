@@ -130,6 +130,8 @@ pub enum GalleryEvent {
     OpenFolder {
         file: PathBuf,
     },
+    /// A card's `⋯ → Open in editor`, a double-click on its thumbnail, or Enter on the card.
+    OpenEditor(usize),
 }
 
 pub struct Gallery {
@@ -222,7 +224,13 @@ impl Gallery {
 
     /// Puts a capture at the top of this session. The name field's `Window` is why the main
     /// window passes one in.
-    pub fn add_session_card(&mut self, new: NewCard, window: &mut Window, cx: &mut Context<Self>) {
+    /// Returns the new card's id, for "Open editor after capture".
+    pub fn add_session_card(
+        &mut self,
+        new: NewCard,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> usize {
         self.today = new.capture.taken_at.date;
         self.next_card += 1;
         let card = new_card(
@@ -233,9 +241,11 @@ impl Gallery {
             window,
             cx,
         );
+        let id = card.id;
         self.groups[0].cards.insert(0, card);
         self.rebuild_rows(cx);
         cx.notify();
+        id
     }
 
     fn session_card(&mut self, capture: CaptureId) -> Option<&mut Card> {
@@ -382,8 +392,15 @@ impl Gallery {
             .show(card, COPIED_FOR, cx, |this| &mut this.copied);
     }
 
-    /// Enter on a card. The editor arrives in 8.1.
-    fn open(&mut self, _id: usize) {}
+    /// Enter on a card, its `⋯ → Open in editor`, or a double-click on its thumbnail (DESIGN.md
+    /// §5, §7).
+    pub fn open_editor(&mut self, id: usize, cx: &mut Context<Self>) {
+        cx.emit(GalleryEvent::OpenEditor(id));
+    }
+
+    pub fn groups(&self) -> impl Iterator<Item = &Group> {
+        self.groups.iter()
+    }
 
     /// Makes `id` the card Tab enters the grid at.
     pub(super) fn set_current(&mut self, id: usize, cx: &mut Context<Self>) {
@@ -443,7 +460,8 @@ impl Gallery {
         self.rows = rows;
     }
 
-    fn card(&self, id: usize) -> Option<&Card> {
+    /// The card with `id`, for the editor to open.
+    pub fn card(&self, id: usize) -> Option<&Card> {
         self.groups
             .iter()
             .flat_map(|g| &g.cards)
@@ -489,7 +507,7 @@ impl Gallery {
         let target = match event.keystroke.key.as_str() {
             "enter" => {
                 cx.stop_propagation();
-                self.open(id);
+                self.open_editor(id, cx);
                 return;
             }
             "left" => step(-1),

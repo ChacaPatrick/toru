@@ -174,6 +174,19 @@ pub struct Colors {
 }
 
 impl Colors {
+    /// The editor's stroke swatches, in the panel's order: the look's ink, white, its annotation
+    /// colour, then the yellow and blue the mockups give every look.
+    pub fn stroke_swatches(&self) -> [Swatch; 5] {
+        [
+            Swatch::new("Ink", self.text),
+            Swatch::new("White", gpui::white()),
+            Swatch::new("Red", self.anno),
+            // The mockups' CSS writes these two out rather than naming tokens.
+            Swatch::new("Yellow", css::hex(0xf1c40f)),
+            Swatch::new("Blue", css::hex(0x2e86de)),
+        ]
+    }
+
     /// The on-states as the base CSS draws them: the accent fill with the accent text. A look
     /// whose `extra_css` pins them to other colours sets those after this.
     pub fn follow_accent(&mut self) {
@@ -186,6 +199,19 @@ impl Colors {
         self.bulk_main_bg = self.accent_bg;
         self.bulk_main_text = self.accent_text;
         self.swatch_on = self.accent;
+    }
+}
+
+/// A stroke colour the editor's panel offers, with the name assistive technology reads.
+#[derive(Clone, Copy)]
+pub struct Swatch {
+    pub name: &'static str,
+    pub color: Hsla,
+}
+
+impl Swatch {
+    fn new(name: &'static str, color: Hsla) -> Swatch {
+        Swatch { name, color }
     }
 }
 

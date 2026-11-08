@@ -19,8 +19,10 @@ mod icons;
 mod input;
 mod jump;
 mod menu;
+mod pressable;
 mod radio;
 mod segmented;
+mod slider;
 mod toast;
 mod toggle;
 mod tooltip;
@@ -42,8 +44,17 @@ pub use icons::Icon;
 pub use jump::{HEIGHT as JUMP_HEIGHT, Jump};
 pub use menu::Menu;
 pub use {
-    chip::Chip, fill::fill, flash::Flash, input::TextField, radio::RadioGroup,
-    segmented::Segmented, toast::Toast, toggle::Toggle, tooltip::Tooltip,
+    chip::Chip,
+    fill::fill,
+    flash::Flash,
+    input::TextField,
+    pressable::{Choices, Pressable},
+    radio::RadioGroup,
+    segmented::Segmented,
+    slider::Slider,
+    toast::Toast,
+    toggle::Toggle,
+    tooltip::Tooltip,
 };
 
 /// What a control does when pressed.

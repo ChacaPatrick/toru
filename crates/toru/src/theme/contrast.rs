@@ -38,6 +38,7 @@ pub fn ratio(a: Hsla, b: Hsla) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::editor::chrome::tool_key_color;
     use crate::theme::{Fill, Theme, css::hex, hover_tint};
     use crate::ui::SUB_OPACITY;
     use toru_core::settings::{BUILT_IN_PALETTES, Look};
@@ -108,6 +109,9 @@ mod tests {
         );
         text("primary button", c.accent_text, c.accent_bg);
         text("chosen segment", c.on_text, c.on_bg);
+        // The editor's tool pill: a tool's shortcut letter, and the chosen tool's.
+        text("tool key", tool_key_color(theme, false), c.surface);
+        text("chosen tool key", tool_key_color(theme, true), c.on_bg);
         for (name, bg) in &surfaces[1..5] {
             text(
                 &format!("chip on {name}"),
