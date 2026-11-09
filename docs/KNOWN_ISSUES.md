@@ -26,11 +26,13 @@ Left open by the review cap. Fix these in section 10.1.
 - An invalid hex field's border colour has no visible effect.
 - Cancelling the quit dialog over the custom palette editor sends focus behind it.
 
-## Decisions waiting on the owner
-- Should Clear unsaved ask first? It deletes permanently.
-- Should "Also delete files" use the Recycle Bin?
-- Installer tool for 10.3: Inno Setup is proposed.
-- The original of an edited capture stays in app data, unblurred, until the capture is deleted; saved captures' originals never expire.
+## Decided by the owner, to build in 10.1
+- Clear unsaved asks for confirmation first.
+- "Also delete files" sends files to the Recycle Bin.
+- When a capture with blurred or pixelated areas is saved, remove its kept original, so the hidden content is gone. Reset no longer works on those.
+
+## Waiting on the owner
+- Installer tool for 10.3: Inno Setup is proposed. Unsigned, so Windows shows a SmartScreen warning.
 
 ## Needs a person
 Real keyboard and mouse use has not been tested: overlay dragging and Esc, tray clicks, arrow keys and Tab, wheel scrolling, drawing on the canvas, recording a shortcut. PrtScn with Windows' setting off (1.1) and a Narrator listening test (1.5) are also open.
