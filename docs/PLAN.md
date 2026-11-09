@@ -70,6 +70,7 @@ Drawn with `tiny-skia`, so the screen matches the saved file exactly.
 - [ ] 10.1 Keyboard, contrast and reduced-motion pass, plus idle memory
 - [ ] 10.2 Screen reader pass, if 1.5 worked
 - [ ] 10.3 Installer that ships the font licences, start with Windows, clean-machine test
+- [ ] 10.4 Layout and looks fixes from the Nov 9 review: columns that follow the window, empty state, select bar, bottom bar [Fable]
 
 ## Approved libraries
 | Job | Library |
