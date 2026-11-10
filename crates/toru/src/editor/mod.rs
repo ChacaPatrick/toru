@@ -16,6 +16,7 @@ pub mod document;
 mod panel;
 pub mod sticker;
 pub mod text;
+mod text_input;
 pub mod tools;
 mod viewport;
 
@@ -101,10 +102,24 @@ enum Drag {
 }
 
 /// Text being typed in place: a new one, or the document's text at `index` with its changes
-/// so far. It goes on the document as one undo step when typing ends.
+/// so far. It goes on the document as one undo step when typing ends. `marked` is the end of
+/// the content an input method is still composing, in bytes.
 struct Typing {
     index: Option<usize>,
     text: Annotation,
+    marked: Option<std::ops::Range<usize>>,
+}
+
+/// What `Editor::type_key` did with a key while text is typed.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Typed {
+    /// Not a typing key, so the editor's shortcuts may have it.
+    Not,
+    /// Taken, and nothing else acts on it.
+    Taken,
+    /// A character, which reaches the text through `text_input`. The shortcuts don't have it,
+    /// but it propagates: Windows makes the character only from a key-down nothing handled.
+    Character,
 }
 
 /// Where the text being typed is, in picture pixels: its box, and the top and height of its
@@ -291,9 +306,16 @@ impl Editor {
         self.name.clone()
     }
 
-    /// Whether the picture has annotations, which closing the editor would lose.
+    /// Whether the picture has annotations, or text is being typed, which closing the editor
+    /// would lose.
     pub fn is_edited(&self) -> bool {
         self.document.is_edited()
+            || self.typing.as_ref().is_some_and(|typing| {
+                typing
+                    .text
+                    .text()
+                    .is_some_and(|t| !t.content.trim().is_empty())
+            })
     }
 
     /// Why the store refused the name in the field, or `None` once it takes one. The main window
@@ -423,14 +445,17 @@ impl Editor {
     /// What the panel shows: a tool's options and its kind's groups, or the selected mark's, or
     /// those of the text being typed. `None` leaves the panel out.
     fn panel_options(&self, theme: &Theme) -> Option<(StrokeOptions, &'static [Group])> {
-        if let Some(kind) = self.tool.kind() {
+        let typed = self.typing.as_ref().map(|typing| &typing.text);
+        if let Some(kind) = self.tool.kind()
+            && typed.is_none()
+        {
             return Some((self.options_for(self.tool), tools::groups(kind)));
         }
-        if self.tool != Tool::Select {
+        if !matches!(self.tool, Tool::Select | Tool::Text) {
             return None;
         }
-        let annotation = match &self.typing {
-            Some(typing) => &typing.text,
+        let annotation = match typed {
+            Some(text) => text,
             None => self.selection()?.1,
         };
         Some((
@@ -440,14 +465,14 @@ impl Editor {
     }
 
     /// A panel change: to the drawing tool's options, or to the selected mark as one undo step.
-    fn set_option(&mut self, cx: &mut Context<Self>, change: impl FnOnce(&mut StrokeOptions)) {
+    fn set_option(&mut self, cx: &mut Context<Self>, change: impl Fn(&mut StrokeOptions)) {
         self.live_edit = false;
         self.change_option(false, cx, change);
     }
 
     /// A slider's change while it is dragged: the first is an undo step, the rest amend it,
     /// until `end_live_edit`.
-    fn set_option_live(&mut self, cx: &mut Context<Self>, change: impl FnOnce(&mut StrokeOptions)) {
+    fn set_option_live(&mut self, cx: &mut Context<Self>, change: impl Fn(&mut StrokeOptions)) {
         let amend = self.live_edit;
         self.live_edit = self.change_option(amend, cx, change);
     }
@@ -457,43 +482,38 @@ impl Editor {
     }
 
     /// Changes the tool's options, the text being typed, or the selected mark: as a new undo
-    /// step, or amending the last if `amend`. Returns whether the mark changed under an undo
-    /// step. Nothing changes while the canvas is being dragged, so the drag's mark stays where
-    /// it was found.
+    /// step, or amending the last if `amend`. Text being typed or a mark takes only the one
+    /// change, keeping the rest of its own style. Returns whether the mark changed under an
+    /// undo step. Nothing changes while the canvas is being dragged, so the drag's mark stays
+    /// where it was found.
     fn change_option(
         &mut self,
         amend: bool,
         cx: &mut Context<Self>,
-        change: impl FnOnce(&mut StrokeOptions),
+        change: impl Fn(&mut StrokeOptions),
     ) -> bool {
         if self.drag.is_some() {
             return false;
         }
         let theme = cx.theme();
-        if let Some(slot) = self.options.iter_mut().find(|(t, _)| *t == self.tool) {
+        let tool_options = self.options.iter_mut().find(|(t, _)| *t == self.tool);
+        let for_tool = tool_options.is_some();
+        if let Some(slot) = tool_options {
             change(&mut slot.1);
-            let options = slot.1;
-            // The Text tool's options restyle the text being typed with it as well.
-            if let Some(typing) = &mut self.typing {
-                typing.text = restyled(&typing.text, options, theme);
-                self.preview_changed(cx);
-            }
-            cx.notify();
-            return false;
         }
         if let Some(typing) = &mut self.typing {
-            let mut options = options_of(&typing.text, theme);
-            change(&mut options);
-            typing.text = restyled(&typing.text, options, theme);
+            typing.text = restyled(&typing.text, theme, &change);
             self.preview_changed(cx);
+            return false;
+        }
+        if for_tool {
+            cx.notify();
             return false;
         }
         let Some((index, annotation)) = self.selection() else {
             return false;
         };
-        let mut options = options_of(annotation, theme);
-        change(&mut options);
-        let edited = restyled(annotation, options, theme);
+        let edited = restyled(annotation, theme, &change);
         let stepped = if amend {
             self.document.amend(index, edited);
             true
@@ -561,7 +581,11 @@ impl Editor {
     /// `index`, which the picture is rendered without until typing ends.
     fn start_typing(&mut self, index: Option<usize>, text: Annotation, cx: &mut Context<Self>) {
         self.finish_typing(cx);
-        self.typing = Some(Typing { index, text });
+        self.typing = Some(Typing {
+            index,
+            text,
+            marked: None,
+        });
         self.document_changed(cx);
     }
 
@@ -574,7 +598,7 @@ impl Editor {
     /// Typing ends: the text goes on the document as one undo step, replacing the one it was
     /// if it edited one; text with nothing in it is dropped, or taken off if it was there.
     fn finish_typing(&mut self, cx: &mut Context<Self>) {
-        let Some(Typing { index, text }) = self.typing.take() else {
+        let Some(Typing { index, text, .. }) = self.typing.take() else {
             return;
         };
         let empty = text.text().is_none_or(|t| t.content.trim().is_empty());
@@ -594,43 +618,46 @@ impl Editor {
         self.document_changed(cx);
     }
 
-    /// A key while text is typed: characters go in, Backspace takes one out, Enter breaks the
-    /// line, Ctrl+V pastes and Esc finishes. Returns whether the key was taken.
-    fn type_key(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
+    /// A key while text is typed: Backspace takes a character out, Enter breaks the line,
+    /// Ctrl+V pastes and Esc finishes. Characters come through `text_input`, composed by the
+    /// keyboard layout or an input method, so AltGr and accent keys type what they show; their
+    /// keys are kept from the shortcuts here. Ctrl+Z and Ctrl+Y are left to `key_down`, whose
+    /// undo and redo put the text on the document first.
+    fn type_key(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> Typed {
         let Some(typing) = &self.typing else {
-            return false;
+            return Typed::Not;
         };
         let m = keystroke.modifiers;
+        // AltGr is Ctrl+Alt on Windows; Ctrl alone is a shortcut.
+        let ctrl = m.control && !m.alt;
         if keystroke.key == "escape" {
             self.finish_typing(cx);
-            return true;
+            return Typed::Taken;
         }
         let Some(mut content) = typing.text.text().map(|t| t.content.clone()) else {
-            return false;
+            return Typed::Not;
         };
         match keystroke.key.as_str() {
             "enter" if !m.control => content.push('\n'),
             "backspace" => {
                 content.pop();
             }
-            "v" if m.control => {
+            "v" if ctrl => {
                 if let Some(pasted) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                    content.push_str(&pasted);
+                    content.push_str(&text_input::line_breaks(&pasted));
                 }
             }
-            "tab" => return false,
-            _ if m.control || m.alt || m.platform || m.function => return true,
-            "space" => content.push(' '),
-            _ => match &keystroke.key_char {
-                Some(ch) if !ch.chars().any(char::is_control) => content.push_str(ch),
-                _ => return true,
-            },
+            "z" | "y" if ctrl => return Typed::Not,
+            "tab" => return Typed::Not,
+            _ if types_character(keystroke) => return Typed::Character,
+            _ => return Typed::Taken,
         }
         if let Some(typing) = &mut self.typing {
             typing.text = typing.text.with_content(content);
+            typing.marked = None;
         }
         self.preview_changed(cx);
-        true
+        Typed::Taken
     }
 
     /// A new text, badge or sticker as the tool's options and the look have it, placed at `at`.
@@ -1128,16 +1155,20 @@ impl Editor {
     /// The shortcuts of DESIGN.md §5: a tool's letter, Esc back to Select, Ctrl+Z / Ctrl+Y for
     /// undo and redo, Delete on a selected mark, Enter to crop, and Enter on selected text to
     /// edit it. Typing in the name field is left alone, but Esc still works there; text being
-    /// typed on the canvas takes every key first.
+    /// typed on the canvas has every key first.
     fn key_down(&mut self, event: &KeyDownEvent, window: &Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         let m = keystroke.modifiers;
         if self.name.focus_handle(cx).is_focused(window) && keystroke.key != "escape" {
             return;
         }
-        if self.type_key(keystroke, cx) {
-            cx.stop_propagation();
-            return;
+        match self.type_key(keystroke, cx) {
+            Typed::Taken => {
+                cx.stop_propagation();
+                return;
+            }
+            Typed::Character => return,
+            Typed::Not => {}
         }
         if m.alt || m.platform || m.function {
             return;
@@ -1376,6 +1407,7 @@ impl Editor {
                         }
                     });
                 }
+                text_input::handle_input(&editor, bounds, window, cx);
                 let Some(image) = editor.read(cx).image.clone() else {
                     return;
                 };
@@ -1590,6 +1622,14 @@ impl Render for Editor {
     }
 }
 
+/// Whether a key types a character: the keyboard layout gives it one, with no modifier but
+/// Shift, or with AltGr, which Windows reports as Ctrl+Alt. Ctrl or Alt alone makes it a
+/// shortcut, and a dead key has its accent as its character.
+fn types_character(keystroke: &Keystroke) -> bool {
+    let m = keystroke.modifiers;
+    keystroke.key_char.is_some() && m.control == m.alt && !m.platform && !m.function
+}
+
 /// A solid quad with no border.
 fn fill_quad(bounds: Bounds<Pixels>, color: Hsla) -> gpui::PaintQuad {
     quad(
@@ -1655,25 +1695,49 @@ fn options_of(annotation: &Annotation, theme: &Theme) -> StrokeOptions {
     options
 }
 
-/// `annotation` as `options` have it: its style, an arrow's head, text's face and size, a
-/// sticker's kind, a block's kind. Text keeps a size set by hand unless its preset was changed.
-fn restyled(annotation: &Annotation, options: StrokeOptions, theme: &Theme) -> Annotation {
+/// `annotation` with `change` made to its panel choices, and only that: its colour, an arrow's
+/// head, text's face and size, a sticker's kind, a block's kind, its width, line or opacity.
+/// What the change leaves alone stays as the mark has it, even where no choice matches it, such
+/// as a colour or face from another look or a text size set by hand.
+fn restyled(
+    annotation: &Annotation,
+    theme: &Theme,
+    change: impl Fn(&mut StrokeOptions),
+) -> Annotation {
+    let before = options_of(annotation, theme);
+    let mut after = before;
+    change(&mut after);
+    // A colour or face no choice has shows as the first choice, and picking that one still
+    // applies it, so whether the change sets them is tried from two different choices.
+    let (mut first, mut second) = (before, before);
+    (first.stroke, first.font) = (0, Family::Body);
+    (second.stroke, second.font) = (1, Family::Display);
+    change(&mut first);
+    change(&mut second);
+    let (recolours, refaces) = (first.stroke == second.stroke, first.font == second.font);
     let shape = match &annotation.shape {
-        Shape::Arrow(_) => Shape::Arrow(options.head),
-        Shape::Block(_) => Shape::Block(options.block),
+        Shape::Arrow(_) => Shape::Arrow(after.head),
+        Shape::Block(_) => Shape::Block(after.block),
         Shape::Text(text) => {
             let mut text = text.clone();
-            text.font.family = theme.fonts.family(options.font);
-            if options.size != TextSize::nearest(text.size, theme) {
-                text.size = options.size.pixels(theme);
+            if refaces {
+                text.font.family = theme.fonts.family(after.font);
+            }
+            if after.size != before.size {
+                text.size = after.size.pixels(theme);
             }
             Shape::Text(text)
         }
-        Shape::Sticker(_) => Shape::Sticker(options.sticker),
+        Shape::Sticker(_) => Shape::Sticker(after.sticker),
         shape => shape.clone(),
     };
+    let mut style = style_of(after, theme, shape.kind());
+    if !recolours {
+        style.color = annotation.style.color;
+        style.second = annotation.style.second;
+    }
     Annotation {
-        style: style_of(options, theme, shape.kind()),
+        style,
         shape,
         points: annotation.points.clone(),
     }
@@ -1883,28 +1947,16 @@ mod tests {
         assert_eq!(options.size, TextSize::Medium);
         assert_eq!(options.stroke, 2);
         // Changing the colour alone leaves the 26 as it is; picking a preset sets it.
-        let recoloured = restyled(
-            &text,
-            StrokeOptions {
-                stroke: 0,
-                ..options
-            },
-            &theme,
-        );
+        let recoloured = restyled(&text, &theme, |o| o.stroke = 0);
         assert_eq!(recoloured.text().unwrap().size, 26.);
         assert_eq!(
             recoloured.style.color,
             skia_color(theme.colors.stroke_swatches()[0].color)
         );
-        let larger = restyled(
-            &text,
-            StrokeOptions {
-                size: TextSize::Huge,
-                font: Family::Display,
-                ..options
-            },
-            &theme,
-        );
+        let larger = restyled(&text, &theme, |o| {
+            o.size = TextSize::Huge;
+            o.font = Family::Display;
+        });
         assert_eq!(larger.text().unwrap().size, 48.);
         assert_eq!(larger.text().unwrap().font.family, theme.fonts.display);
         assert_eq!(options_of(&larger, &theme).font, Family::Display);
@@ -1918,15 +1970,76 @@ mod tests {
         assert_eq!(options_of(&sticker, &theme).sticker, Sticker::Cross);
         assert_eq!(sticker.style.color, skia_color(theme.colors.sticker));
         assert_eq!(sticker.style.second, skia_color(theme.colors.sticker_line));
-        let turned = restyled(
-            &sticker,
-            StrokeOptions {
-                sticker: Sticker::Hand(3),
-                ..options
-            },
-            &theme,
-        );
+        let turned = restyled(&sticker, &theme, |o| o.sticker = Sticker::Hand(3));
         assert_eq!(turned.shape, Shape::Sticker(Sticker::Hand(3)));
+    }
+
+    #[test]
+    fn one_change_leaves_the_rest_of_a_marks_own_style() {
+        let theme = Theme::new(Look::Japandi, 0);
+        // Text in a colour and face no choice has, at a size set by hand, at half opacity.
+        let mut text = text_mark(&theme, 26.);
+        text.style.color = tiny_skia::Color::from_rgba8(1, 2, 3, 255);
+        text.style.opacity = 0.5;
+        if let Shape::Text(t) = &mut text.shape {
+            t.font.family = "Some Other Face".into();
+        }
+        let bigger = restyled(&text, &theme, |o| o.size = TextSize::Huge);
+        assert_eq!(bigger.text().unwrap().size, 48.);
+        assert_eq!(bigger.style.color, text.style.color);
+        assert_eq!(bigger.style.opacity, 0.5);
+        assert_eq!(bigger.text().unwrap().font.family, "Some Other Face");
+        let recoloured = restyled(&text, &theme, |o| o.stroke = 1);
+        assert_eq!(
+            recoloured.style.color,
+            skia_color(theme.colors.stroke_swatches()[1].color)
+        );
+        assert_eq!(recoloured.text().unwrap().size, 26.);
+        assert_eq!(recoloured.text().unwrap().font.family, "Some Other Face");
+        // The colour and face shown for ones no choice has can still be picked.
+        let picked = restyled(&text, &theme, |o| {
+            o.stroke = 0;
+            o.font = Family::Body;
+        });
+        assert_eq!(
+            picked.style.color,
+            skia_color(theme.colors.stroke_swatches()[0].color)
+        );
+        assert_eq!(picked.text().unwrap().font.family, theme.fonts.body);
+    }
+
+    #[test]
+    fn character_keys_are_told_from_shortcuts() {
+        let key = |key: &str, key_char: Option<&str>, modifiers: gpui::Modifiers| Keystroke {
+            modifiers,
+            key: key.into(),
+            key_char: key_char.map(Into::into),
+        };
+        let none = gpui::Modifiers::default();
+        let shift = gpui::Modifiers::shift();
+        let alt_gr = gpui::Modifiers {
+            control: true,
+            alt: true,
+            ..none
+        };
+        assert!(types_character(&key("a", Some("a"), none)));
+        assert!(types_character(&key("a", Some("A"), shift)));
+        assert!(types_character(&key("space", Some(" "), none)));
+        assert!(types_character(&key("e", Some("€"), alt_gr)));
+        // A dead key, whose accent Windows composes with the next key.
+        assert!(types_character(&key("´", Some("´"), none)));
+        assert!(!types_character(&key(
+            "a",
+            None,
+            gpui::Modifiers::control()
+        )));
+        assert!(!types_character(&key(
+            "e",
+            Some("e"),
+            gpui::Modifiers::alt()
+        )));
+        assert!(!types_character(&key("left", None, none)));
+        assert!(!types_character(&key("enter", None, none)));
     }
 
     #[test]
