@@ -3,7 +3,9 @@
 //! with no tray icon to come back from, it quits. Quitting, from there or from the tray's Quit,
 //! puts the On close setting to this session's unsaved captures: Keep leaves them in history
 //! under the retention setting, Discard deletes them, and Ask shows a dialog, unless there is
-//! nothing unsaved. Saved captures always stay in history, whatever the setting.
+//! nothing unsaved. Saved captures always stay in history, whatever the setting. Edits in an
+//! open editor first go to the card, as Back would put them, so the setting treats that capture
+//! like any other: nothing the user did is lost without being asked about.
 //!
 //! A capture under way or still being stored is waited for first, so a shot just taken is counted
 //! and, with Discard, is in the store before the delete rather than landing after it. When Windows
@@ -118,6 +120,7 @@ impl MainWindow {
             return;
         }
         self.quitting = true;
+        self.keep_open_edits(cx);
         let pending = self.pending.clone();
         cx.spawn(async move |this, cx| {
             settle(&pending, SETTLE_LIMIT, cx.background_executor()).await;

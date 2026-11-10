@@ -214,6 +214,17 @@ impl Document {
         self.saved = Some(edits);
     }
 
+    /// The picture for the card if it shows something else, which from then on counts as
+    /// written: Back, and quitting with the editor open, give the card this.
+    pub fn take_unwritten(&mut self) -> Option<Flattened> {
+        if !self.is_unwritten() {
+            return None;
+        }
+        let flattened = self.flatten();
+        self.written = flattened.edits.clone();
+        Some(flattened)
+    }
+
     /// The picture as it stands.
     pub fn flatten(&self) -> Flattened {
         Flattened {
@@ -813,6 +824,13 @@ mod tests {
         assert!(!document.is_saved());
         document.undo();
         assert!(document.is_saved());
+
+        // What goes to the card counts as written, but not as saved.
+        document.set_crop(IntRect::from_xywh(0, 0, 20, 10));
+        assert!(document.take_unwritten().is_some());
+        assert!(!document.is_unwritten());
+        assert!(!document.is_saved());
+        assert!(document.take_unwritten().is_none());
 
         // Edits waiting for Save, or a capture never saved, match no file.
         let opened = Document::opened(plain(4, 3, 0), None, false);

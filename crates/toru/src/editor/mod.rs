@@ -719,17 +719,33 @@ impl Editor {
         }
     }
 
-    /// Text being typed goes on the document first, so what leaves is what the user sees; a
-    /// drag waits, as the mark under the pointer isn't on the document yet.
-    fn flattened(&mut self, cx: &mut Context<Self>) -> Option<Flattened> {
+    /// Text being typed, and a crop rectangle drawn but not yet applied, go on the document, so
+    /// what leaves the editor is what the user sees. The crop is applied as Apply would, as one
+    /// undo step, and the editor returns to Select.
+    fn commit_pending(&mut self, cx: &mut Context<Self>) {
         self.finish_typing(cx);
+        if self.tool == Tool::Crop {
+            self.apply_crop(cx);
+        }
+    }
+
+    /// What Copy, Save and Save as take, once `commit_pending` has run; a drag waits, as the
+    /// mark under the pointer isn't on the document yet.
+    fn flattened(&mut self, cx: &mut Context<Self>) -> Option<Flattened> {
+        self.commit_pending(cx);
         self.drag.is_none().then(|| self.document.flatten())
     }
 
+    /// The edited picture for the card, if it shows something else: what Back gives it, and
+    /// what quitting with the editor open gives it so the edits aren't lost.
+    pub fn take_unwritten(&mut self, cx: &mut Context<Self>) -> Option<Flattened> {
+        self.commit_pending(cx);
+        self.document.take_unwritten()
+    }
+
     fn back(&mut self, cx: &mut Context<Self>) {
-        self.finish_typing(cx);
-        let changed = self.document.is_unwritten();
-        cx.emit(EditorEvent::Back(changed.then(|| self.document.flatten())));
+        let changed = self.take_unwritten(cx);
+        cx.emit(EditorEvent::Back(changed));
     }
 
     fn copy(&mut self, cx: &mut Context<Self>) {

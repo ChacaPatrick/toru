@@ -195,6 +195,20 @@ impl MainWindow {
         .detach();
     }
 
+    /// Quitting with the editor open: its edits go to the card as Back would put them, on the
+    /// queue, which quitting waits for. The editor stays open, in case quitting is cancelled.
+    pub(super) fn keep_open_edits(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = self.editor.clone() else {
+            return;
+        };
+        let (capture, flattened) = editor.update(cx, |editor, cx| {
+            (editor.stored(), editor.take_unwritten(cx))
+        });
+        if let Some(flattened) = flattened {
+            self.keep_edits(capture, flattened, cx);
+        }
+    }
+
     /// Back: the card takes the edited picture, leaving any file the user saved as it is.
     /// `None` for the original tells the store the edits were all taken off again.
     fn keep_edits(&mut self, capture: CaptureId, flattened: Flattened, cx: &mut Context<Self>) {
