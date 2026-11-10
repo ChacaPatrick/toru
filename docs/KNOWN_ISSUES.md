@@ -1,46 +1,23 @@
 # Known issues
 
-Left open by the review cap. Fix these in section 10.1.
+Left open by the review cap, or by decisions still to make. Section 10.5 (PRs #22–#31) fixed the earlier list.
 
-## Editor text, badges, stickers
-- AltGr and dead keys type the wrong thing on the canvas (`editor/mod.rs`, `type_key`).
-- Characters the bundled font lacks (CJK, emoji, some Cyrillic) are saved as blanks, with no fallback or warning.
-- Resizing can collapse a mark to size 0, leaving it invisible and not resizable.
-- Shift-moving a mark flush against an edge can freeze it (`Annotation::moved`).
-- Ctrl+Z and Ctrl+Y do nothing while typing on the canvas.
-- Changing one option while re-editing text also applies the tool's other options.
-- White and Yellow badges make the white digit unreadable.
-- A click in the far margin can leave invisible text.
-- Text being typed doesn't count as an edit, so a capture can replace the editor and lose it.
-- Pasted CRLF leaves `\r` in the text.
-
-## Editor save
-- A crop that was dragged but not applied is ignored by Save, Copy, Save as and Back, so the file is uncropped.
-- Quitting with the editor open loses unsaved edits.
-
-## Dialogs and shortcuts
-- The toast saying a capture went to the gallery is replaced at once by "Copied to clipboard".
-- `show_editor` takes focus even when a dialog is open, so Esc and Tab miss the dialog.
-- Ctrl+Numpad digits record as the top-row digit, and don't fire.
-- The custom palette panel only stops Esc, so Ctrl+A selects the gallery behind it.
-- An invalid hex field's border colour has no visible effect.
-- Cancelling the quit dialog over the custom palette editor sends focus behind it.
-
-## Looks
-- Pixel art's green and amber palettes keep the first palette's navy and purple in the empty-state box, the disabled buttons' dashes, the day divider and the loading row. A fix is on the branch `followup/pixel-art-palette-colours`, not yet reviewed or checked.
-- Thumbnails stored before 10.4 are not remade, so on a wider card they can still stretch by up to 1.35 times.
+## Editor
+- A redacted editor Save whose file write fails after the card's picture was stored doesn't tell the editor or the gallery: the card shows the blurred picture only after a reload, and an Undo then Back doesn't write the undone state (PR #29 round 3).
+- Quitting with the editor open still loses its edits when Windows shuts down or logs off; there's no time to write the picture then.
+- If writing the edits fails when quitting and the user then cancels the quit, a later Back doesn't retry the write.
+- After a capture with redactions made before 10.5 is saved, its original is kept: a flattened block can't be recognised.
+- Text fallback fonts are loaded on the UI thread the first time a script needs them; a character no listed font has reads all seven files once (about 68 MB, kept in memory).
 
 ## Screen reader
-- Menu buttons (`⋯`, Delayed, Save as, the display picker) expose expand/collapse to assistive tools but don't act on it, so a screen reader's own activate command may not open them. Enter and Space still do.
 - Narrator's headings list may not show the gallery headings; they are still read as text.
 
-## Decided by the owner, to build in 10.1
-- Clear unsaved asks for confirmation first.
-- "Also delete files" sends files to the Recycle Bin.
-- When a capture with blurred or pixelated areas is saved, remove its kept original, so the hidden content is gone. Reset no longer works on those.
-
-## Waiting on the owner
+## Decisions for the owner
+- Japanese text uses Microsoft YaHei for kanji, so it gets the Simplified Chinese forms (fallback order in `platform::fallback_fonts`).
+- The invalid-colour warning border uses one red per look, picked in 10.5.5 (Japandi `#c8553d`, Pixel art `#ff6b97`, Neo-brutalism `#e63946`); the mockups have no warning colour.
+- Charcoal & clay's toast, bulk bar and thumbnail tags now follow its own colours (light toast and bar, dark tags); the Palettes mockup draws them in Linen's colours.
+- Colours tokens.json fixes for the whole look stay the same in every palette: Pixel art's mint focus ring and sticker yellow, Neo-brutalism's blue focus ring, crosshair and graph-paper canvas, and the annotation pink.
 - Installer tool for 10.3: Inno Setup is proposed. Unsigned, so Windows shows a SmartScreen warning.
 
 ## Needs a person
-Real keyboard and mouse use has not been tested: overlay dragging and Esc, tray clicks, arrow keys and Tab, wheel scrolling, drawing on the canvas, recording a shortcut. PrtScn with Windows' setting off (1.1) is also open, and so is a Narrator listening test of the 10.2 changes, which were checked only through the accessibility tree.
+Real keyboard and mouse use has not been tested: typing on the canvas (AltGr, accent keys, an input method, Ctrl+Z while typing, pasting from another program), resizing and Shift-moving marks, drawing a crop or a blur and saving, Ctrl+Numpad shortcuts, overlay dragging and Esc, tray clicks, arrow keys and Tab, wheel scrolling. PrtScn with Windows' setting off (1.1) is also open, and so is a Narrator listening test of the 10.2 changes and of menus opening from Narrator's activate command (10.5.6).
