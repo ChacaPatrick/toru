@@ -3,12 +3,16 @@
 //! is also where "Also delete files" is ticked; a saved capture otherwise leaves the gallery with
 //! its file still in the user's folder. The store goes first, on the capture queue, so a Save
 //! already asked for finishes first, and only then do the cards go. A file that Save writes after
-//! the question opened wasn't mentioned in it, so the tick box doesn't reach it.
+//! the question opened wasn't mentioned in it, so the tick box doesn't reach it. A file the tick
+//! box takes goes to the Recycle Bin, so it can still be brought back.
+
+use std::{io, path::Path};
 
 use gpui::{Context, prelude::*};
 use toru_core::store::{CaptureId, Store};
 
 use super::{MainWindow, act, gallery::plural};
+use crate::platform;
 use crate::ui::{Dialog, Toast};
 
 /// A card on its way out, as it was when the user asked.
@@ -76,16 +80,24 @@ fn deleted_message(count: usize, files_stay: bool) -> String {
     }
 }
 
-/// Deletes the cards' captures from the store, one failure not stopping the rest.
-fn delete_stored(store: &Store, cards: Vec<DeleteCard>, with_files: bool) -> Deleted {
+/// Deletes the cards' captures from the store, one failure not stopping the rest. A saved file
+/// that goes is handed to `remove`, which in the app sends it to the Recycle Bin.
+fn delete_stored(
+    store: &Store,
+    cards: Vec<DeleteCard>,
+    with_files: bool,
+    remove: fn(&Path) -> io::Result<()>,
+) -> Deleted {
     let mut deleted = Deleted::default();
     for card in cards {
         let done = if with_files && card.saved {
-            store.delete_with_file(card.capture).map(|file_gone| {
-                if !file_gone {
-                    deleted.files_kept += 1;
-                }
-            })
+            store
+                .delete_with_file(card.capture, remove)
+                .map(|file_gone| {
+                    if !file_gone {
+                        deleted.files_kept += 1;
+                    }
+                })
         } else {
             // Read now, since a Save ahead of this may have written the file after the question.
             deleted.files_stay |= store
@@ -149,7 +161,9 @@ impl MainWindow {
         let store = self.store.clone();
         self.enqueue(cx, async move |this, cx| {
             let deleted = cx
-                .background_spawn(async move { delete_stored(&store, cards, with_files) })
+                .background_spawn(async move {
+                    delete_stored(&store, cards, with_files, platform::recycle_file)
+                })
                 .await;
             this.update(cx, |this, cx| this.finish_delete(deleted, cx))
                 .ok();
@@ -211,6 +225,11 @@ mod tests {
     use super::super::captures::tests::{TestDir, add};
     use super::*;
 
+    /// How the tests remove a file: for good, so they leave nothing in the Recycle Bin.
+    fn remove(path: &Path) -> io::Result<()> {
+        fs::remove_file(path)
+    }
+
     /// A store with one unsaved capture in a session.
     fn stored(dir: &TestDir) -> (Store, SessionId, CaptureId) {
         let store = dir.store();
@@ -266,7 +285,7 @@ mod tests {
         let (store, session, _) = stored(&dir);
         let (card, file) = saved_card(&dir, &store, session);
 
-        let deleted = delete_stored(&store, vec![card], false);
+        let deleted = delete_stored(&store, vec![card], false, remove);
 
         assert_eq!(deleted.cards, [2]);
         assert_eq!(deleted.failed, 0);
@@ -281,7 +300,7 @@ mod tests {
         let (store, session, _) = stored(&dir);
         let (card, file) = saved_card(&dir, &store, session);
 
-        let deleted = delete_stored(&store, vec![card], true);
+        let deleted = delete_stored(&store, vec![card], true, remove);
 
         assert_eq!(deleted.cards, [2]);
         assert_eq!(deleted.files_kept, 0);
@@ -296,7 +315,7 @@ mod tests {
         let (mut card, file) = saved_card(&dir, &store, session);
         card.saved = false;
 
-        let deleted = delete_stored(&store, vec![card], true);
+        let deleted = delete_stored(&store, vec![card], true, remove);
 
         assert_eq!(deleted.cards, [2]);
         assert_eq!(deleted.files_kept, 0);
@@ -313,7 +332,7 @@ mod tests {
         fs::remove_file(&file).unwrap();
         fs::create_dir(&file).unwrap();
 
-        let deleted = delete_stored(&store, vec![card], true);
+        let deleted = delete_stored(&store, vec![card], true, remove);
 
         assert_eq!(deleted.cards, [2]);
         assert_eq!(deleted.files_kept, 1);
@@ -330,7 +349,7 @@ mod tests {
             saved: false,
         };
 
-        let deleted = delete_stored(&store, vec![unsaved], true);
+        let deleted = delete_stored(&store, vec![unsaved], true, remove);
 
         assert_eq!(deleted.cards, [1]);
         assert!(!deleted.files_stay);

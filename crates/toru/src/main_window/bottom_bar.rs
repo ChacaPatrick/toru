@@ -87,7 +87,7 @@ pub fn bottom_bar(this: &MainWindow, window: &Window, cx: &Context<MainWindow>) 
                 .flex_none()
                 .flex()
                 .gap(px(BUTTON_GAP))
-                .child(clear.on_click(act(cx, |this, cx| this.clear_unsaved(cx))))
+                .child(clear.on_click(act(cx, |this, cx| this.ask_clear_unsaved(cx))))
                 .child(copy.on_click(act(cx, |this, cx| this.copy_all(cx))))
                 .child(save.on_click(act(cx, |this, cx| this.save_all(cx)))),
         )

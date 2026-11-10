@@ -403,12 +403,17 @@ impl Store {
             .map(drop)
     }
 
-    /// `delete`, then the file the user saved the capture to, if any. The record goes first, so a
-    /// failure can only leave a file without a record. Returns whether the file is gone; `false`
-    /// doesn't undo the delete. A file already missing counts as gone. A file another capture is
+    /// `delete`, then the file the user saved the capture to, if any, by `remove`, which in the app
+    /// sends it to the Recycle Bin. The record goes first, so a failure can only leave a file
+    /// without a record. Returns whether the file is gone; `false` doesn't undo the delete. A
+    /// file already missing (`remove` says `NotFound`) counts as gone. A file another capture is
     /// saved to stays, and counts as not gone: the path may have been reused since this capture
     /// was saved, so the file there may be the other capture's.
-    pub fn delete_with_file(&self, id: CaptureId) -> Result<bool> {
+    pub fn delete_with_file(
+        &self,
+        id: CaptureId,
+        remove: impl FnOnce(&Path) -> io::Result<()>,
+    ) -> Result<bool> {
         let saved = match self.capture(id) {
             Ok(capture) => capture.saved_path,
             Err(StoreError::NotFound) => None,
@@ -423,7 +428,7 @@ impl Store {
         if shared {
             return Ok(false);
         }
-        Ok(saved.is_none_or(|path| match fs::remove_file(path) {
+        Ok(saved.is_none_or(|path| match remove(&path) {
             Ok(()) => true,
             Err(error) => error.kind() == io::ErrorKind::NotFound,
         }))
@@ -853,6 +858,11 @@ mod tests {
 
     fn names(captures: &[StoredCapture]) -> Vec<&str> {
         captures.iter().map(|c| c.capture.name.as_str()).collect()
+    }
+
+    /// How the tests have `delete_with_file` remove a file: for good, not to the Recycle Bin.
+    fn remove(path: &Path) -> io::Result<()> {
+        fs::remove_file(path)
     }
 
     fn saved_copy(store: &Store, id: CaptureId, dir: &TestDir, name: &str) -> PathBuf {
@@ -1433,7 +1443,7 @@ mod tests {
         let id = add(&store, session, "shot", TODAY, (9, 0));
         let path = saved_copy(&store, id, &dir, "shot.png");
 
-        assert!(store.delete_with_file(id).unwrap());
+        assert!(store.delete_with_file(id, remove).unwrap());
 
         assert!(store.session_captures(session).unwrap().is_empty());
         assert!(!path.exists());
@@ -1451,12 +1461,12 @@ mod tests {
         fs::remove_file(saved_copy(&store, moved, &dir, "shot.png")).unwrap();
         let path = saved_copy(&store, owner, &dir, "shot.png");
 
-        assert!(!store.delete_with_file(moved).unwrap());
+        assert!(!store.delete_with_file(moved, remove).unwrap());
 
         assert_eq!(names(&store.session_captures(session).unwrap()), ["owner"]);
         assert_eq!(fs::read(&path).unwrap(), b"the user's file");
 
-        assert!(store.delete_with_file(owner).unwrap());
+        assert!(store.delete_with_file(owner, remove).unwrap());
         assert!(!path.exists());
     }
 
@@ -1470,7 +1480,7 @@ mod tests {
         fs::remove_file(saved_copy(&store, moved, &dir, "shot.png")).unwrap();
         let path = saved_copy(&store, owner, &dir, "SHOT.PNG");
 
-        assert!(!store.delete_with_file(moved).unwrap());
+        assert!(!store.delete_with_file(moved, remove).unwrap());
 
         assert_eq!(fs::read(&path).unwrap(), b"the user's file");
     }
@@ -1482,7 +1492,7 @@ mod tests {
         let session = store.new_session().unwrap();
         let id = add(&store, session, "shot", TODAY, (9, 0));
 
-        assert!(store.delete_with_file(id).unwrap());
+        assert!(store.delete_with_file(id, remove).unwrap());
 
         assert!(store.session_captures(session).unwrap().is_empty());
         assert!(!store.image_path(id).exists());
@@ -1497,8 +1507,8 @@ mod tests {
         let path = saved_copy(&store, id, &dir, "shot.png");
         fs::remove_file(path).unwrap();
 
-        assert!(store.delete_with_file(id).unwrap());
-        assert!(store.delete_with_file(id).unwrap());
+        assert!(store.delete_with_file(id, remove).unwrap());
+        assert!(store.delete_with_file(id, remove).unwrap());
     }
 
     #[test]
@@ -1512,7 +1522,7 @@ mod tests {
         fs::remove_file(&path).unwrap();
         fs::create_dir(&path).unwrap();
 
-        assert!(!store.delete_with_file(id).unwrap());
+        assert!(!store.delete_with_file(id, remove).unwrap());
 
         assert!(store.session_captures(session).unwrap().is_empty());
         assert!(path.is_dir());

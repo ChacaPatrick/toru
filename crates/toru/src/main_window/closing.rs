@@ -142,6 +142,7 @@ impl MainWindow {
             Exit::Ask => {
                 // One dialog at a time: the question about quitting replaces this one.
                 self.delete_prompt = None;
+                self.clear_prompt = false;
                 self.quit_prompt = Some(unsaved);
                 platform::show_main_window();
                 self.focus_dialog(cx);

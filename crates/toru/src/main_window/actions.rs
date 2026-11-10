@@ -21,11 +21,12 @@ use toru_core::{
 };
 
 use super::{
-    MainWindow,
+    MainWindow, act,
     captures::{COPY_FAILED, CopyResult, check_chosen_folder},
+    gallery::plural,
 };
 use crate::platform;
-use crate::ui::Toast;
+use crate::ui::{Dialog, Toast};
 
 pub(super) const SAVE_FAILED: &str = "Couldn't save. Check the Save to folder and its free space.";
 const NO_SAVE_FOLDER: &str = "Couldn't find your Pictures folder to save to.";
@@ -35,6 +36,23 @@ const CLEAR_FAILED: &str = "Couldn't clear the unsaved captures";
 const OPEN_FOLDER_FAILED: &str = "Couldn't open that folder. It may have moved.";
 const NEW_SESSION_FAILED: &str = "Couldn't start a new session";
 const BAD_FOLDER: &str = "Toru can't use a folder with that name";
+
+fn clear_title(count: usize) -> String {
+    format!("Clear {}?", plural(count, "unsaved capture"))
+}
+
+/// What the Clear unsaved question says, for this many unsaved captures.
+fn clear_body(count: usize) -> String {
+    if count == 1 {
+        "It will be deleted. It isn't saved to your folder, so it can't be brought back."
+            .to_string()
+    } else {
+        format!(
+            "All {count} will be deleted. They aren't saved to your folder, so they can't be \
+             brought back."
+        )
+    }
+}
 
 /// Where and how captures are saved, fixed when the user asks.
 #[derive(Clone)]
@@ -189,9 +207,46 @@ impl MainWindow {
         }
     }
 
-    /// Bottom bar's Clear unsaved. Runs on the queue so a capture still being stored is cleared
-    /// with the rest, and a Save already asked for is finished first.
-    pub(super) fn clear_unsaved(&mut self, cx: &mut Context<Self>) {
+    /// Bottom bar's Clear unsaved asks first, since an unsaved capture can't be brought back.
+    pub(super) fn ask_clear_unsaved(&mut self, cx: &mut Context<Self>) {
+        if self.gallery.read(cx).unsaved_in_session() == 0 {
+            return;
+        }
+        self.clear_prompt = true;
+        self.focus_dialog(cx);
+        cx.notify();
+    }
+
+    fn dismiss_clear_prompt(&mut self, cx: &mut Context<Self>) {
+        self.clear_prompt = false;
+        cx.notify();
+    }
+
+    fn confirm_clear(&mut self, cx: &mut Context<Self>) {
+        self.clear_prompt = false;
+        self.clear_unsaved(cx);
+        cx.notify();
+    }
+
+    /// The question before Clear unsaved, in the delete question's style: Cancel first, so it
+    /// holds focus when the dialog opens and a stray Enter clears nothing. The count is read as
+    /// it is drawn, so a capture landing while the question is up is counted.
+    pub(super) fn clear_dialog(&self, cx: &Context<Self>) -> Dialog {
+        let unsaved = self.gallery.read(cx).unsaved_in_session();
+        Dialog::new(
+            "clear-dialog",
+            clear_title(unsaved),
+            clear_body(unsaved),
+            &self.dialog_focus,
+            act(cx, |this, cx| this.dismiss_clear_prompt(cx)),
+        )
+        .action("Cancel", act(cx, |this, cx| this.dismiss_clear_prompt(cx)))
+        .primary_action("Clear", act(cx, |this, cx| this.confirm_clear(cx)))
+    }
+
+    /// Clears this session's unsaved captures. Runs on the queue so a capture still being stored
+    /// is cleared with the rest, and a Save already asked for is finished first.
+    fn clear_unsaved(&mut self, cx: &mut Context<Self>) {
         let store = self.store.clone();
         self.enqueue(cx, async move |this, cx| {
             let Ok(session) = this.read_with(cx, |this, _| this.session) else {
@@ -481,6 +536,15 @@ mod tests {
 
     use super::super::captures::tests::{TestDir, add};
     use super::*;
+
+    #[test]
+    fn the_clear_question_says_how_many_go() {
+        assert_eq!(clear_title(1), "Clear 1 unsaved capture?");
+        assert_eq!(clear_title(3), "Clear 3 unsaved captures?");
+        assert!(clear_body(1).starts_with("It will be deleted."));
+        assert!(clear_body(3).starts_with("All 3 will be deleted."));
+        assert!(clear_body(3).ends_with("they can't be brought back."));
+    }
 
     #[test]
     fn save_all_says_how_it_went() {

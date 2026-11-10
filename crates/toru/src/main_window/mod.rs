@@ -130,6 +130,8 @@ pub struct MainWindow {
     quit_prompt: Option<usize>,
     /// The delete dialog is up, asking about these cards (`delete`).
     delete_prompt: Option<delete::DeletePrompt>,
+    /// The Clear unsaved dialog is up (`actions`).
+    clear_prompt: bool,
     /// The open dialog's first action, focused when the dialog opens.
     dialog_focus: FocusHandle,
     /// The Save to folder picker is open, so a second Change doesn't open another.
@@ -256,6 +258,11 @@ impl MainWindow {
             if let Some(start) = this.editor_awaits_history {
                 this.open_newest_in_editor(start, cx);
             }
+            // Nothing left to clear, as after midnight starts an empty session: the question goes.
+            if this.clear_prompt && gallery.read(cx).unsaved_in_session() == 0 {
+                this.clear_prompt = false;
+                cx.notify();
+            }
         })
         .detach();
         let pattern =
@@ -311,6 +318,7 @@ impl MainWindow {
             has_tray: true,
             quit_prompt: None,
             delete_prompt: None,
+            clear_prompt: false,
             dialog_focus: cx.focus_handle().tab_stop(true),
             picking_folder: false,
             saving_edit: false,
@@ -380,6 +388,13 @@ impl MainWindow {
         else {
             return;
         };
+        // A capture opened by "Open editor after capture" would be counted, and cleared, by the
+        // Clear unsaved question, which the editor leaves no way back to anyway. Closed now, not
+        // when the editor appears, so a Clear can't be queued while the picture loads.
+        if self.clear_prompt {
+            self.clear_prompt = false;
+            cx.notify();
+        }
         let store = self.store.clone();
         let window = self.window;
         self.enqueue(cx, async move |this, cx| {
@@ -413,6 +428,8 @@ impl MainWindow {
         cx: &mut Context<Self>,
     ) {
         self.close_editor(window, cx);
+        // And again here, for a question asked while the editor's picture was loading.
+        self.clear_prompt = false;
         let demo = std::mem::take(&mut self.demo_marks);
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(stored, name, document, cx);
@@ -462,6 +479,7 @@ impl MainWindow {
             || self.shortcuts_dialog.is_some()
             || self.quit_prompt.is_some()
             || self.delete_prompt.is_some()
+            || self.clear_prompt
     }
 
     /// Whether the editor is open with annotations that closing it would lose.
@@ -670,6 +688,8 @@ impl Render for MainWindow {
             self.delete_prompt
                 .as_ref()
                 .map(|prompt| self.delete_dialog(prompt, cx).into_any_element()),
+            self.clear_prompt
+                .then(|| self.clear_dialog(cx).into_any_element()),
         ]
         .into_iter()
         .enumerate()

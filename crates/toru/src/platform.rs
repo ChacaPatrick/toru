@@ -1,7 +1,7 @@
 //! The little the app needs from the operating system that GPUI 0.3.11 doesn't offer: restoring
 //! a maximized window, a display's size in physical pixels and the monitor's own identity, which
 //! key and modifiers are down in a key event, the local time, the app-data and default save folders, showing
-//! a file in the file manager, keeping Toru's own windows out of a
+//! a file in the file manager, sending a file to the Recycle Bin, keeping Toru's own windows out of a
 //! capture, the system fonts that draw what the bundled ones lack, bringing the capture overlay
 //! to the foreground, telling which windows a user can
 //! pick, hiding the main window in the tray and showing it again, and telling a running Toru
@@ -23,7 +23,10 @@ mod windows {
         fs,
         hash::{DefaultHasher, Hash, Hasher},
         io,
-        os::windows::{ffi::OsStringExt, process::CommandExt},
+        os::windows::{
+            ffi::{OsStrExt, OsStringExt},
+            process::CommandExt,
+        },
         path::{Path, PathBuf},
         process::Command,
         thread,
@@ -408,6 +411,26 @@ mod windows {
         }
     }
 
+    /// `SHFILEOPSTRUCTW`, as laid out on 64-bit Windows.
+    #[repr(C)]
+    struct FileOperation {
+        hwnd: isize,
+        func: u32,
+        /// Paths, each NUL-terminated, with one more NUL after the last.
+        from: *const u16,
+        to: *const u16,
+        flags: u16,
+        any_aborted: i32,
+        name_mappings: *mut std::ffi::c_void,
+        progress_title: *const u16,
+    }
+
+    const FO_DELETE: u32 = 3;
+    const FOF_SILENT: u16 = 0x0004;
+    const FOF_NOCONFIRMATION: u16 = 0x0010;
+    const FOF_ALLOWUNDO: u16 = 0x0040;
+    const FOF_NOERRORUI: u16 = 0x0400;
+
     #[link(name = "shell32")]
     unsafe extern "system" {
         fn SHGetKnownFolderPath(
@@ -416,6 +439,7 @@ mod windows {
             token: isize,
             path: *mut *mut u16,
         ) -> i32;
+        fn SHFileOperationW(operation: *mut FileOperation) -> i32;
     }
 
     #[link(name = "ole32")]
@@ -445,6 +469,39 @@ mod windows {
             std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join("Pictures"))
         })?;
         Some(pictures.join("Screenshots"))
+    }
+
+    /// Sends a file to the Recycle Bin, asking nothing and showing nothing. A missing file is
+    /// `NotFound`, and anything but a file is refused, since the shell would take a whole folder.
+    /// On a drive with no Recycle Bin, a network share say, the shell deletes the file for good.
+    pub fn recycle_file(path: &Path) -> io::Result<()> {
+        if !fs::metadata(path)?.is_file() {
+            return Err(io::Error::other("not a file"));
+        }
+        // The shell wants a full path, and two NULs after the last one.
+        let mut from: Vec<u16> = std::path::absolute(path)?
+            .as_os_str()
+            .encode_wide()
+            .collect();
+        from.extend([0, 0]);
+        let mut operation = FileOperation {
+            hwnd: 0,
+            func: FO_DELETE,
+            from: from.as_ptr(),
+            to: std::ptr::null(),
+            flags: FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI,
+            any_aborted: 0,
+            name_mappings: std::ptr::null_mut(),
+            progress_title: std::ptr::null(),
+        };
+        // SAFETY: `operation` and the path list it points to outlive the call.
+        let result = unsafe { SHFileOperationW(&mut operation) };
+        if result != 0 || operation.any_aborted != 0 {
+            return Err(io::Error::other(format!(
+                "SHFileOperationW failed with {result:#x}"
+            )));
+        }
+        Ok(())
     }
 
     /// Explorer's own syntax for opening a folder with a file selected.
@@ -734,8 +791,8 @@ pub const EXCLUDE_SETTLE: Duration = Duration::from_millis(50);
 pub use windows::{
     bring_overlay_to_foreground, default_save_folder, exclude_windows_from_capture, fallback_fonts,
     held_modifiers, hide_main_window, is_window_pickable, local_now, main_window_hidden,
-    pressed_key, request_close, restore_window, reveal_file, show_main_window, show_startup_error,
-    signal_running_instance, watch_for_show,
+    pressed_key, recycle_file, request_close, restore_window, reveal_file, show_main_window,
+    show_startup_error, signal_running_instance, watch_for_show,
 };
 
 /// The modifiers held along with a key (`held_modifiers`).
@@ -776,6 +833,12 @@ pub fn default_save_folder() -> Option<PathBuf> {
 #[cfg(not(windows))]
 pub fn reveal_file(_path: &std::path::Path) -> std::io::Result<()> {
     Err(std::io::ErrorKind::Unsupported.into())
+}
+
+/// No Recycle Bin here yet, so the file is deleted for good.
+#[cfg(not(windows))]
+pub fn recycle_file(path: &std::path::Path) -> std::io::Result<()> {
+    std::fs::remove_file(path)
 }
 
 #[cfg(not(windows))]
@@ -876,6 +939,34 @@ mod tests {
 
     fn unique_dir(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("toru-platform-{}-{name}", std::process::id()))
+    }
+
+    #[test]
+    fn recycling_refuses_a_folder_and_reports_a_missing_file() {
+        let dir = unique_dir("recycle-refuses");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        assert!(recycle_file(&dir).is_err());
+        assert!(dir.is_dir());
+        let missing = recycle_file(&dir.join("missing.png")).unwrap_err();
+        assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
+
+        std::fs::remove_dir(&dir).unwrap();
+    }
+
+    /// Ignored, as it leaves a file in the Recycle Bin: `cargo test -- --ignored recycling`.
+    #[test]
+    #[ignore]
+    fn recycling_moves_a_file_out_of_its_folder() {
+        let dir = unique_dir("recycle-moves");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("toru-recycle-test.png");
+        std::fs::write(&file, b"test").unwrap();
+
+        recycle_file(&file).unwrap();
+
+        assert!(!file.exists());
+        std::fs::remove_dir(&dir).unwrap();
     }
 
     #[test]
