@@ -53,6 +53,10 @@ pub fn theme(palette: usize) -> Theme {
             c.surface_sel = hex(0xe3ebff);
             c.chip_saved_text = c.accent_text;
             c.bulk_main_text = c.accent_text;
+            // `.card.dim{background:#f3efe4}` and `--shot-fill` are the cream window written
+            // out, which this palette's paper replaces.
+            c.earlier_card_bg = c.bg;
+            c.shot_fill = c.bg;
         }
         2 => {
             let white = hex(0xffffff);
@@ -130,9 +134,32 @@ pub fn theme(palette: usize) -> Theme {
                 shadow[0].color = white;
             }
         }
-        _ => {}
+        // Cream / yellow / mint / coral is the base as it stands.
+        _ => return theme,
     }
+    follow_cream(&mut theme);
     theme
+}
+
+/// The look's `extra_css` writes the first palette's mint and yellow into the on-states and the
+/// bulk bar's main button, and its yellow and coral into the second and third cards' thumbs,
+/// which left them on a blue or an acid window. Each takes the colour of its own palette that
+/// holds the same place in the first: there a switched-on toggle and a saved chip are the
+/// toast's mint, the bulk bar's main button and the capture overlay's edge are the primary
+/// button's yellow, and the thumbs go through the palette's swatches, the third (which every
+/// palette's `--thumb` is) and then the second and the fourth.
+///
+/// The blue focus ring and crosshair, the editor's graph paper and the black lines `extra_css`
+/// pins belong to no palette, and the sticker is drawn on the picture, not on the window. Those
+/// stay the look's.
+fn follow_cream(theme: &mut Theme) {
+    let swatches = palettes()[theme.palette].swatches;
+    let c = &mut theme.colors;
+    c.toggle_on = c.toast_bg;
+    c.chip_saved_bg = c.toast_bg;
+    c.bulk_main_bg = c.accent_bg;
+    c.thumb_alt = vec![Fill::Solid(swatches[1]), Fill::Solid(swatches[3])];
+    theme.overlay.edge.color = c.accent_bg;
 }
 
 /// NeoBrutalism in the user's own colours: the derived colours, with the look's heavy borders
@@ -216,7 +243,8 @@ fn base() -> Theme {
             chip_text: black,
             toggle_off: white,
             toggle_knob: black,
-            // The on-states are pinned in the look's `extra_css`, so they don't follow the accent.
+            // The on-states are pinned in the look's `extra_css`, so they don't follow the accent;
+            // the other palettes take theirs in `follow_cream`.
             toggle_on: hex(0x7cf5c2),
             toggle_on_knob: black,
             on_bg: black,
@@ -406,7 +434,9 @@ mod tests {
         assert_token(&tokens, "session", theme.strings.session);
     }
 
-    /// `extra_css` pins these for the whole look, so no palette moves them.
+    /// `extra_css` pins these for the whole look. The ones it pins to black, the blue focus ring
+    /// and the thumb's outline hold in every palette; the ones it pins to the first palette's
+    /// mint, yellow and coral hold there, and follow each other palette's own colours.
     #[test]
     fn extra_css_on_states_hold_in_every_palette() {
         let tokens = entry().base();
@@ -423,10 +453,20 @@ mod tests {
         for index in 0..3 {
             let theme = theme(index);
             let c = &theme.colors;
-            assert_eq!(css_hex(c.chip_saved_bg), "#7cf5c2");
-            assert_eq!(css_hex(c.toggle_on), "#7cf5c2");
+            assert_eq!(css_hex(c.chip_saved_bg), css_hex(c.toast_bg));
+            assert_eq!(css_hex(c.toggle_on), css_hex(c.toast_bg));
             assert_eq!(css_hex(c.toggle_on_knob), "#000000");
-            assert_eq!(css_hex(c.bulk_main_bg), "#ffde59");
+            assert_eq!(css_hex(c.bulk_main_bg), css_hex(c.accent_bg));
+            assert_eq!(css_hex(theme.overlay.edge.color), css_hex(c.accent_bg));
+            let swatches = palettes()[index].swatches;
+            let thumbs: Vec<String> = std::iter::once(&c.thumb)
+                .chain(&c.thumb_alt)
+                .map(|thumb| match thumb {
+                    Fill::Solid(color) => css_hex(*color),
+                    _ => panic!("thumbs are flat"),
+                })
+                .collect();
+            assert_eq!(thumbs, [2, 1, 3].map(|swatch| css_hex(swatches[swatch])));
             assert_eq!(css_hex(c.dot), "#000000");
             assert_eq!(theme.icons.dot, px(16.));
             assert_eq!(css_border(theme.borders.title_divider), "3px solid #000000");
@@ -435,6 +475,14 @@ mod tests {
             assert_eq!(css_hex(c.bulk_focus), "#4d7cff");
             assert_eq!(css_border(theme.borders.thumb), "3px solid #000000");
         }
+        let cream = theme(0);
+        assert_eq!(css_hex(cream.colors.toggle_on), "#7cf5c2");
+        assert_eq!(css_hex(cream.colors.bulk_main_bg), "#ffde59");
+        assert_eq!(css_hex(cream.overlay.edge.color), "#ffde59");
+        assert_eq!(css_hex(theme(1).colors.toggle_on), "#c6ff5c");
+        assert_eq!(css_hex(theme(1).colors.bulk_main_bg), "#4d7cff");
+        assert_eq!(css_hex(theme(2).colors.toggle_on), "#d4ff00");
+        assert_eq!(css_hex(theme(2).colors.bulk_main_bg), "#d4ff00");
     }
 
     #[test]
@@ -520,9 +568,11 @@ mod tests {
             assert_eq!(css_hex(c.label), "#000000");
             assert_eq!(css_hex(c.on_bg), "#000000");
             assert_eq!(css_hex(c.on_text), "#ffffff");
-            assert_eq!(css_hex(c.earlier_card_bg), "#f3efe4");
+            // The cream of `.card.dim` is the first palette's window; Paper's is its own.
+            assert_eq!(css_hex(c.earlier_card_bg), css_hex(c.bg));
             assert_eq!(css_hex(c.swatch_on), "#000000");
         }
+        assert_eq!(css_hex(theme(0).colors.earlier_card_bg), "#f3efe4");
         assert_eq!(css_hex(theme(0).colors.surface_sel), "#ffffff");
     }
 

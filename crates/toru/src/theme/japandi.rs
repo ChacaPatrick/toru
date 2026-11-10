@@ -7,6 +7,7 @@ use super::{
     Border, Borders, CUSTOM_PALETTE, Colors, CustomPalette, DayDate, EmptyState, Fill, Fonts,
     Icons, Ornament, Overlay, Palette, Radii, Shadows, Sizes, Strings, Theme, TypeScale,
     css::{body, display, gradient, hex, hex_alpha, mono, soft_shadow},
+    custom::mix,
 };
 
 pub fn palettes() -> [Palette; 3] {
@@ -30,8 +31,8 @@ pub fn theme(palette: usize) -> Theme {
     let mut theme = base();
     theme.palette = palette;
     let c = &mut theme.colors;
-    let b = &mut theme.borders;
-    match palette {
+    // The line around a control, a little stronger than the hairline.
+    let line = match palette {
         1 => {
             c.bg = hex(0xe9ebe6);
             c.surface = hex(0xf6f7f4);
@@ -41,10 +42,15 @@ pub fn theme(palette: usize) -> Theme {
             c.accent = hex(0x4f6b4a);
             c.accent_bg = hex(0x4f6b4a);
             c.accent_text = hex(0xf6f7f4);
-            follow_palette(c);
             c.thumb = gradient(135., 0xd7dccf, 0xbfc7b5);
             c.title_bg = hex(0xdfe3da);
             c.title_text = hex(0x23261f);
+            // tokens.json gives Stone & moss no value for these, which left them in Linen's
+            // beige: they take Linen's steps from this palette's own colours.
+            c.surface_sel = step(c, SELECTED);
+            c.input_bg = mix(c.surface, gpui::white(), INPUT);
+            c.hair = step(c, HAIR);
+            step(c, LINE)
         }
         2 => {
             c.bg = hex(0x1f1e1b);
@@ -55,7 +61,6 @@ pub fn theme(palette: usize) -> Theme {
             c.accent = hex(0xc4855a);
             c.accent_bg = hex(0xc4855a);
             c.accent_text = hex(0x1f1e1b);
-            follow_palette(c);
             c.thumb = gradient(135., 0x3a372f, 0x2e2b25);
             c.title_bg = hex(0x161512);
             c.title_text = hex(0xece6da);
@@ -63,28 +68,93 @@ pub fn theme(palette: usize) -> Theme {
             // 2.1:1. A lifted charcoal keeps it at 4.8:1 and text at 10.3:1 (DESIGN.md §7).
             c.surface_sel = hex(0x35322b);
             c.input_bg = hex(0x1a1916);
-            c.button_bg = hex(0x2a2824);
-            c.button_text = hex(0xece6da);
             c.hair = hex(0x3d3a33);
-            c.chip_text = hex(0xa69d8e);
-            b.card = Border::solid(1., hex(0x3d3a33));
-            b.hair = Border::solid(1., hex(0x3d3a33));
-            b.input = Border::solid(1., hex(0x4a463e));
-            b.button = Border::solid(1., hex(0x4a463e));
-            b.chip = Border::solid(1., hex(0x4a463e));
-            // tokens.json leaves the light tag (#faf7f1 at .9) with its light-palette `--tag-text`
-            // (#6b665c): 4.4:1 over this palette's thumb. The base `--bulk-sep` grey reaches 5.7:1.
-            c.tag_text = hex(0x5a564e);
+            hex(0x4a463e)
         }
-        _ => {}
-    }
-    theme.borders.title_divider = theme.borders.hair;
+        // Linen & walnut is the base as it stands.
+        _ => return theme,
+    };
+    follow_linen(&mut theme, line);
+    follow_palette(&mut theme.colors);
     theme
 }
 
+/// How far Linen & walnut's greys sit from its window towards its text: a selected card
+/// (`#ece4d6`), the toggle's track and the editor canvas (`#e9e1d3`, `#e8e1d4`), the hairline
+/// (`#d8cfbf`), the frame (`#cfc5b3`), the line around a control (`#cdc3b1`) and the toggle's
+/// edge (`#b9ad99`). Each lands within a few levels of Linen's warmer token.
+const SELECTED: f32 = 0.03;
+const TRACK: f32 = 0.046;
+const HAIR: f32 = 0.144;
+const FRAME: f32 = 0.198;
+const LINE: f32 = 0.209;
+const TOGGLE_EDGE: f32 = 0.322;
+/// A field is the surface half-way to white (`#fffdf9` over `#faf7f1`), the title bar's dot is
+/// the window half-way to the accent (`#b5a48a`), and the bulk bar's separator is its ink a
+/// fifth of the way to its text (`#5a564e`).
+const INPUT: f32 = 0.51;
+const DOT: f32 = 0.51;
+const BULK_SEP: f32 = 0.21;
+
+/// `amount` of the way from the window to the text: the same step in any palette, in that
+/// palette's own tint.
+fn step(c: &Colors, amount: f32) -> Hsla {
+    mix(c.bg, c.text, amount)
+}
+
+/// tokens.json gives the other palettes no value for these, which left Linen & walnut's beige
+/// and walnut on a stone or charcoal window. Each takes the colour of its own palette that holds
+/// the same place in Linen's tokens: there a button is the surface under the text, a chip's and
+/// a tag's text are the muted colour, the tag is the surface at 90%, the toggle's knob and the
+/// primary button's edge are the accent, the toast and the bulk bar are the text colour under
+/// the surface colour, and the hairline draws the cards, menus and day rules. Linen's other
+/// greys are the same steps from the window to the text.
+///
+/// The soft shadows and the thumbnail's shade are faint translucent darks, which suit any
+/// palette; the annotation colour, the sticker and the capture overlay are drawn on the
+/// picture, not on the window. Those stay the look's.
+fn follow_linen(theme: &mut Theme, line: Hsla) {
+    let c = &mut theme.colors;
+    c.button_bg = c.surface;
+    c.button_text = c.text;
+    c.chip_text = c.muted;
+    c.tag_bg = Hsla {
+        a: 0.9,
+        ..c.surface
+    };
+    c.tag_text = c.muted;
+    c.toggle_off = step(c, TRACK);
+    c.toggle_knob = c.accent;
+    c.dot = mix(c.bg, c.accent, DOT);
+    c.toast_bg = c.text;
+    c.toast_text = c.surface;
+    c.canvas = Fill::Solid(step(c, TRACK));
+    c.shot_bg = c.surface;
+    c.shot_line = c.hair;
+    c.shot_fill = c.surface_2;
+    c.bulk_bg = c.text;
+    c.bulk_text = c.surface;
+    c.bulk_sep = mix(c.bulk_bg, c.bulk_text, BULK_SEP);
+    let b = &mut theme.borders;
+    b.accent.color = c.accent;
+    for border in [
+        &mut b.hair,
+        &mut b.card,
+        &mut b.pop,
+        &mut b.earlier_rule,
+        &mut b.title_divider,
+    ] {
+        border.color = c.hair;
+    }
+    for border in [&mut b.button, &mut b.input, &mut b.chip, &mut b.load] {
+        border.color = line;
+    }
+    b.frame.color = step(c, FRAME);
+    b.toggle.color = step(c, TOGGLE_EDGE);
+}
+
 /// Japandi's CSS has no rule of its own for these, so they follow the palette's accent, muted and
-/// surface. `--accent-border` and `--toggle-knob` are not overridden in the tokens, so they keep
-/// the base values.
+/// surface.
 ///
 /// tokens.json fixes `--focus`, `--focus-halo` and the window control colour at the base palette's
 /// values, which fail DESIGN.md §7 on the other palettes (the focus ring is 1.2:1 on Charcoal & clay).
@@ -400,12 +470,142 @@ mod tests {
             "--input-border",
             &format!("1px solid {}", css_hex(dark.borders.input.color)),
         );
-        // Not overridden by any palette, so the base value carries through.
+        let solid = |border: Border| format!("1px solid {}", css_hex(border.color));
+        let (c, b) = (&dark.colors, &dark.borders);
+        assert_token(&section, "--input-bg", &css_hex(c.input_bg));
+        assert_token(&section, "--btn-bg", &css_hex(c.button_bg));
+        assert_token(&section, "--btn-text", &css_hex(c.button_text));
+        assert_token(&section, "--chip-text", &css_hex(c.chip_text));
+        assert_token(&section, "--hair", &solid(b.hair));
+        assert_token(&section, "--card-border", &solid(b.card));
+        assert_token(&section, "--btn-border", &solid(b.button));
+        assert_token(&section, "--chip-border", &solid(b.chip));
         assert_token(
             &tokens(),
             "--accent-border",
-            &format!("1px solid {}", css_hex(dark.borders.accent.color)),
+            &solid(theme(0).borders.accent),
         );
+    }
+
+    /// Every colour `follow_linen` sets, by name, with the line it is given.
+    fn followed(theme: &Theme) -> Vec<(&'static str, Hsla)> {
+        let (c, b) = (&theme.colors, &theme.borders);
+        let Fill::Solid(canvas) = c.canvas else {
+            panic!("canvas is flat");
+        };
+        vec![
+            ("surface_sel", c.surface_sel),
+            ("input_bg", c.input_bg),
+            ("hair", c.hair),
+            ("button_bg", c.button_bg),
+            ("button_text", c.button_text),
+            ("chip_text", c.chip_text),
+            ("tag_bg", c.tag_bg),
+            ("tag_text", c.tag_text),
+            ("toggle_off", c.toggle_off),
+            ("toggle_knob", c.toggle_knob),
+            ("dot", c.dot),
+            ("toast_bg", c.toast_bg),
+            ("toast_text", c.toast_text),
+            ("canvas", canvas),
+            ("shot_bg", c.shot_bg),
+            ("shot_line", c.shot_line),
+            ("shot_fill", c.shot_fill),
+            ("bulk_bg", c.bulk_bg),
+            ("bulk_text", c.bulk_text),
+            ("bulk_sep", c.bulk_sep),
+            ("accent border", b.accent.color),
+            ("hair border", b.hair.color),
+            ("card border", b.card.color),
+            ("pop border", b.pop.color),
+            ("earlier rule", b.earlier_rule.color),
+            ("title divider", b.title_divider.color),
+            ("button border", b.button.color),
+            ("input border", b.input.color),
+            ("chip border", b.chip.color),
+            ("load border", b.load.color),
+            ("frame", b.frame.color),
+            ("toggle border", b.toggle.color),
+        ]
+    }
+
+    /// What the tokens leave unset in the other palettes is taken from each palette's own
+    /// colours the way Linen & walnut's tokens relate. Asked of Linen's colours, the rules give
+    /// its tokens back: exactly where a token repeats another of Linen's colours, and within a
+    /// few levels where it is one of Linen's warm greys, which the rules take as a step from the
+    /// window to the text.
+    #[test]
+    fn the_rules_for_the_other_palettes_give_linen_its_own_tokens() {
+        let linen = theme(0);
+        let mut derived = base();
+        let c = &mut derived.colors;
+        c.surface_sel = step(c, SELECTED);
+        c.input_bg = mix(c.surface, gpui::white(), INPUT);
+        c.hair = step(c, HAIR);
+        let line = step(c, LINE);
+        follow_linen(&mut derived, line);
+        let greys = [
+            "surface_sel",
+            "input_bg",
+            "hair",
+            "toggle_off",
+            "dot",
+            "canvas",
+            "shot_line",
+            "bulk_sep",
+            "hair border",
+            "card border",
+            "pop border",
+            "earlier rule",
+            "title divider",
+            "button border",
+            "input border",
+            "chip border",
+            "load border",
+            "frame",
+            "toggle border",
+        ];
+        for ((name, token), (_, rule)) in followed(&linen).into_iter().zip(followed(&derived)) {
+            assert_eq!(token.a, rule.a, "{name}");
+            if greys.contains(&name) {
+                let (token, rule) = (gpui::Rgba::from(token), gpui::Rgba::from(rule));
+                for (a, b) in [(token.r, rule.r), (token.g, rule.g), (token.b, rule.b)] {
+                    assert!((a - b).abs() * 255. <= 10.5, "{name}: {token:?} {rule:?}");
+                }
+            } else {
+                assert_eq!(css_hex(token), css_hex(rule), "{name}");
+            }
+        }
+    }
+
+    /// The other palettes show none of Linen & walnut's beige or walnut where the tokens give
+    /// them no value of their own.
+    #[test]
+    fn the_other_palettes_keep_none_of_linens_colours() {
+        let linen: Vec<String> = followed(&theme(0))
+            .into_iter()
+            .map(|(_, color)| css_hex(color))
+            .collect();
+        for index in 1..3 {
+            let theme = theme(index);
+            for (name, color) in followed(&theme) {
+                assert!(!linen.contains(&css_hex(color)), "{index}: {name}");
+            }
+            let (c, b) = (&theme.colors, &theme.borders);
+            assert_eq!(css_hex(c.toggle_knob), css_hex(c.accent));
+            assert_eq!(css_hex(b.accent.color), css_hex(c.accent));
+            assert_eq!(css_hex(c.toast_bg), css_hex(c.text));
+            assert_eq!(css_hex(c.bulk_bg), css_hex(c.text));
+            assert_eq!(css_hex(c.bulk_text), css_hex(c.surface));
+            assert_eq!(css_hex(c.tag_bg), css_hex(c.surface));
+            assert_eq!(css_hex(c.tag_text), css_hex(c.muted));
+            for hairline in [b.hair, b.card, b.pop, b.earlier_rule, b.title_divider] {
+                assert_eq!(css_hex(hairline.color), css_hex(c.hair));
+            }
+            for edge in [b.input, b.chip, b.load] {
+                assert_eq!(css_hex(edge.color), css_hex(b.button.color));
+            }
+        }
     }
 
     /// Where the theme leaves tokens.json on purpose, for DESIGN.md §7 contrast. Each departure is
@@ -435,12 +635,8 @@ mod tests {
             assert_eq!(css_hex(c.bulk_focus), css_hex(c.bulk_text));
         }
         assert_token(&tokens, "--surface-sel", "#ece4d6");
-        assert_eq!(css_hex(theme(1).colors.surface_sel), "#ece4d6");
+        assert!(!palette_section(2).contains("--surface-sel"));
         assert_eq!(css_hex(theme(2).colors.surface_sel), "#35322b");
-        assert_token(&tokens, "--tag-text", "#6b665c");
-        assert!(!palette_section(2).contains("--tag-text"));
-        assert_eq!(css_hex(theme(1).colors.tag_text), "#6b665c");
-        assert_eq!(css_hex(theme(2).colors.tag_text), "#5a564e");
     }
 
     /// Each slice stops at the next section, so a value copied from the wrong palette is caught.
