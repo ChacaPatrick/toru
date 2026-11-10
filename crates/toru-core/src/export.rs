@@ -58,23 +58,32 @@ pub fn save_capture(
 
 /// Writes the editor's `edited` picture into `folder` as the capture's saved file, under a new
 /// name if a file has it, and shows it on the card. `original` is the capture as it was taken,
-/// kept for Reset edits, or `None` if `edited` is that picture. A capture saved before keeps its
-/// earlier file, which is never overwritten, and the record moves to the new one.
+/// kept for Reset edits, or `None` if `edited` is that picture. If `redacted`, `edited` hides some
+/// of the capture, so the original is deleted once the file is written. A capture saved before
+/// keeps its earlier file, which is never overwritten, and the record moves to the new one.
+#[allow(clippy::too_many_arguments)]
 pub fn save_edited(
     store: &Store,
     id: CaptureId,
     edited: &RgbaImage,
     original: Option<&RgbaImage>,
+    redacted: bool,
     folder: &Path,
     format: SaveFormat,
     max_thumbnail_width: u32,
 ) -> Result<SavedFile> {
+    store.check_not_revealing(id, redacted)?;
+    // The card's own picture takes the redactions first, as on Back, so if its temp copy can't
+    // be deleted once saved, what is left shows what the file shows.
+    if redacted && store.image_path(id).is_file() {
+        store.store_edit(id, edited, original, true, max_thumbnail_width)?;
+    }
     let capture = store.capture(id)?;
     let bytes = encoded_pixels(edited, format)?;
     store.keep_original(id, original)?;
     fs::create_dir_all(folder)?;
     let path = write_new_file(folder, &capture.name, format, &bytes)?;
-    if let Err(error) = store.mark_saved(id, &path) {
+    if let Err(error) = store.record_saved(id, &path, Some(redacted)) {
         let _ = fs::remove_file(&path);
         return Err(error);
     }
@@ -222,7 +231,7 @@ mod tests {
 
     use super::*;
     use crate::capture::{Capture, CaptureMode};
-    use crate::store::{SessionId, StoreError};
+    use crate::store::{Redaction, SessionId, StoreError};
     use crate::time::{LocalDate, LocalDateTime};
 
     struct TestDir(PathBuf);
@@ -307,6 +316,7 @@ mod tests {
             id,
             &edited(),
             Some(&frame()),
+            false,
             &dir.folder(),
             SaveFormat::Png,
             8,
@@ -339,6 +349,7 @@ mod tests {
                 id,
                 picture,
                 Some(original),
+                false,
                 &dir.folder(),
                 SaveFormat::Png,
                 8,
@@ -371,6 +382,7 @@ mod tests {
             id,
             &edited(),
             Some(&frame()),
+            false,
             &blocked,
             SaveFormat::Png,
             8,
@@ -392,7 +404,9 @@ mod tests {
             .unwrap();
         let before = fs::read(&file.path).unwrap();
 
-        store.store_edit(id, &edited(), Some(&frame()), 8).unwrap();
+        store
+            .store_edit(id, &edited(), Some(&frame()), false, 8)
+            .unwrap();
 
         assert_eq!(fs::read(&file.path).unwrap(), before);
         assert_eq!(store.full_image_path(id).unwrap(), store.image_path(id));
@@ -413,6 +427,7 @@ mod tests {
             id,
             &edited(),
             Some(&frame()),
+            false,
             &dir.folder(),
             SaveFormat::Png,
             8,
@@ -429,11 +444,13 @@ mod tests {
         let session = store.new_session().unwrap();
         let id = add(&store, session, "shot");
 
-        store.store_edit(id, &edited(), Some(&frame()), 8).unwrap();
+        store
+            .store_edit(id, &edited(), Some(&frame()), false, 8)
+            .unwrap();
         assert!(store.original_path(id).is_file());
         assert_eq!(png_at(&store.image_path(id)), edited());
 
-        store.store_edit(id, &frame(), None, 8).unwrap();
+        store.store_edit(id, &frame(), None, false, 8).unwrap();
         assert!(!store.original_path(id).exists());
         assert_eq!(png_at(&store.image_path(id)), frame());
         let capture = store.capture(id).unwrap();
@@ -451,13 +468,14 @@ mod tests {
             id,
             &edited(),
             Some(&frame()),
+            false,
             &dir.folder(),
             SaveFormat::Png,
             8,
         )
         .unwrap();
 
-        store.store_edit(id, &frame(), None, 8).unwrap();
+        store.store_edit(id, &frame(), None, false, 8).unwrap();
 
         assert!(store.original_path(id).is_file());
         drop(store);
@@ -471,13 +489,219 @@ mod tests {
         let store = dir.store();
         let session = store.new_session().unwrap();
         let id = add(&store, session, "shot");
-        store.store_edit(id, &edited(), Some(&frame()), 8).unwrap();
+        store
+            .store_edit(id, &edited(), Some(&frame()), false, 8)
+            .unwrap();
         let original = store.original_path(id);
         assert!(original.is_file());
 
         store.delete(id).unwrap();
 
         assert!(!original.exists());
+    }
+
+    #[test]
+    fn saving_a_redacted_edit_deletes_the_original_for_good() {
+        let dir = TestDir::new();
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot");
+
+        save_edited(
+            &store,
+            id,
+            &edited(),
+            Some(&frame()),
+            true,
+            &dir.folder(),
+            SaveFormat::Png,
+            8,
+        )
+        .unwrap();
+
+        assert!(!store.original_path(id).exists());
+        assert!(store.redaction(id).unwrap().original_removed);
+        // A later edit can't bring it back, and the edit waiting for Save survives a restart.
+        store
+            .store_edit(id, &RgbaImage::new(3, 3), Some(&frame()), true, 8)
+            .unwrap();
+        assert!(!store.original_path(id).exists());
+        drop(store);
+        let store = dir.store();
+        assert_eq!(
+            png_at(&store.full_image_path(id).unwrap()).dimensions(),
+            (3, 3)
+        );
+        assert!(store.redaction(id).unwrap().original_removed);
+    }
+
+    #[test]
+    fn saving_from_the_gallery_deletes_the_original_only_of_a_redacted_picture() {
+        let dir = TestDir::new();
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let redacted = add(&store, session, "hidden");
+        let marked = add(&store, session, "marked");
+        store
+            .store_edit(redacted, &edited(), Some(&frame()), true, 8)
+            .unwrap();
+        store
+            .store_edit(marked, &edited(), Some(&frame()), false, 8)
+            .unwrap();
+        // Reset stays possible until the picture is saved.
+        assert!(store.original_path(redacted).is_file());
+        assert!(!store.redaction(redacted).unwrap().original_removed);
+
+        for id in [redacted, marked] {
+            save_capture(&store, id, &dir.folder(), SaveFormat::Png).unwrap();
+        }
+
+        assert!(!store.original_path(redacted).exists());
+        assert!(store.redaction(redacted).unwrap().original_removed);
+        assert!(store.original_path(marked).is_file());
+        assert_eq!(store.redaction(marked).unwrap(), Redaction::default());
+    }
+
+    #[test]
+    fn once_the_original_is_removed_no_picture_without_redactions_is_written() {
+        let dir = TestDir::new();
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot");
+        save_edited(
+            &store,
+            id,
+            &edited(),
+            Some(&frame()),
+            true,
+            &dir.folder(),
+            SaveFormat::Png,
+            8,
+        )
+        .unwrap();
+
+        // An editor still holding the picture from before the save: Back, then Save.
+        let back = store.store_edit(id, &frame(), None, false, 8);
+        assert!(matches!(back, Err(StoreError::WouldReveal)));
+        let save = save_edited(
+            &store,
+            id,
+            &frame(),
+            None,
+            false,
+            &dir.folder(),
+            SaveFormat::Png,
+            8,
+        );
+        assert!(matches!(save, Err(StoreError::WouldReveal)));
+        assert!(!store.image_path(id).exists());
+        assert!(!store.original_path(id).exists());
+        assert_eq!(png_at(&store.full_image_path(id).unwrap()), edited());
+        assert!(store.redaction(id).unwrap().original_removed);
+
+        // More edits over the saved picture are fine, and the original stays removed.
+        store.store_edit(id, &edited(), None, true, 8).unwrap();
+        assert!(store.redaction(id).unwrap().original_removed);
+    }
+
+    #[test]
+    fn an_original_that_could_not_be_deleted_goes_at_the_next_start() {
+        let dir = TestDir::new();
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot");
+        store
+            .store_edit(id, &edited(), Some(&frame()), true, 8)
+            .unwrap();
+        // Held open without sharing delete, as another program viewing it might.
+        let held = hold_open(&store.original_path(id));
+
+        save_capture(&store, id, &dir.folder(), SaveFormat::Png).unwrap();
+
+        assert!(store.redaction(id).unwrap().original_removed);
+        #[cfg(windows)]
+        assert!(store.original_path(id).is_file());
+        drop(held);
+        drop(store);
+        let store = dir.store();
+        assert!(!store.original_path(id).exists());
+        assert!(store.redaction(id).unwrap().original_removed);
+    }
+
+    #[test]
+    fn a_redacted_save_gives_the_card_its_picture_before_writing_the_file() {
+        // So a temp copy that can't be deleted after the save shows what the file shows.
+        let dir = TestDir::new();
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot");
+        let blocked = dir.0.join("blocked");
+        fs::write(&blocked, b"").unwrap();
+
+        let saved = save_edited(
+            &store,
+            id,
+            &edited(),
+            Some(&frame()),
+            true,
+            &blocked,
+            SaveFormat::Png,
+            8,
+        );
+
+        assert!(saved.is_err());
+        assert_eq!(png_at(&store.image_path(id)), edited());
+        assert_eq!(png_at(&store.original_path(id)), frame());
+        assert_eq!(
+            store.redaction(id).unwrap(),
+            Redaction {
+                redacted: true,
+                original_removed: false,
+            }
+        );
+    }
+
+    /// Opens `path` so that, on Windows, it can't be deleted until the handle goes.
+    fn hold_open(path: &Path) -> File {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            const FILE_SHARE_READ: u32 = 1;
+            File::options()
+                .read(true)
+                .share_mode(FILE_SHARE_READ)
+                .open(path)
+                .unwrap()
+        }
+        #[cfg(not(windows))]
+        File::open(path).unwrap()
+    }
+
+    #[test]
+    fn a_redaction_taken_off_before_saving_keeps_the_original() {
+        let dir = TestDir::new();
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot");
+        store
+            .store_edit(id, &edited(), Some(&frame()), true, 8)
+            .unwrap();
+
+        save_edited(
+            &store,
+            id,
+            &edited(),
+            Some(&frame()),
+            false,
+            &dir.folder(),
+            SaveFormat::Png,
+            8,
+        )
+        .unwrap();
+
+        assert!(store.original_path(id).is_file());
+        assert!(!store.remove_redacted_original(id).unwrap());
+        assert!(store.original_path(id).is_file());
     }
 
     #[test]

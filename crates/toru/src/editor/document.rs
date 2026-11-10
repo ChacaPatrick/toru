@@ -14,8 +14,10 @@ use tiny_skia::{
 };
 use xcap::image::{Frame, RgbaImage};
 
+use toru_core::store::Redaction;
+
 use super::{
-    annotation::{self, Annotation},
+    annotation::{self, Annotation, Shape},
     text,
 };
 
@@ -118,6 +120,9 @@ pub struct Flattened {
     pub original: Arc<Pixmap>,
     /// Whether `picture` differs from `original`.
     pub is_edited: bool,
+    /// Whether `picture` hides some of the capture under blur, pixelate or solid boxes, so
+    /// saving it deletes the original.
+    pub redacted: bool,
     /// The state flattened, to say so once it is written.
     pub edits: Edits,
 }
@@ -130,6 +135,10 @@ pub struct Document {
     written: Edits,
     /// The state the user's saved file shows, if there is a file and it shows one of these.
     saved: Option<Edits>,
+    /// The picture as opened, if it already hides some of the capture.
+    redacted_base: Option<Arc<Pixmap>>,
+    /// The original was deleted when a picture hiding some of it was saved: no Reset edits.
+    original_removed: bool,
 }
 
 impl Document {
@@ -153,7 +162,75 @@ impl Document {
             written: start.clone(),
             saved: in_file.then(|| start.clone()),
             edits: History::new(start),
+            redacted_base: None,
+            original_removed: false,
         }
+    }
+
+    /// What the store says of the capture: whether the picture as opened already hides some of
+    /// it, and whether its original is gone.
+    pub fn with_redaction(mut self, redaction: Redaction) -> Document {
+        self.redacted_base = redaction.redacted.then(|| self.edits.get().base.clone());
+        self.original_removed = redaction.original_removed;
+        self
+    }
+
+    /// Whether the picture as it stands hides some of the capture.
+    fn is_redacted(&self) -> bool {
+        let edits = self.edits.get();
+        self.redacted_base
+            .as_ref()
+            .is_some_and(|base| Arc::ptr_eq(base, &edits.base))
+            || edits
+                .annotations
+                .iter()
+                .any(|mark| matches!(mark.shape, Shape::Block(_)))
+    }
+
+    /// Whether Reset edits can go back to the capture as it was taken.
+    pub fn can_reset(&self) -> bool {
+        !self.original_removed
+    }
+
+    /// A save of `picture`, flattened from `saved` and hiding some of the capture, has deleted
+    /// the original. Reset edits is off, and undo can't go back past the save, so what was
+    /// hidden can't come back. If nothing has changed since, `picture` becomes the picture,
+    /// with no marks or crop over it, and `to_card` says the card shows it too (Save, not Save
+    /// as). If something has, the saved marks go into the whole picture and what came since
+    /// stays over it: a mark changed since is added again on top, its saved self staying in
+    /// the picture. After a Reset since, the saved picture is taken as it is, and what came
+    /// since goes.
+    pub fn forget_original(&mut self, picture: Arc<Pixmap>, saved: &Edits, to_card: bool) {
+        self.original_removed = true;
+        let present = self.edits.get().clone();
+        let start = if present != *saved && Arc::ptr_eq(&present.base, &saved.base) {
+            self.edits.present = Edits {
+                crop: None,
+                ..saved.clone()
+            };
+            let baked = Arc::new(self.render());
+            Edits {
+                base: baked,
+                annotations: (present.annotations.into_iter())
+                    .filter(|mark| !saved.annotations.contains(mark))
+                    .collect(),
+                crop: present.crop,
+            }
+        } else {
+            let start = Edits {
+                base: picture,
+                annotations: Vec::new(),
+                crop: None,
+            };
+            if to_card && present == *saved {
+                self.written = start.clone();
+                self.saved = Some(start.clone());
+            }
+            start
+        };
+        self.original = start.base.clone();
+        self.redacted_base = Some(start.base.clone());
+        self.edits = History::new(start);
     }
 
     fn base(&self) -> &Pixmap {
@@ -244,6 +321,7 @@ impl Document {
             picture: Arc::new(self.render()),
             original: self.original.clone(),
             is_edited: self.is_edited(),
+            redacted: self.is_redacted(),
             edits: self.edits.get().clone(),
         }
     }
@@ -325,7 +403,7 @@ impl Document {
     /// Reset edits: back to the capture as it was taken, with every annotation and the crop
     /// off, as one undoable step. `false` when it is already so.
     pub fn reset(&mut self) -> bool {
-        if !self.is_edited() {
+        if !self.is_edited() || !self.can_reset() {
             return false;
         }
         let base = self.original.clone();
@@ -807,6 +885,134 @@ mod tests {
         assert!(document.undo());
         assert_eq!((document.width(), document.height()), (4, 3));
         assert_eq!(document.render().pixel(0, 0).unwrap().red(), 10);
+    }
+
+    #[test]
+    fn a_block_or_a_picture_opened_redacted_makes_the_flattened_picture_redacted() {
+        use super::super::block::BlockKind;
+        let mut document = Document::new(plain(96, 64, 0));
+        assert!(!document.flatten().redacted);
+        document.add(block(BlockKind::Pixelate, (10., 10.), (80., 50.)));
+        assert!(document.flatten().redacted);
+        document.undo();
+        assert!(!document.flatten().redacted);
+
+        // A picture stored with its redactions flattened stays redacted until Reset.
+        let redacted = Redaction {
+            redacted: true,
+            original_removed: false,
+        };
+        let mut document = Document::opened(plain(4, 3, 10), Some(plain(4, 3, 200)), false)
+            .with_redaction(redacted);
+        assert!(document.flatten().redacted);
+        assert!(document.reset());
+        assert!(!document.flatten().redacted);
+    }
+
+    #[test]
+    fn with_its_original_deleted_a_picture_cannot_be_reset() {
+        let removed = Redaction {
+            redacted: true,
+            original_removed: true,
+        };
+        let mut document = Document::opened(plain(4, 3, 10), None, false).with_redaction(removed);
+        document.set_crop(IntRect::from_xywh(0, 0, 2, 2));
+        assert!(!document.can_reset());
+        assert!(!document.reset());
+        assert!(document.flatten().redacted);
+
+        // Saving in this session deletes it just the same.
+        let mut document = Document::opened(plain(4, 3, 10), Some(plain(4, 3, 200)), false);
+        assert!(document.can_reset());
+        let flattened = document.flatten();
+        document.forget_original(flattened.picture, &flattened.edits, true);
+        assert!(!document.reset());
+    }
+
+    #[test]
+    fn after_a_redacted_save_undo_cannot_take_the_block_off() {
+        use super::super::block::BlockKind;
+        let mut document = Document::new(plain(96, 64, 0));
+        document.add(block(BlockKind::Solid, (10., 10.), (80., 50.)));
+        document.set_crop(IntRect::from_xywh(0, 0, 90, 60));
+        let saved = document.flatten();
+        let blocked = saved.picture.pixel(40, 30).unwrap();
+
+        document.forget_original(saved.picture.clone(), &saved.edits, true);
+
+        // The saved picture is now the picture, with nothing over it to take off.
+        assert!(!document.can_undo());
+        assert!(!document.undo());
+        assert!(!document.reset());
+        assert!(document.annotations().is_empty());
+        assert_eq!((document.width(), document.height()), (90, 60));
+        assert_eq!(document.render().pixel(40, 30).unwrap(), blocked);
+        // The card and the file show it already, and it still counts as hiding something.
+        assert!(document.is_saved());
+        assert!(!document.is_unwritten());
+        assert!(document.flatten().redacted);
+    }
+
+    #[test]
+    fn after_a_redacted_save_as_the_card_still_needs_the_picture() {
+        use super::super::block::BlockKind;
+        let mut document = Document::new(plain(96, 64, 0));
+        document.add(block(BlockKind::Blur, (10., 10.), (80., 50.)));
+        let copy = document.flatten();
+
+        document.forget_original(copy.picture, &copy.edits, false);
+
+        assert!(!document.can_undo());
+        assert!(document.is_unwritten());
+        assert!(!document.is_saved());
+        let back = document.take_unwritten().unwrap();
+        assert!(back.redacted);
+    }
+
+    #[test]
+    fn a_block_moved_while_saving_leaves_what_the_save_hid_hidden() {
+        use super::super::block::BlockKind;
+        // White and black pixels in turn, which a block never leaves behind.
+        let image = RgbaImage::from_fn(96, 64, |x, y| {
+            let on = if (x + y) % 2 == 0 { 255 } else { 0 };
+            xcap::image::Rgba([on, on, on, 255])
+        });
+        let mut document = Document::new(pixmap_from_rgba(image).unwrap());
+        document.add(block(BlockKind::Solid, (10., 10.), (40., 40.)));
+        let saved = document.flatten();
+        let hidden = saved.picture.pixel(25, 25).unwrap();
+        // While the save runs: the block moves away and a crop goes on.
+        document.replace(0, block(BlockKind::Solid, (60., 20.), (90., 50.)));
+        document.set_crop(IntRect::from_xywh(0, 0, 94, 60));
+
+        document.forget_original(saved.picture, &saved.edits, true);
+
+        // The saved block is in the picture; the moved one is over it, and the crop stays.
+        assert_eq!(document.render().pixel(25, 25).unwrap(), hidden);
+        assert_eq!(document.annotations().len(), 1);
+        assert_eq!((document.width(), document.height()), (94, 60));
+        assert!(!document.can_undo());
+        assert!(!document.can_reset());
+        let back = document.take_unwritten().unwrap();
+        assert!(back.redacted);
+        // Taking the moved block off still leaves the saved one.
+        document.remove(0, false);
+        assert_eq!(document.render().pixel(25, 25).unwrap(), hidden);
+    }
+
+    #[test]
+    fn a_reset_while_saving_gives_way_to_the_saved_picture() {
+        use super::super::block::BlockKind;
+        let mut document = Document::opened(plain(96, 64, 10), Some(plain(96, 64, 200)), false);
+        document.add(block(BlockKind::Solid, (10., 10.), (40., 40.)));
+        let saved = document.flatten();
+        document.reset();
+
+        document.forget_original(saved.picture.clone(), &saved.edits, true);
+
+        assert!(document.annotations().is_empty());
+        assert_eq!(document.render().data(), saved.picture.data());
+        assert!(!document.can_undo());
     }
 
     #[test]

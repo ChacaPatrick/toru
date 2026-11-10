@@ -523,6 +523,7 @@ impl Gallery {
         self.fetch_failed = false;
         self.next = page.as_ref().map_or(Next::End, |page| page.next);
         if let Some(page) = page.filter(|page| !page.cards.is_empty()) {
+            self.remake_narrow_thumbnails(&page.cards, window, cx);
             let cards = page
                 .cards
                 .into_iter()
@@ -536,6 +537,64 @@ impl Gallery {
             });
         }
         self.rebuild_rows(cx);
+        cx.notify();
+    }
+
+    /// Thumbnails stored before the cards could grow, or at a lower display scale, are narrower
+    /// than a card needs, so the card would stretch them: they are made again from the pictures,
+    /// off the main thread, and the cards then read them afresh.
+    fn remake_narrow_thumbnails(
+        &self,
+        cards: &[NewCard],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let store = self.store.clone();
+        let wanted: Vec<_> = cards
+            .iter()
+            .map(|card| {
+                let size = (card.capture.width, card.capture.height);
+                (card.files.id, self.thumbnail_width(size))
+            })
+            .collect();
+        cx.spawn_in(window, async move |this, cx| {
+            let remade: Vec<_> = cx
+                .background_spawn(async move {
+                    wanted
+                        .into_iter()
+                        .filter(|&(id, width)| {
+                            store.remake_narrow_thumbnail(id, width).unwrap_or(false)
+                        })
+                        .map(|(id, _)| id)
+                        .collect()
+                })
+                .await;
+            if remade.is_empty() {
+                return;
+            }
+            this.update_in(cx, |this, window, cx| {
+                for capture in remade {
+                    this.reload_thumbnail(capture, window, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Lets go of the card's thumbnail, so the next frame reads it from its file again.
+    fn reload_thumbnail(
+        &mut self,
+        capture: CaptureId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(card) = self.stored_card(capture) else {
+            return;
+        };
+        let source = Resource::from(card.files.thumbnail.clone());
+        self.thumbnails
+            .update(cx, |thumbnails, cx| thumbnails.remove(&source, window, cx));
         cx.notify();
     }
 
@@ -627,10 +686,7 @@ impl Gallery {
         if !card.capture.is_saved() {
             card.bytes = bytes;
         }
-        let source = Resource::from(card.files.thumbnail.clone());
-        self.thumbnails
-            .update(cx, |thumbnails, cx| thumbnails.remove(&source, window, cx));
-        cx.notify();
+        self.reload_thumbnail(capture, window, cx);
     }
 
     /// Turns a card to Saved once its file is written.

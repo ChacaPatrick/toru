@@ -25,6 +25,10 @@ use crate::time::{LocalDate, LocalDateTime};
 /// Ends the name of a file that `add_capture` hasn't finished with yet.
 const PARTIAL_SUFFIX: &str = ".partial";
 
+/// The `redacted` value of a capture whose picture, hiding some of it, has been saved, so that
+/// its original must be gone.
+const ORIGINAL_REMOVED: i64 = 2;
+
 const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY AUTOINCREMENT);
     CREATE TABLE IF NOT EXISTS captures (
@@ -37,7 +41,10 @@ const SCHEMA: &str = "
         -- YYYYMMDD. The range keeps every value convertible to a LocalDate and back, which day paging relies on.
         taken_date INTEGER NOT NULL CHECK (taken_date BETWEEN 0 AND 655351231),
         taken_minute INTEGER NOT NULL,
-        saved_path TEXT
+        saved_path TEXT,
+        -- 1 if the picture hides some of the capture under blur, pixelate or solid boxes, and 2
+        -- once such a picture has been saved, from when the original must be gone for good.
+        redacted INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS captures_by_date ON captures (taken_date);
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -58,6 +65,8 @@ pub enum StoreError {
     InvalidName(NameError),
     /// Another capture from the same day already has that name.
     NameTaken,
+    /// The picture would show what a saved redaction hid, though its original was deleted.
+    WouldReveal,
 }
 
 impl From<NameError> for StoreError {
@@ -92,6 +101,15 @@ pub struct CaptureId(i64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SessionId(i64);
 
+/// What `Store::redaction` tells about a capture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Redaction {
+    /// The picture hides some of what was taken under blur, pixelate or solid boxes.
+    pub redacted: bool,
+    /// The original was deleted when that picture was saved, so Reset edits can't bring it back.
+    pub original_removed: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredCapture {
     pub id: CaptureId,
@@ -106,6 +124,8 @@ pub struct Store {
     copies_dir: PathBuf,
     next_partial: AtomicU64,
     next_copy: AtomicU64,
+    /// Held while a thumbnail is written, so a stale one can't land over a newer picture's.
+    thumbnail_lock: Mutex<()>,
     // Last, so the database has closed by the time another process can get in.
     _instance_lock: File,
 }
@@ -127,6 +147,7 @@ impl Store {
         })?;
         let db = Connection::open(app_data.join("history.sqlite3"))?;
         db.execute_batch(SCHEMA)?;
+        add_redacted_column(&db)?;
         let copies_dir = app_data.join("copies");
         let latest_copy = latest_copy_folder(&copies_dir);
         // The newest set may still be on the clipboard, waiting to be pasted.
@@ -139,6 +160,7 @@ impl Store {
             copies_dir,
             next_partial: AtomicU64::new(0),
             next_copy: AtomicU64::new(latest_copy.map_or(0, |number| number + 1)),
+            thumbnail_lock: Mutex::new(()),
             _instance_lock: instance_lock,
         };
         store.remove_stray_files()?;
@@ -245,17 +267,22 @@ impl Store {
     /// file the user saved as it is until they save again. `original` is the capture as it was
     /// taken, kept for Reset edits; `None` says `edited` is that picture again, so an unsaved
     /// capture needs nothing kept. A saved capture keeps it, as its file may still differ.
+    /// `redacted`: whether `edited` hides some of the capture, so a Save deletes the original.
     /// Returns the size of the picture written.
     pub fn store_edit(
         &self,
         id: CaptureId,
         edited: &RgbaImage,
         original: Option<&RgbaImage>,
+        redacted: bool,
         max_thumbnail_width: u32,
     ) -> Result<u64> {
+        self.check_not_revealing(id, redacted)?;
         if original.is_some() || !self.capture(id)?.is_saved() {
             self.keep_original(id, original)?;
         }
+        // Before the picture, so a failure part way can only cost Reset, never keep what was hidden.
+        self.set_redacted(id, redacted)?;
         let png = encode_png(edited)?;
         self.publish(&self.image_path(id), &png)?;
         self.replace_thumbnail(id, edited, max_thumbnail_width)?;
@@ -263,7 +290,11 @@ impl Store {
     }
 
     /// Keeps `original` for Reset edits, the first time it is given. `None` drops what was kept.
+    /// An original deleted because a save hid some of it is never written back.
     pub(crate) fn keep_original(&self, id: CaptureId, original: Option<&RgbaImage>) -> Result<()> {
+        if self.redaction(id)?.original_removed {
+            return Ok(());
+        }
         let path = self.original_path(id);
         match original {
             Some(original) if !path.is_file() => self.publish(&path, &encode_png(original)?)?,
@@ -274,6 +305,59 @@ impl Store {
         Ok(())
     }
 
+    /// Whether the capture's picture hides some of what was taken, and whether its original has
+    /// been deleted because of that.
+    pub fn redaction(&self, id: CaptureId) -> Result<Redaction> {
+        let value: i64 = self
+            .db()
+            .query_row(
+                "SELECT redacted FROM captures WHERE id = ?1",
+                [id.0],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound)?;
+        Ok(Redaction {
+            redacted: value != 0,
+            original_removed: value == ORIGINAL_REMOVED,
+        })
+    }
+
+    /// Refuses a picture without redactions for a capture whose original was deleted, as it
+    /// can only come from before that save: it would bring back what was hidden.
+    pub fn check_not_revealing(&self, id: CaptureId, redacted: bool) -> Result<()> {
+        if !redacted && self.redaction(id)?.original_removed {
+            return Err(StoreError::WouldReveal);
+        }
+        Ok(())
+    }
+
+    // Once the original is removed, it stays so.
+    fn set_redacted(&self, id: CaptureId, redacted: bool) -> Result<()> {
+        self.db().execute(
+            "UPDATE captures SET redacted = ?1 WHERE id = ?2 AND redacted <> ?3",
+            params![redacted, id.0, ORIGINAL_REMOVED],
+        )?;
+        Ok(())
+    }
+
+    /// Deletes the kept original if the capture's picture hides some of it, as a saved copy of
+    /// that picture now exists. Returns whether the original is now removed for that reason. It
+    /// counts as removed even if the file can't be deleted yet: Reset no longer offers it, and
+    /// `open` deletes it.
+    pub fn remove_redacted_original(&self, id: CaptureId) -> Result<bool> {
+        let changed = self.db().execute(
+            "UPDATE captures SET redacted = ?1 WHERE id = ?2 AND redacted <> 0",
+            params![ORIGINAL_REMOVED, id.0],
+        )?;
+        if changed == 0 {
+            return Ok(false);
+        }
+        // If this fails, the next `open` tries again.
+        let _ = fs::remove_file(self.original_path(id));
+        Ok(true)
+    }
+
     /// The card's thumbnail and recorded size, now that its picture is `edited`.
     pub fn replace_thumbnail(
         &self,
@@ -282,12 +366,40 @@ impl Store {
         max_thumbnail_width: u32,
     ) -> Result<()> {
         let png = thumbnail_png(edited, max_thumbnail_width)?;
+        let _writing = self.lock_thumbnails();
         self.publish(&self.thumbnail_path(id), &png)?;
         self.db().execute(
             "UPDATE captures SET width = ?1, height = ?2 WHERE id = ?3",
             params![edited.width(), edited.height(), id.0],
         )?;
         Ok(())
+    }
+
+    /// Remakes the thumbnail from the full picture if it is narrower than `max_width` allows,
+    /// as thumbnails stored before the cards could grow are. Returns whether it did. A saved file
+    /// whose size no longer matches the record is left alone: it was changed outside Toru.
+    pub fn remake_narrow_thumbnail(&self, id: CaptureId, max_width: u32) -> Result<bool> {
+        let _writing = self.lock_thumbnails();
+        let capture = self.capture(id)?;
+        let (width, _) = image::image_dimensions(self.thumbnail_path(id))?;
+        if width >= capture.width.min(max_width) {
+            return Ok(false);
+        }
+        let pixels = image::open(self.full_image_path(id)?)?.to_rgba8();
+        if pixels.dimensions() != (capture.width, capture.height) {
+            return Ok(false);
+        }
+        self.publish(
+            &self.thumbnail_path(id),
+            &thumbnail_png(&pixels, max_width)?,
+        )?;
+        Ok(true)
+    }
+
+    fn lock_thumbnails(&self) -> MutexGuard<'_, ()> {
+        self.thumbnail_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Replaces the file at `path` in one step, so a crash leaves the old one whole.
@@ -352,18 +464,35 @@ impl Store {
 
     /// Records that the capture was saved to `path`, a file that must already exist. The temp copy
     /// of the full image is then removed, so saved captures don't pile up in the temp folder
-    /// forever. The thumbnail stays for the gallery.
+    /// forever. The thumbnail stays for the gallery. If the picture hides some of the capture,
+    /// the kept original goes too, so what was hidden is gone.
     pub fn mark_saved(&self, id: CaptureId, path: &Path) -> Result<()> {
+        self.record_saved(id, path, None)
+    }
+
+    /// `mark_saved`, with `redacted` saying whether the saved picture hides some of the capture,
+    /// or `None` if it is the capture's picture as stored.
+    pub(crate) fn record_saved(
+        &self,
+        id: CaptureId,
+        path: &Path,
+        redacted: Option<bool>,
+    ) -> Result<()> {
         fs::metadata(path)?;
+        // A removed original stays so, whatever `redacted` says.
         let changed = self.db().execute(
-            "UPDATE captures SET saved_path = ?1 WHERE id = ?2",
-            params![path_text(path)?, id.0],
+            "UPDATE captures SET saved_path = ?1,
+                redacted = CASE WHEN redacted = ?4 THEN ?4 ELSE COALESCE(?3, redacted) END
+                WHERE id = ?2",
+            params![path_text(path)?, id.0, redacted, ORIGINAL_REMOVED],
         )?;
         if changed == 0 {
             return Err(StoreError::NotFound);
         }
         // If this fails, the next `open` tries again.
         let _ = fs::remove_file(self.image_path(id));
+        // The file is saved either way, and failing here would have the caller delete it.
+        let _ = self.remove_redacted_original(id);
         Ok(())
     }
 
@@ -609,9 +738,23 @@ impl Store {
     }
 
     fn remove_stray_files(&self) -> Result<()> {
+        // Originals a save meant to delete, if deleting them failed then.
+        let removed: Vec<i64> = {
+            let db = self.db();
+            let mut statement = db.prepare("SELECT id FROM captures WHERE redacted = ?1")?;
+            statement
+                .query_map([ORIGINAL_REMOVED], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        for id in removed {
+            let _ = fs::remove_file(self.original_path(CaptureId(id)));
+        }
         let mut saved_by_id: HashMap<i64, bool> = {
             let db = self.db();
-            let mut statement = db.prepare("SELECT id, saved_path IS NOT NULL FROM captures")?;
+            // A saved picture that hides some of the capture keeps no original, but its temp
+            // image may still hold edits awaiting Save.
+            let mut statement =
+                db.prepare("SELECT id, saved_path IS NOT NULL AND redacted = 0 FROM captures")?;
             statement
                 .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
                 .collect::<rusqlite::Result<_>>()?
@@ -630,6 +773,19 @@ impl Store {
         }
         Ok(())
     }
+}
+
+/// Databases made before captures recorded redactions lack the column.
+fn add_redacted_column(db: &Connection) -> rusqlite::Result<()> {
+    let has: bool = db.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('captures') WHERE name = 'redacted'",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has {
+        db.execute_batch("ALTER TABLE captures ADD COLUMN redacted INTEGER NOT NULL DEFAULT 0")?;
+    }
+    Ok(())
 }
 
 /// The highest number among the Copy all folders, which is the set made last.
@@ -944,6 +1100,73 @@ mod tests {
         assert_eq!(full, original);
         let thumbnail = image::open(store.thumbnail_path(id)).unwrap().to_rgba8();
         assert_eq!(thumbnail.dimensions(), (10, 5));
+    }
+
+    #[test]
+    fn a_thumbnail_narrower_than_wanted_is_remade_from_the_picture() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        let session = store.new_session().unwrap();
+        let shot = Capture {
+            width: 40,
+            height: 20,
+            ..record("shot", TODAY, (9, 0))
+        };
+        let id = store
+            .add_capture(session, &pixels(40, 20), &shot, 10)
+            .unwrap();
+        let width = || image::image_dimensions(store.thumbnail_path(id)).unwrap();
+
+        assert!(!store.remake_narrow_thumbnail(id, 10).unwrap());
+        assert!(store.remake_narrow_thumbnail(id, 30).unwrap());
+        assert_eq!(width(), (30, 15));
+        // Never wider than the picture, so a thumbnail as wide as it is left alone.
+        assert!(store.remake_narrow_thumbnail(id, 100).unwrap());
+        assert_eq!(width(), (40, 20));
+        assert!(!store.remake_narrow_thumbnail(id, 100).unwrap());
+    }
+
+    #[test]
+    fn a_saved_file_changed_elsewhere_leaves_the_thumbnail_alone() {
+        let dir = TestDir::new();
+        let store = dir.open();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot", TODAY, (9, 0));
+        let path = dir.0.join("shot.png");
+        pixels(8, 8).save(&path).unwrap();
+        store.mark_saved(id, &path).unwrap();
+
+        assert!(!store.remake_narrow_thumbnail(id, 100).unwrap());
+        assert_eq!(
+            image::image_dimensions(store.thumbnail_path(id)).unwrap(),
+            (THUMB, 1)
+        );
+    }
+
+    #[test]
+    fn a_database_from_before_redactions_gains_the_column() {
+        let dir = TestDir::new();
+        fs::create_dir_all(dir.app_data()).unwrap();
+        let start = SCHEMA.find("saved_path TEXT,").unwrap();
+        let end = SCHEMA.find("redacted INTEGER NOT NULL DEFAULT 0").unwrap();
+        let old_schema = format!(
+            "{}saved_path TEXT{}",
+            &SCHEMA[..start],
+            &SCHEMA[end + "redacted INTEGER NOT NULL DEFAULT 0".len()..]
+        );
+        assert_ne!(old_schema, SCHEMA);
+        Connection::open(dir.app_data().join("history.sqlite3"))
+            .unwrap()
+            .execute_batch(&old_schema)
+            .unwrap();
+
+        let store = dir.open();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot", TODAY, (9, 0));
+
+        assert_eq!(store.redaction(id).unwrap(), Redaction::default());
+        drop(store);
+        dir.open();
     }
 
     #[test]

@@ -9,7 +9,7 @@ use rfd::AsyncFileDialog;
 use toru_core::{
     export::{SavedFile, save_copy, save_edited},
     settings::SaveFormat,
-    store::{CaptureId, Result as StoreResult},
+    store::{CaptureId, Result as StoreResult, StoreError},
 };
 
 use super::{
@@ -27,6 +27,18 @@ const SAVE_AS_FAILED: &str = "Couldn't save a copy there. Check the folder and i
 const KEEP_EDITS_FAILED: &str = "Couldn't keep those edits. Check for free space.";
 const NOTHING_TO_SAVE: &str = "Nothing new to save";
 const BLANKS_KEPT: &str = "Edits kept · some characters left blank";
+/// Only when an editor change made while a redacted picture was being saved takes the
+/// redaction off: the store refuses it, since the original is gone.
+const WOULD_REVEAL: &str = "Not kept: that would show what the saved picture hides.";
+
+/// What to say when a write failed: `otherwise`, unless the store refused it for showing what
+/// a saved redaction hid.
+fn failure_message<T>(result: &StoreResult<T>, otherwise: &'static str) -> &'static str {
+    match result {
+        Err(StoreError::WouldReveal) => WOULD_REVEAL,
+        _ => otherwise,
+    }
+}
 
 /// `message`, saying so when some text in the picture has characters no font could draw.
 fn noting_blanks(message: impl Into<String>, blanks: bool) -> String {
@@ -61,9 +73,14 @@ impl MainWindow {
                 self.save_edited(editor.downgrade(), capture, flattened.clone(), cx)
             }
             EditorEvent::NothingToSave => self.show_toast(Toast::new(NOTHING_TO_SAVE), cx),
-            EditorEvent::SaveAs(flattened, format) => {
-                self.save_edited_as(capture, flattened.clone(), *format, window, cx)
-            }
+            EditorEvent::SaveAs(flattened, format) => self.save_edited_as(
+                editor.downgrade(),
+                capture,
+                flattened.clone(),
+                *format,
+                window,
+                cx,
+            ),
         }
     }
 
@@ -120,31 +137,39 @@ impl MainWindow {
                 picture,
                 original,
                 is_edited,
+                redacted,
                 edits,
             } = flattened;
             let size = (picture.width(), picture.height());
             let blanks = edits.has_blanks();
+            let saved_picture = picture.clone();
             let saved = cx
                 .background_spawn(async move {
                     check_chosen_folder(&target.folder, target.chosen)?;
                     let original = is_edited.then(|| to_rgba(&original));
-                    save_edited(
+                    let file = save_edited(
                         &target.store,
                         capture,
                         &to_rgba(&picture),
                         original.as_ref(),
+                        redacted,
                         &target.folder,
                         target.format,
                         thumbnail_width,
-                    )
+                    )?;
+                    let removed = target
+                        .store
+                        .redaction(capture)
+                        .is_ok_and(|redaction| redaction.original_removed);
+                    StoreResult::Ok((file, removed))
                 })
                 .await;
             cx.update_window(window, |_, window, cx| {
                 this.update(cx, |this, cx| {
                     this.saving_edit = false;
-                    let file = match saved {
-                        Ok(file) => file,
-                        Err(_) => return this.report_failure(SAVE_FAILED, cx),
+                    let message = failure_message(&saved, SAVE_FAILED);
+                    let Ok((file, removed)) = saved else {
+                        return this.report_failure(message, cx);
                     };
                     let message = noting_blanks(saved_message(&file), blanks);
                     this.show_toast(Toast::new(message), cx);
@@ -152,7 +177,14 @@ impl MainWindow {
                         gallery.picture_changed(capture, size, file.bytes, window, cx);
                         gallery.mark_saved(capture, file, cx);
                     });
-                    editor.update(cx, |editor, cx| editor.saved(edits, cx)).ok();
+                    editor
+                        .update(cx, |editor, cx| {
+                            editor.saved(edits.clone(), cx);
+                            if removed {
+                                editor.original_removed(saved_picture, &edits, true, cx);
+                            }
+                        })
+                        .ok();
                 })
             })
             .ok();
@@ -161,8 +193,10 @@ impl MainWindow {
 
     /// Save as: the file picker runs on a thread of its own, so the window keeps drawing, and
     /// off the queue, so a capture needn't wait for the user to choose. Only the write queues.
+    /// A copy of a picture that hides some of the capture deletes the original, as Save does.
     fn save_edited_as(
         &mut self,
+        editor: WeakEntity<Editor>,
         capture: CaptureId,
         flattened: Flattened,
         format: SaveFormat,
@@ -187,6 +221,7 @@ impl MainWindow {
         if let Some(folder) = self.save_folder() {
             dialog = dialog.set_directory(folder);
         }
+        let store = self.store.clone();
         cx.spawn(async move |this, cx| {
             let Some(file) = dialog.save_file().await else {
                 this.update(cx, |this, _| this.saving_edit = false).ok();
@@ -194,20 +229,39 @@ impl MainWindow {
             };
             this.update(cx, |this, cx| {
                 this.enqueue(cx, async move |this, cx| {
-                    let picture = flattened.picture;
+                    let Flattened {
+                        picture,
+                        redacted,
+                        edits,
+                        ..
+                    } = flattened;
+                    let copied = picture.clone();
                     let saved = cx
                         .background_spawn(async move {
-                            write_copy(&to_rgba(&picture), file.path(), format)
+                            store.check_not_revealing(capture, redacted)?;
+                            let saved = write_copy(&to_rgba(&picture), file.path(), format)?;
+                            // The copy is what was asked for; an original left is only kept.
+                            let removed = redacted
+                                && store.remove_redacted_original(capture).unwrap_or(false);
+                            StoreResult::Ok((saved, removed))
                         })
                         .await;
                     this.update(cx, |this, cx| {
                         this.saving_edit = false;
+                        let message = failure_message(&saved, SAVE_AS_FAILED);
                         match saved {
-                            Ok(file) => {
+                            Ok((file, removed)) => {
                                 let message = noting_blanks(saved_message(&file), blanks);
                                 this.show_toast(Toast::new(message), cx);
+                                if removed {
+                                    editor
+                                        .update(cx, |editor, cx| {
+                                            editor.original_removed(copied, &edits, false, cx)
+                                        })
+                                        .ok();
+                                }
                             }
-                            Err(_) => this.report_failure(SAVE_AS_FAILED, cx),
+                            Err(_) => this.report_failure(message, cx),
                         }
                     })
                     .ok();
@@ -247,6 +301,7 @@ impl MainWindow {
                 picture,
                 original,
                 is_edited,
+                redacted,
                 ..
             } = flattened;
             let size = (picture.width(), picture.height());
@@ -257,11 +312,13 @@ impl MainWindow {
                         capture,
                         &to_rgba(&picture),
                         original.as_ref(),
+                        redacted,
                         thumbnail_width,
                     )
                 })
                 .await;
             cx.update_window(window, |_, window, cx| {
+                let message = failure_message(&stored, KEEP_EDITS_FAILED);
                 this.update(cx, |this, cx| match stored {
                     Ok(bytes) => {
                         this.gallery.update(cx, |gallery, cx| {
@@ -271,7 +328,7 @@ impl MainWindow {
                             this.show_toast(Toast::new(BLANKS_KEPT), cx);
                         }
                     }
-                    Err(_) => this.report_failure(KEEP_EDITS_FAILED, cx),
+                    Err(_) => this.report_failure(message, cx),
                 })
             })
             .ok();

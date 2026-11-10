@@ -401,15 +401,20 @@ impl MainWindow {
             let picture = cx
                 .background_spawn(async move {
                     let base = document::load_picture(&store.full_image_path(stored).ok()?)?;
-                    let original = document::load_picture(&store.original_path(stored));
+                    let redaction = store.redaction(stored).unwrap_or_default();
+                    // One whose delete failed waits for the next start, unused.
+                    let original = (!redaction.original_removed)
+                        .then(|| document::load_picture(&store.original_path(stored)))
+                        .flatten();
                     let in_file = !store.image_path(stored).is_file();
-                    Some((base, original, in_file))
+                    Some((base, original, in_file, redaction))
                 })
                 .await;
             cx.update_window(window, |_, window, cx| {
                 this.update(cx, |this, cx| match picture {
-                    Some((base, original, in_file)) => {
-                        let document = Document::opened(base, original, in_file);
+                    Some((base, original, in_file, redaction)) => {
+                        let document =
+                            Document::opened(base, original, in_file).with_redaction(redaction);
                         this.show_editor(stored, name, document, window, cx)
                     }
                     None => this.report_failure(captures::FILE_GONE, cx),

@@ -804,6 +804,33 @@ impl Editor {
         cx.notify();
     }
 
+    /// A save of `picture`, flattened from `saved`, deleted the capture's original, as the
+    /// picture hid some of it. The saved picture becomes the one edited, with no undo back past
+    /// it, so neither Reset edits nor Undo can bring back what was hidden. `to_card` says the
+    /// card shows it too (Save, not Save as). Typing under way is finished first, and a drag
+    /// under way is dropped, as the marks it holds by index change.
+    pub fn original_removed(
+        &mut self,
+        picture: Arc<Pixmap>,
+        saved: &Edits,
+        to_card: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.finish_typing(cx);
+        self.cancel_drag(cx);
+        let shown = self.shown();
+        self.document.forget_original(picture, saved, to_card);
+        self.select(None, cx);
+        if self.tool == Tool::Crop {
+            self.crop_draft = self.document_crop_draft();
+        }
+        if self.shown() == shown {
+            self.document_changed(cx);
+        } else {
+            self.shown_changed(cx);
+        }
+    }
+
     fn save_as(&mut self, format: SaveFormat, cx: &mut Context<Self>) {
         if let Some(flattened) = self.flattened(cx) {
             cx.emit(EditorEvent::SaveAs(flattened, format));

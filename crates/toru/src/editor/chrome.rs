@@ -28,6 +28,8 @@ const CORNER_PADDING: f32 = 4.;
 const ZOOM_READOUT_MIN_WIDTH: f32 = 56.;
 pub const HINT_BOTTOM: f32 = 24.;
 const NAME_WIDTH: f32 = 240.;
+const ORIGINAL_REMOVED: &str =
+    "The original was deleted when this was saved with blurred or hidden areas";
 
 /// The pill's height, for laying the picture out under it.
 pub const PILL_HEIGHT: f32 = TOOL + PILL_PADDING * 2.;
@@ -87,7 +89,7 @@ pub fn top_bar(editor: &Editor, window: &Window, cx: &Context<Editor>) -> Div {
             }
         })
         .child(div().flex_1().min_w(px(40.)))
-        .child(Button::new("reset", "Reset edits").on_click(on(cx, |this, cx| this.reset(cx))))
+        .child(reset_button(editor, cx))
         .child(
             Button::new("copy", "Copy")
                 .icon(Icon::Copy)
@@ -100,6 +102,19 @@ pub fn top_bar(editor: &Editor, window: &Window, cx: &Context<Editor>) -> Div {
                 .on_click(on(cx, |this, cx| this.save(cx))),
         )
         .child(save_as)
+}
+
+/// Reset edits, unless saving a picture that hid some of the capture deleted the original.
+fn reset_button(editor: &Editor, cx: &Context<Editor>) -> Button {
+    let reset = Button::new("reset", "Reset edits").on_click(on(cx, |this, cx| this.reset(cx)));
+    if editor.document.can_reset() {
+        reset
+    } else {
+        reset
+            .disabled(true)
+            .tooltip(ORIGINAL_REMOVED)
+            .description(ORIGINAL_REMOVED)
+    }
 }
 
 fn status_text(theme: &Theme, color: Hsla) -> Stateful<Div> {
