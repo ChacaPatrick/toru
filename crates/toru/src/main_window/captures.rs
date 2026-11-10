@@ -49,6 +49,8 @@ const AUTO_SAVE_FAILED: &str =
     "Couldn't auto-save. The capture is still here, unsaved. Check the Save to folder.";
 const SEVERAL_FAILED: &str = "Some captures failed while Toru was in the background";
 const EDITOR_KEPT: &str = "Capture added to the gallery. Your edits here are kept.";
+const EDITOR_KEPT_COPIED: &str =
+    "Capture added to the gallery and copied to the clipboard. Your edits here are kept.";
 
 pub(super) type CopyResult = Result<(), Box<dyn Error + Send + Sync>>;
 
@@ -86,23 +88,27 @@ impl MainWindow {
                 .await;
             let kept = stored.is_ok();
             let auto_saved = auto_saved.is_ok();
+            let mut edits_kept = false;
             if let Ok(card) = stored {
-                this.update(cx, |this, cx| {
-                    // "Open editor after capture" (DESIGN.md §5), once the card exists. A
-                    // delayed capture minimized Toru for its countdown, and the editor is no
-                    // use in the taskbar, so the window comes back. An editor with annotations
-                    // on its picture, which a shortcut's capture would otherwise replace, stays
-                    // and the new capture waits in the gallery.
-                    if let Some(id) = this.show_card(card, cx).filter(|_| open_editor) {
-                        if this.editor_has_edits(cx) {
-                            this.show_toast(Toast::new(EDITOR_KEPT), cx);
-                        } else {
-                            this.open_editor(id, cx);
+                edits_kept = this
+                    .update(cx, |this, cx| {
+                        // "Open editor after capture" (DESIGN.md §5), once the card exists. A
+                        // delayed capture minimized Toru for its countdown, and the editor is no
+                        // use in the taskbar, so the window comes back. An editor with
+                        // annotations on its picture, which a shortcut's capture would otherwise
+                        // replace, stays and the new capture waits in the gallery, which the
+                        // toast below says.
+                        let id = this.show_card(card, cx).filter(|_| open_editor);
+                        let edits_kept = id.is_some() && this.editor_has_edits(cx);
+                        if let Some(id) = id {
+                            if !edits_kept {
+                                this.open_editor(id, cx);
+                            }
+                            platform::show_main_window();
                         }
-                        platform::show_main_window();
-                    }
-                })
-                .ok();
+                        edits_kept
+                    })
+                    .unwrap_or(false);
             }
             // The clipboard doesn't depend on the store, so a capture that couldn't be kept can
             // still be pasted.
@@ -116,9 +122,15 @@ impl MainWindow {
             };
             this.update(cx, |this, cx| {
                 match capture_failure(kept, auto_saved, copied) {
-                    Some(failure) => this.report_failure(failure, cx),
-                    None if copied == Some(true) => this.report_copy(Ok(()), cx),
-                    None => {}
+                    Some(failure) => this.report_failure(failure_message(failure, edits_kept), cx),
+                    None => {
+                        let copied_text = cx.theme().strings.copied;
+                        let message =
+                            capture_message(edits_kept, copied == Some(true), copied_text);
+                        if let Some(message) = message {
+                            this.show_toast(Toast::new(message), cx);
+                        }
+                    }
                 }
             })
             .ok();
@@ -362,6 +374,32 @@ fn capture_failure(stored: bool, auto_saved: bool, copied: Option<bool>) -> Opti
     }
 }
 
+/// The one toast for a capture that went well, if it needs one: that it was copied, and that it
+/// waits in the gallery because the editor's edits were kept. Both in one toast, since a second
+/// would replace the first before it could be read.
+fn capture_message(
+    edits_kept: bool,
+    copied: bool,
+    copied_text: &'static str,
+) -> Option<&'static str> {
+    match (edits_kept, copied) {
+        (true, true) => Some(EDITOR_KEPT_COPIED),
+        (true, false) => Some(EDITOR_KEPT),
+        (false, true) => Some(copied_text),
+        (false, false) => None,
+    }
+}
+
+/// What a capture's failure toast says. With the editor's edits kept, the capture is waiting in
+/// the gallery, and as the failure takes the place of that toast it says so too.
+fn failure_message(failure: &'static str, edits_kept: bool) -> SharedString {
+    if edits_kept {
+        format!("Capture added to the gallery, but: {failure} Your edits here are kept.").into()
+    } else {
+        failure.into()
+    }
+}
+
 /// The one toast for everything that failed while nobody could see it.
 fn missed_failures_message(missed: &[SharedString]) -> Option<SharedString> {
     match missed {
@@ -558,6 +596,31 @@ pub(super) mod tests {
             Some(AUTO_SAVE_FAILED)
         );
         assert_eq!(capture_failure(true, false, Some(false)), Some(COPY_FAILED));
+    }
+
+    /// The editor keeping its edits and the copy are said in one toast, so neither replaces the
+    /// other before it can be read.
+    #[test]
+    fn a_kept_editor_and_a_copy_share_one_toast() {
+        let copied = "Copied to clipboard";
+        assert_eq!(
+            capture_message(true, true, copied),
+            Some(EDITOR_KEPT_COPIED)
+        );
+        assert_eq!(capture_message(true, false, copied), Some(EDITOR_KEPT));
+        assert_eq!(capture_message(false, true, copied), Some(copied));
+        assert_eq!(capture_message(false, false, copied), None);
+    }
+
+    /// A failure that replaces the gallery toast still says where the capture went.
+    #[test]
+    fn a_failure_with_kept_edits_still_mentions_the_gallery() {
+        assert_eq!(failure_message(COPY_FAILED, false), COPY_FAILED);
+        for failure in [COPY_FAILED, AUTO_SAVE_FAILED] {
+            let message = failure_message(failure, true);
+            assert!(message.starts_with("Capture added to the gallery"));
+            assert!(message.contains(failure));
+        }
     }
 
     #[test]

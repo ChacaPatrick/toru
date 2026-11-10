@@ -241,6 +241,9 @@ pub struct Colors {
     pub sticker: Hsla,
     pub sticker_line: Hsla,
     pub anno: Hsla,
+    /// The border of a field whose text isn't valid, such as a hex colour that doesn't parse.
+    /// The mockups show none; each look takes a red that stands out on its fields.
+    pub warning: Hsla,
     /// Outline around the chosen colour swatch in the editor panel.
     pub swatch_on: Hsla,
     pub load_bg: Hsla,

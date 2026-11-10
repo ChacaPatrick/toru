@@ -245,6 +245,7 @@ fn base() -> Theme {
             sticker: hex(0xffde59),
             sticker_line: black,
             anno: black,
+            warning: hex(0xe63946),
             swatch_on: black,
             load_bg: white,
         },

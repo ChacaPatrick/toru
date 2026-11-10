@@ -185,11 +185,16 @@ impl MainWindow {
         // the bottom bar gives way to the bulk bar or the bulk bar goes with the selection while a
         // button on it has focus, it goes into the gallery, where Tab reaches the current card; the
         // toolbar's Region button would start a capture on the Enter or Space that follows.
-        // With no such ancestor and the Edit shortcuts dialog open, focus goes to its Done: the
-        // quit dialog's Cancel takes its buttons away while one has focus, and the two dialogs
-        // are siblings, so nothing of the one that went lies inside the one that stays.
+        // With no such ancestor and the custom palette panel or the Edit shortcuts dialog open,
+        // focus goes back into it, to its first field or its Done: the quit dialog's Cancel
+        // takes its buttons away while one has focus, and the dialogs are siblings, so nothing
+        // of the one that went lies inside the one that stays. The editor gets focus this way
+        // too when it opened under a dialog (`show_editor`).
         cx.on_focus_lost(window, |this, window, cx| {
             let target = window.focus_lost_restore_target(cx).unwrap_or_else(|| {
+                if let Some(field) = this.custom_editor_focus(cx) {
+                    return field;
+                }
                 match (&this.shortcuts_dialog, &this.editor) {
                     (Some(dialog), _) => dialog.done.clone(),
                     (None, Some(editor)) => editor.focus_handle(cx),
@@ -424,7 +429,11 @@ impl MainWindow {
             },
         )
         .detach();
-        editor.focus_handle(cx).focus(window, cx);
+        // A dialog open over the window keeps the keyboard, so Esc and Tab still reach it; the
+        // editor gets focus when the dialog closes, through `on_focus_lost`.
+        if !self.dialog_open() {
+            editor.focus_handle(cx).focus(window, cx);
+        }
         self.editor = Some(editor);
         cx.notify();
     }
@@ -444,6 +453,15 @@ impl MainWindow {
             self.demo_marks = start == EditorStart::Demo;
             self.open_editor(id, cx);
         }
+    }
+
+    /// Whether a dialog, or the custom palette panel, is open over the window.
+    fn dialog_open(&self) -> bool {
+        self.retention.asking()
+            || self.custom_editor.is_some()
+            || self.shortcuts_dialog.is_some()
+            || self.quit_prompt.is_some()
+            || self.delete_prompt.is_some()
     }
 
     /// Whether the editor is open with annotations that closing it would lose.
@@ -543,8 +561,9 @@ impl MainWindow {
     /// Ctrl+A selects every listed card. A control that handles the key itself, as a name field
     /// does with both, keeps it.
     fn key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
-        // A dialog's question stands until it is answered, whatever is behind it.
-        if self.quit_prompt.is_some() || self.delete_prompt.is_some() {
+        // A dialog's question stands until it is answered, whatever is behind it, and focus
+        // can be left behind a dialog when what held it inside went away.
+        if self.dialog_open() {
             return;
         }
         let keystroke = &event.keystroke;

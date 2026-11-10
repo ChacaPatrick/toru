@@ -129,6 +129,13 @@ impl MainWindow {
         set_theme(Theme::new(look, safe), cx);
     }
 
+    /// Where focus goes when the control holding it goes and nothing in the panel is left to
+    /// take it, as when a dialog over the panel closes: the first colour field.
+    pub(super) fn custom_editor_focus(&self, cx: &gpui::App) -> Option<FocusHandle> {
+        let editor = self.custom_editor.as_ref()?;
+        Some(editor.fields[0].focus_handle(cx))
+    }
+
     fn custom_field_changed(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(editor) = &mut self.custom_editor else {
             return;
@@ -273,7 +280,7 @@ impl MainWindow {
                             TextField::new(state, format!("{label} colour"))
                                 .height(px(FIELD_HEIGHT))
                                 .w(px(FIELD_WIDTH))
-                                .when(editor.invalid[index], |field| field.border_color(c.anno)),
+                                .warning(editor.invalid[index]),
                         )
                 });
 
@@ -368,6 +375,10 @@ impl MainWindow {
             .aria_description(about.clone())
             .modal_dialog()
             .key_context(dialog::KEY_CONTEXT)
+            // Only Esc is stopped. A stopped key-down gets no WM_CHAR on Windows, so stopping
+            // every key would leave the hex fields deaf to typing. The panel is a sibling of the
+            // window frame, so other keys pressed in it never reach the frame's shortcuts, and
+            // the frame ignores keys while the panel is open, should focus be left behind it.
             .on_key_down(move |event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" {
                     cx.stop_propagation();

@@ -16,6 +16,8 @@ pub struct TextField {
     aria_label: SharedString,
     height: gpui::Pixels,
     tab_stop: bool,
+    /// The border takes the theme's warning colour, as for text that isn't valid.
+    warning: bool,
     /// Sizing for the field as a whole, such as a width or `flex_1`.
     style: StyleRefinement,
 }
@@ -28,6 +30,7 @@ impl TextField {
             aria_label: aria_label.into(),
             height: px(34.),
             tab_stop: true,
+            warning: false,
             style: StyleRefinement::default(),
         }
     }
@@ -41,6 +44,13 @@ impl TextField {
     /// Whether Tab reaches the field; see `Button::tab_stop`.
     pub fn tab_stop(mut self, tab_stop: bool) -> TextField {
         self.tab_stop = tab_stop;
+        self
+    }
+
+    /// Whether the border warns that the text isn't valid. The field's own styles size its
+    /// wrapper, which has no border, so the colour is set here on the kit's frame.
+    pub fn warning(mut self, warning: bool) -> TextField {
+        self.warning = warning;
         self
     }
 }
@@ -73,7 +83,11 @@ impl RenderOnce for TextField {
             .bg(c.input_bg)
             .text_color(c.text)
             .border(border.width)
-            .border_color(border.color)
+            .border_color(if self.warning {
+                c.warning
+            } else {
+                border.color
+            })
             .rounded(radius)
             .type_style(theme, theme.type_scale.field);
         // `Input::h` is the kit's own method for multi-line fields; the frame's height is a style.

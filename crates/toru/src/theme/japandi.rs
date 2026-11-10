@@ -190,6 +190,7 @@ fn base() -> Theme {
             sticker: hex(0xc4855a),
             sticker_line: hex(0x2b2a26),
             anno: hex(0x7a5c3e),
+            warning: hex(0xc8553d),
             swatch_on: hex(0x7a5c3e),
             load_bg: gpui::transparent_black(),
         },

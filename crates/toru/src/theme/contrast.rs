@@ -308,6 +308,16 @@ mod tests {
         );
     }
 
+    /// An invalid field's border reads against the field as a focus ring must (DESIGN.md §7).
+    #[test]
+    fn the_warning_border_stands_out_in_every_palette() {
+        for theme in themes() {
+            let c = &theme.colors;
+            let ratio = ratio(c.warning, c.input_bg);
+            assert!(ratio >= RING, "{}: {ratio:.2}:1", describe(&theme));
+        }
+    }
+
     /// `cargo test -p toru print_contrast_table -- --ignored --nocapture` lists every pair.
     #[test]
     #[ignore]

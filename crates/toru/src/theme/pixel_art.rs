@@ -269,6 +269,7 @@ fn base() -> Theme {
             sticker: hex(0xffd23f),
             sticker_line: ink,
             anno: hex(0xff6b97),
+            warning: hex(0xff6b97),
             swatch_on: hex(0xffd23f),
             load_bg: hex(0x15152a),
         },

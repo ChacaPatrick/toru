@@ -148,6 +148,11 @@ impl RetentionControl {
             prompt: None,
         }
     }
+
+    /// Whether the dialog asking to delete older captures is open.
+    pub fn asking(&self) -> bool {
+        self.prompt.is_some()
+    }
 }
 
 impl MainWindow {
