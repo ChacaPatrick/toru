@@ -249,6 +249,10 @@ pub struct Colors {
     pub load_bg: Hsla,
 }
 
+/// The least contrast a number badge's white digits keep before they give way to a dark ink:
+/// a light disc such as white or yellow is below it, the mockups' darker swatches above.
+const BADGE_WHITE: f32 = 3.;
+
 impl Colors {
     /// The editor's stroke swatches, in the panel's order: the look's ink, white, its annotation
     /// colour, then the yellow and blue the mockups give every look.
@@ -263,10 +267,18 @@ impl Colors {
         ]
     }
 
-    /// The digits on a number badge: the mockups write `#fff` out for every look rather than
-    /// naming a token.
-    pub fn badge_text(&self) -> Hsla {
-        gpui::white()
+    /// The digits on a number badge of colour `disc`: the mockups write `#fff` out for every
+    /// look, which a light disc such as white or yellow swallows, so on a disc too light for
+    /// white the look's ink or page is used instead, whichever is darker against it.
+    pub fn badge_text(&self, disc: Hsla) -> Hsla {
+        let white = gpui::white();
+        if contrast::ratio(white, disc) >= BADGE_WHITE {
+            white
+        } else if contrast::ratio(self.text, disc) >= contrast::ratio(self.bg, disc) {
+            self.text
+        } else {
+            self.bg
+        }
     }
 
     /// The on-states as the base CSS draws them: the accent fill with the accent text. A look
@@ -685,6 +697,25 @@ pub enum DayDate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_light_badge_takes_the_looks_ink_for_its_digits() {
+        for look in [Look::Japandi, Look::PixelArt, Look::NeoBrutalism] {
+            for palette in 0..BUILT_IN_PALETTES {
+                let colors = Theme::new(look, palette).colors;
+                let swatches = colors.stroke_swatches();
+                // White and yellow, the swatches the white digits vanished on.
+                for disc in [swatches[1].color, swatches[3].color] {
+                    let digits = colors.badge_text(disc);
+                    assert_ne!(digits, gpui::white());
+                    assert!(contrast::ratio(digits, disc) >= contrast::TEXT);
+                }
+                // A dark disc keeps its white digits.
+                let blue = swatches[4].color;
+                assert_eq!(colors.badge_text(blue), gpui::white());
+            }
+        }
+    }
 
     fn names(look: Look, palette: usize) -> Vec<&'static str> {
         Theme::new(look, palette)

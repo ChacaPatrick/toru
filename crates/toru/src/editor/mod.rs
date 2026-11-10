@@ -975,10 +975,11 @@ impl Editor {
             let on_text = self
                 .mark_at(at)
                 .filter(|index| self.document.annotations()[*index].text().is_some());
+            // A click off the picture begins nothing: text there would not show.
             match on_text {
                 Some(index) => self.edit_text(index, cx),
+                None if !self.shown_bounds().contains(&at) => {}
                 None => {
-                    let at = in_picture(self.shown_bounds(), at);
                     if let Some(text) = self.placed(Tool::Text, at, cx.theme()) {
                         self.start_typing(None, text, cx);
                     }
@@ -1650,7 +1651,7 @@ fn style_of(options: StrokeOptions, theme: &Theme, kind: Kind) -> Style {
     let c = &theme.colors;
     let (color, second) = match kind {
         Kind::Sticker => (c.sticker, c.sticker_line),
-        _ => (swatch.color, c.badge_text()),
+        _ => (swatch.color, c.badge_text(swatch.color)),
     };
     Style {
         color: skia_color(color),
