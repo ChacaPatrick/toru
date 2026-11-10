@@ -71,6 +71,7 @@ Drawn with `tiny-skia`, so the screen matches the saved file exactly.
 - [x] 10.2 Screen reader pass, if 1.5 worked
 - [ ] 10.3 Installer that ships the font licences, start with Windows, clean-machine test
 - [x] 10.4 Layout and looks fixes from the Nov 9 review: columns that follow the window, empty state, select bar, bottom bar [Fable]
+- [ ] 10.5 Bug fixes from KNOWN_ISSUES.md, one PR per group (10.5.1–10.5.9) [Opus]
 
 ## Approved libraries
 | Job | Library |
