@@ -26,6 +26,10 @@ Left open by the review cap. Fix these in section 10.1.
 - An invalid hex field's border colour has no visible effect.
 - Cancelling the quit dialog over the custom palette editor sends focus behind it.
 
+## Looks
+- Pixel art's green and amber palettes keep the first palette's navy and purple in the empty-state box, the disabled buttons' dashes, the day divider and the loading row. A fix is on the branch `followup/pixel-art-palette-colours`, not yet reviewed or checked.
+- Thumbnails stored before 10.4 are not remade, so on a wider card they can still stretch by up to 1.35 times.
+
 ## Screen reader
 - Menu buttons (`⋯`, Delayed, Save as, the display picker) expose expand/collapse to assistive tools but don't act on it, so a screen reader's own activate command may not open them. Enter and Space still do.
 - Narrator's headings list may not show the gallery headings; they are still read as text.
