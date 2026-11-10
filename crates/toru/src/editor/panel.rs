@@ -187,8 +187,10 @@ fn stroke_group(
             this.set_option(cx, |o| o.style = LineStyle::ALL[i])
         }))
         .into_any_element(),
-        // Each face is named in itself, so the choice shows what it does, at the label size:
-        // the display faces are wide, and the panel is narrow.
+        // Each face is named in itself, so the choice shows what it does. The display face is
+        // set at the label size, as the panel's labels are: it is wide, and the panel is
+        // narrow. The body face is set at the options' own size, so the two chips read as one
+        // size where the look's faces differ as much as Pixel art's do.
         Group::Font => Choices::new(
             "font",
             "Font",
@@ -196,12 +198,12 @@ fn stroke_group(
             index_of(&FAMILIES, options.font),
             |i, on, theme| {
                 let name = theme.fonts.family(FAMILIES[i]);
-                option(theme, ("font", i), name.clone(), on).child(
-                    div()
-                        .font_family(name.clone())
-                        .text_size(theme.type_scale.label.size)
-                        .child(name),
-                )
+                let size = match FAMILIES[i] {
+                    Family::Display => theme.type_scale.label.size,
+                    _ => theme.type_scale.option.size,
+                };
+                option(theme, ("font", i), name.clone(), on)
+                    .child(div().font_family(name.clone()).text_size(size).child(name))
             },
         )
         .flex_wrap()

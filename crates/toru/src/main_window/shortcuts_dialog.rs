@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 
-use gpui::{Context, FocusHandle, KeyDownEvent, div, prelude::*, px};
+use gpui::{Context, FocusHandle, KeyDownEvent, SharedString, div, prelude::*, px};
 use toru_core::capture::CaptureMode;
 
 use super::{MainWindow, act, settings::shortcut_text};
@@ -135,6 +135,15 @@ impl MainWindow {
             .filter_map(|row| row.text.as_deref())
             .collect::<Vec<_>>()
             .join(" · ")
+    }
+
+    /// The Region shortcut as the settings show it, if it is working, for the gallery's empty
+    /// state to name.
+    pub(super) fn region_shortcut(&self) -> Option<SharedString> {
+        self.planned(&Binding::Region)
+            .filter(|row| row.problem.is_none())
+            .and_then(|row| row.text.clone())
+            .map(SharedString::from)
     }
 
     /// What the dialog calls a row.

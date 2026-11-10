@@ -1,16 +1,20 @@
 //! The gallery (DESIGN.md §2 with CLAUDE.md's overrides): one scrolling list holding "This
 //! session", then, while "Show previous screenshots" is on, "Earlier today" and one group per
-//! earlier day, each a header over a 3-across grid of cards, then the loading row for the next
-//! day. A day group's Collapse folds its cards away, and the search field in the session header
+//! earlier day, each a header over a grid of cards, then the loading row for the next day. The
+//! grid has as many columns as fit the gallery's width with no card narrower than
+//! `MIN_CARD_WIDTH`: three at the mockups' window, two at the smallest, more on a wide one, so a
+//! card stays close to the mockups' size and its thumbnail is never stretched. With no card to
+//! list and no search, the look's empty state (`empty`) fills the space under the session header.
+//! A day group's Collapse folds its cards away, and the search field in the session header
 //! filters every group's cards by name as the user types. A card being renamed stays listed
 //! whatever its name becomes, and is filtered again when the field loses focus, so the typing
 //! has somewhere to go.
 //!
 //! The list is `gpui-kit`'s virtual list (`docs/spikes.md` §1.3): it needs every row's height
 //! up front, so the rows are rebuilt when a group collapses or expands, a day arrives, the earlier
-//! groups are shown or hidden, or the search changes, and the card height comes from
-//! `card::height` at the gallery's current width. Each name field's text lives in its
-//! `InputState`, so edits survive scrolling out of view and back.
+//! groups are shown or hidden, the search changes or the window's width changes the column
+//! count, and the card height comes from `card::layout` at the gallery's current width. Each
+//! name field's text lives in its `InputState`, so edits survive scrolling out of view and back.
 //!
 //! Earlier days come from the store a day at a time (`history`), off the main thread, once the
 //! list is nearly scrolled to its end. A search only looks through what is loaded and doesn't pull
@@ -58,6 +62,7 @@ use toru_core::{
 use super::{
     HINT_LEADING, act, bulk_bar, card,
     delete::DeleteCard,
+    empty,
     history::{self, Next, Page},
     selection::{Counts, Selection, enters_select_mode},
 };
@@ -73,7 +78,13 @@ const PADDING_BOTTOM: f32 = 64.;
 const BULK_PADDING_BOTTOM: f32 = 90.;
 /// Between a header and its grid, between card rows, and between columns.
 const GAP: f32 = 16.;
-const COLUMNS: usize = 3;
+/// The narrowest a card may be, which sets how many columns a width holds: the mockups' three
+/// at their 980px gallery, where a card is 304px, and two beside the settings column at the
+/// smallest window. Every look's chip and actions fit one row at this width (`card::layout`).
+const MIN_CARD_WIDTH: f32 = 268.;
+/// The widest a card gets, just before the width has room for a third column: 1.35 times the
+/// mockups' card. Thumbnails are stored this wide, so no card ever stretches one.
+const MAX_CARD_WIDTH: f32 = (MIN_CARD_WIDTH + GAP) * 1.5 - GAP;
 /// A header row is as tall as its controls: the search field and Select, or Collapse.
 const HEADER_HEIGHT: f32 = 32.;
 /// Between the session header's row and select mode's hint line beneath it.
@@ -140,7 +151,7 @@ pub struct NewCard {
 
 enum Row {
     Header(usize),
-    /// Up to three of a group's cards, by index in the group: those the search lets through.
+    /// Up to a row of a group's cards, by index in the group: those the search lets through.
     Cards {
         group: usize,
         cards: Vec<usize>,
@@ -195,10 +206,16 @@ pub struct Gallery {
     thumbnails: Entity<RetainAllImageCache>,
     /// Cards taken away since the last render, whose thumbnails it then lets go of.
     cleared: Vec<Card>,
-    /// The width the main window gives the gallery, from which the card width follows.
+    /// The width the main window gives the gallery, from which the columns and the card width
+    /// follow.
     width: Pixels,
     scale: f32,
-    card_height: Pixels,
+    columns: usize,
+    card_layout: card::Layout,
+    /// Nothing is listed and nothing is being searched or loaded, so the empty state shows.
+    empty: bool,
+    /// The Region shortcut as the settings show it, if one is working, for the empty state.
+    region_shortcut: Option<SharedString>,
     next_card: usize,
     scroll: VirtualListScrollHandle,
     /// The card whose Copy shows a check mark.
@@ -256,7 +273,13 @@ impl Gallery {
             cleared: Vec::new(),
             width: px(0.),
             scale: 1.,
-            card_height: px(0.),
+            columns: 1,
+            card_layout: card::Layout {
+                height: px(0.),
+                open_folder_icon: false,
+            },
+            empty: false,
+            region_shortcut: None,
             next_card: 0,
             scroll: VirtualListScrollHandle::new(),
             copied: Flash::new(),
@@ -271,13 +294,70 @@ impl Gallery {
         gallery
     }
 
-    pub fn set_width(&mut self, width: Pixels, scale: f32) {
+    /// Takes the width the main window gives the gallery. A width that changes how many columns
+    /// fit lays the cards out again, keeping what was at the top of the view there.
+    pub fn set_width(&mut self, width: Pixels, scale: f32, cx: &gpui::App) {
         self.width = width;
         self.scale = scale;
+        let columns = columns_for(width);
+        if columns == self.columns {
+            return;
+        }
+        // The row at the top of the view and how much of it is above the view. A list at its
+        // start stays there.
+        let theme = cx.theme();
+        let at_top = row_at(self.row_heights(theme), self.scrolled(theme))
+            .filter(|&at| at != (0, px(0.)))
+            .and_then(|(row, into)| Some((self.anchor_of(&self.rows[row])?, into)));
+        self.columns = columns;
+        self.rebuild_rows(cx);
+        let Some((anchor, into)) = at_top else {
+            return;
+        };
+        let row = self
+            .rows
+            .iter()
+            .position(|row| self.holds_anchor(row, anchor));
+        if let Some(row) = row {
+            // Straight to the offset: the list's `scroll_to_item` only brings a row into view,
+            // which leaves one that was at the top at the bottom once the rows above it grow.
+            let heights: Vec<Pixels> = self.row_heights(theme).collect();
+            let viewport = self.scroll.bounds().size.height;
+            let scrolled = scroll_showing(&heights, row, into, viewport);
+            self.scroll.set_offset(point(px(0.), -scrolled));
+        }
     }
 
-    /// How wide a thumbnail has to be to stay sharp on a card, and no wider, since GPU memory
-    /// grows quickly with it (`docs/spikes.md` §1.3): the card's width in physical pixels.
+    fn row_heights(&self, theme: &Theme) -> impl Iterator<Item = Pixels> {
+        self.rows.iter().map(|row| self.row_height(row, theme))
+    }
+
+    /// What `row` shows first, to find it again once the rows are rebuilt.
+    fn anchor_of(&self, row: &Row) -> Option<Anchor> {
+        match row {
+            Row::Header(group) => Some(Anchor::Header(*group)),
+            Row::Cards { group, cards } => {
+                Some(Anchor::Card(self.groups[*group].cards[*cards.first()?].id))
+            }
+            _ => None,
+        }
+    }
+
+    fn holds_anchor(&self, row: &Row, anchor: Anchor) -> bool {
+        match (row, anchor) {
+            (Row::Header(group), Anchor::Header(wanted)) => *group == wanted,
+            (Row::Cards { group, cards }, Anchor::Card(id)) => cards
+                .iter()
+                .any(|&index| self.groups[*group].cards[index].id == id),
+            _ => false,
+        }
+    }
+
+    /// The Region shortcut to name in the empty state, or `None` if none is working.
+    pub fn set_region_shortcut(&mut self, shortcut: Option<SharedString>) {
+        self.region_shortcut = shortcut;
+    }
+
     /// How many of this session's captures aren't saved to the user's folder.
     pub fn unsaved_in_session(&self) -> usize {
         self.groups
@@ -288,8 +368,10 @@ impl Gallery {
             .count()
     }
 
-    pub fn thumbnail_width(&self) -> u32 {
-        physical_width(self.card_width(), self.scale)
+    /// How wide to store the thumbnail of a picture of `size` so that no card has to stretch
+    /// it, whatever the window's width.
+    pub fn thumbnail_width(&self, size: (u32, u32)) -> u32 {
+        thumbnail_width_for(size, self.scale)
     }
 
     /// Puts a capture at the top of this session. The name field's `Window` is why the main
@@ -810,7 +892,7 @@ impl Gallery {
         }
     }
 
-    /// The list's rows: each listed group's header, then its matching cards three to a row
+    /// The list's rows: each listed group's header, then its matching cards a row at a time
     /// unless it is collapsed, the row for the next day while there is one, then the bottom
     /// padding. Only the session group is listed unless `show_previous`, and a search drops
     /// every other group it leaves empty.
@@ -846,13 +928,17 @@ impl Gallery {
             if group.collapsed {
                 continue;
             }
-            for chunk in shown.chunks(COLUMNS) {
+            for chunk in shown.chunks(self.columns) {
                 rows.push(Row::Cards {
                     group: index,
                     cards: chunk.to_vec(),
                 });
             }
         }
+        // Only the session header is listed. While earlier days are on and the store hasn't run
+        // out of them, a day may still arrive and the row for it shows, so the empty state waits.
+        let more_to_come = self.show_previous && self.next != Next::End;
+        self.empty = rows.len() == 1 && self.query.is_empty() && !more_to_come;
         if self.show_previous {
             match self.next {
                 Next::Day(day) => rows.push(Row::NextDay(Some(day))),
@@ -908,9 +994,8 @@ impl Gallery {
         let Some(at) = shown.iter().position(|&(_, card)| card == id) else {
             return;
         };
-        let step =
-            |by: isize| shown[(at as isize + by).clamp(0, shown.len() as isize - 1) as usize];
-        let target = match event.keystroke.key.as_str() {
+        let key = event.keystroke.key.as_str();
+        match key {
             "enter" => {
                 cx.stop_propagation();
                 self.open_editor(id, cx);
@@ -921,29 +1006,17 @@ impl Gallery {
                 self.press_card(id, event.keystroke.modifiers, cx);
                 return;
             }
-            "left" => step(-1),
-            "right" => step(1),
-            "up" | "down" => {
-                let row = shown[at].0;
-                let next_row = if event.keystroke.key == "up" {
-                    shown[..at].iter().rev().find(|c| c.0 != row).map(|c| c.0)
-                } else {
-                    shown[at..].iter().find(|c| c.0 != row).map(|c| c.0)
-                };
-                let Some(next_row) = next_row else {
-                    cx.stop_propagation();
-                    return;
-                };
-                // The same column, or the last card of a shorter row.
-                let column = shown[..at].iter().rev().take_while(|c| c.0 == row).count();
-                let in_row: Vec<_> = shown.iter().filter(|c| c.0 == next_row).collect();
-                *in_row[column.min(in_row.len() - 1)]
-            }
-            "home" => shown[0],
-            "end" => shown[shown.len() - 1],
-            _ => return,
+            _ => {}
+        }
+        let Some(target) = key_target(&shown, at, key) else {
+            return;
         };
+        // An arrow with nowhere to go still belongs to the grid.
         cx.stop_propagation();
+        if target == at {
+            return;
+        }
+        let target = shown[target];
         self.focus_card(target.1, target.0, window, cx);
     }
 
@@ -961,7 +1034,7 @@ impl Gallery {
     }
 
     fn card_width(&self) -> Pixels {
-        (self.width - px(PADDING_X * 2. + GAP * (COLUMNS - 1) as f32)) / COLUMNS as f32
+        card_width_at(self.width, self.columns)
     }
 
     fn row_height(&self, row: &Row, theme: &Theme) -> Pixels {
@@ -974,7 +1047,7 @@ impl Gallery {
                 px(EARLIER_MARGIN + EARLIER_PADDING + HEADER_HEIGHT + GAP)
                     + theme.borders.earlier_rule.width
             }
-            Row::Cards { .. } => self.card_height + px(GAP),
+            Row::Cards { .. } => self.card_layout.height + px(GAP),
             Row::NoMatch { .. } | Row::NextDay(_) => px(NOTICE_HEIGHT + GAP),
             Row::Footer if self.selection.is_empty() => px(PADDING_BOTTOM - GAP),
             Row::Footer => px(BULK_PADDING_BOTTOM - GAP),
@@ -987,9 +1060,8 @@ impl Gallery {
     /// Show previous off or collapsing groups has brought the session back into view.
     fn scrolled(&self, theme: &Theme) -> Pixels {
         let content = self
-            .rows
-            .iter()
-            .fold(px(0.), |sum, row| sum + self.row_height(row, theme));
+            .row_heights(theme)
+            .fold(px(0.), |sum, height| sum + height);
         let furthest = (content - self.scroll.bounds().size.height).max(px(0.));
         (-self.scroll.offset().y).min(furthest)
     }
@@ -1059,13 +1131,14 @@ impl Gallery {
                                 active: self.current == Some(card.id),
                                 select_mode: self.select_mode,
                                 selected: self.selection.contains(card.id),
+                                open_folder_icon: self.card_layout.open_folder_icon,
                             },
                             &self.thumbnails,
                             window,
                             cx,
                         )
                     }))
-                    .children((cards.len()..COLUMNS).map(|_| card::empty_slot(theme)))
+                    .children((cards.len()..self.columns).map(|_| card::empty_slot(theme)))
             }
             Row::NoMatch { elsewhere } => base.pb(px(GAP)).child(notice(
                 "no-match",
@@ -1261,7 +1334,7 @@ impl Gallery {
 impl Render for Gallery {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        self.card_height = card::height(self.card_width(), theme, window, cx);
+        self.card_layout = card::layout(self.card_width(), theme, window);
         let session_bottom = self.session_bottom(theme);
         let pill = self.scrolled(theme) > session_bottom;
 
@@ -1310,6 +1383,19 @@ impl Render for Gallery {
         }
         self.release_far_thumbnails(&near, window, cx);
         self.fetch_when_near_bottom(content, scrolled, viewport, window, cx);
+        // Under the session header, over the list, which has nothing else to show or scroll.
+        let empty = self.empty.then(|| {
+            let theme = cx.theme();
+            div()
+                .absolute()
+                .top(self.row_height(&Row::Header(0), theme))
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .px(px(PADDING_X))
+                .overflow_hidden()
+                .child(empty::empty_state(self.region_shortcut.as_deref(), theme))
+        });
         div()
             .relative()
             .size_full()
@@ -1325,6 +1411,7 @@ impl Render for Gallery {
                     .child(list)
                     .vertical_scrollbar(&self.scroll),
             )
+            .children(empty)
             // The pill lies over the list, outside the element `focus` tracks: it isn't content
             // that scrolls, so focusing it must not scroll the list to bring it "into view".
             .when(pill, |this| {
@@ -1461,8 +1548,95 @@ fn select_hint_height(theme: &Theme) -> Pixels {
     px(SELECT_HINT_GAP) + theme.type_scale.hint.size * HINT_LEADING
 }
 
+/// What was at the top of the view before the columns changed: a group's header, or a card by id.
+#[derive(Clone, Copy)]
+enum Anchor {
+    Header(usize),
+    Card(usize),
+}
+
+/// The row at the top of the view of a list of rows this tall scrolled down by `scrolled`, and
+/// how much of that row is above the view. `None` once the list is scrolled past its last row.
+fn row_at(heights: impl Iterator<Item = Pixels>, scrolled: Pixels) -> Option<(usize, Pixels)> {
+    let mut top = px(0.);
+    for (row, height) in heights.enumerate() {
+        if scrolled < top + height {
+            return Some((row, scrolled - top));
+        }
+        top += height;
+    }
+    None
+}
+
+/// How far down to scroll a list of rows this tall, in a view `viewport` tall, to put `row` at
+/// the top of the view with `into` of it above the view, or as near to that as the list's end
+/// allows.
+fn scroll_showing(heights: &[Pixels], row: usize, into: Pixels, viewport: Pixels) -> Pixels {
+    let sum = |heights: &[Pixels]| heights.iter().fold(px(0.), |sum, &height| sum + height);
+    let furthest = (sum(heights) - viewport).max(px(0.));
+    (sum(&heights[..row]) + into.min(heights[row])).min(furthest)
+}
+
+/// How many cards go across a gallery `width` wide: as many as stay `MIN_CARD_WIDTH` or wider,
+/// and at least one.
+fn columns_for(width: Pixels) -> usize {
+    let room = f32::from(width) - PADDING_X * 2. + GAP;
+    ((room / (MIN_CARD_WIDTH + GAP)).floor() as usize).max(1)
+}
+
+/// The width of each of `columns` cards across a gallery `width` wide.
+fn card_width_at(width: Pixels, columns: usize) -> Pixels {
+    (width - px(PADDING_X * 2. + GAP * (columns - 1) as f32)) / columns as f32
+}
+
+/// Where `key` moves the grid's focus from the card at `at` in `shown`, the listed cards in
+/// reading order, each with its row: the neighbour for Left and Right, the same column a row
+/// up or down, or that row's last card if it is shorter, and the first or last card for Home
+/// and End. A move off either end stays put. `None` for a key that isn't the grid's.
+fn key_target(shown: &[(usize, usize)], at: usize, key: &str) -> Option<usize> {
+    let last = shown.len() - 1;
+    let row = shown[at].0;
+    let row_start = |row: usize| shown.iter().position(|card| card.0 == row);
+    Some(match key {
+        "left" => at.saturating_sub(1),
+        "right" => (at + 1).min(last),
+        "up" | "down" => {
+            let next_row = if key == "up" {
+                shown[..at].iter().rev().find(|card| card.0 != row)
+            } else {
+                shown[at..].iter().find(|card| card.0 != row)
+            };
+            let Some(&(next_row, _)) = next_row else {
+                return Some(at);
+            };
+            let column = at - row_start(row)?;
+            let start = row_start(next_row)?;
+            let length = shown[start..]
+                .iter()
+                .take_while(|card| card.0 == next_row)
+                .count();
+            start + column.min(length - 1)
+        }
+        "home" => 0,
+        "end" => last,
+        _ => return None,
+    })
+}
+
 fn physical_width(width: Pixels, scale: f32) -> u32 {
     (f32::from(width) * scale).ceil().max(1.) as u32
+}
+
+/// How wide a `width`×`height` picture's thumbnail has to be to stay sharp on a card, and no
+/// wider, since GPU memory grows quickly with it (`docs/spikes.md` §1.3): the widest card in
+/// physical pixels, or, for a picture so wide that it would then be shorter than a card's
+/// thumbnail, which it fills, wide enough to be that tall. The store never makes a thumbnail
+/// wider than its picture.
+fn thumbnail_width_for((width, height): (u32, u32), scale: f32) -> u32 {
+    let widest_card = physical_width(px(MAX_CARD_WIDTH), scale);
+    let thumb_height = u64::from(physical_width(px(card::THUMB_HEIGHT), scale));
+    let fills_height = (thumb_height * u64::from(width)).div_ceil(u64::from(height.max(1)));
+    widest_card.max(u32::try_from(fills_height).unwrap_or(u32::MAX))
 }
 
 /// Whether a search for `query`, already lower-cased and trimmed, lets a card called `name`
@@ -1546,6 +1720,165 @@ mod tests {
         assert_eq!(physical_width(px(304.), 1.), 304);
         assert_eq!(physical_width(px(304.5), 2.), 609);
         assert_eq!(physical_width(px(0.), 1.), 1);
+    }
+
+    /// The gallery's width beside the open settings column at the smallest window.
+    fn narrowest_gallery() -> f32 {
+        crate::MIN_WINDOW_SIZE.0 - super::super::settings::WIDTH
+    }
+
+    #[test]
+    fn columns_follow_the_gallery_width() {
+        // The mockups' window: 1280 wide with the 300px settings column open.
+        assert_eq!(columns_for(px(980.)), 3);
+        assert_eq!(card_width_at(px(980.), 3), px(304.));
+        // The smallest window, settings open, and the same window with them hidden.
+        assert_eq!(columns_for(px(narrowest_gallery())), 2);
+        assert_eq!(columns_for(px(crate::MIN_WINDOW_SIZE.0)), 3);
+        // Hiding the settings column at the mockups' size adds a column; so does a wide window.
+        assert_eq!(columns_for(px(1280.)), 4);
+        assert_eq!(columns_for(px(1900. - 300.)), 5);
+        // A column is added only once every card can be `MIN_CARD_WIDTH` wide.
+        let four = PADDING_X * 2. + MIN_CARD_WIDTH * 4. + GAP * 3.;
+        assert_eq!(columns_for(px(four - 1.)), 3);
+        assert_eq!(columns_for(px(four)), 4);
+        // Never none, however narrow.
+        assert_eq!(columns_for(px(100.)), 1);
+        assert_eq!(columns_for(px(0.)), 1);
+    }
+
+    #[test]
+    fn the_top_of_the_view_stays_put_when_the_columns_change() {
+        let px_all = |heights: &[f32]| heights.iter().map(|&h| px(h)).collect::<Vec<_>>();
+        // A header, three rows of cards, a second header, a row of cards and the footer.
+        let three = px_all(&[64., 300., 300., 300., 70., 300., 48.]);
+        // The view starts 20px into the second header.
+        let scrolled = px(64. + 900. + 20.);
+        assert_eq!(row_at(three.iter().copied(), scrolled), Some((4, px(20.))));
+        assert_eq!(row_at(three.iter().copied(), px(0.)), Some((0, px(0.))));
+        assert_eq!(row_at(three.iter().copied(), px(64.)), Some((1, px(0.))));
+        assert_eq!(row_at(three.iter().copied(), px(5000.)), None);
+
+        // Two columns: the cards above take five rows, and the header is still 20px in.
+        let two = px_all(&[64., 300., 300., 300., 300., 300., 70., 300., 300., 48.]);
+        assert_eq!(scroll_showing(&two, 6, px(20.), px(400.)), px(1584.));
+        // Five columns: they take two, and the header is the same 20px in.
+        let five = px_all(&[64., 300., 300., 70., 300., 300., 300., 48.]);
+        assert_eq!(scroll_showing(&five, 3, px(20.), px(400.)), px(684.));
+        // A list too short to scroll that far stops at its end, and never above its start.
+        let short = px_all(&[64., 300., 70., 300., 48.]);
+        assert_eq!(scroll_showing(&short, 2, px(20.), px(600.)), px(182.));
+        assert_eq!(scroll_showing(&short, 2, px(20.), px(900.)), px(0.));
+        // A row shorter than the old one was scrolled into is passed whole, not the next too.
+        assert_eq!(scroll_showing(&two, 6, px(200.), px(400.)), px(1634.));
+    }
+
+    #[test]
+    fn cards_stay_near_the_mockups_width_at_every_window_width() {
+        assert_eq!(MAX_CARD_WIDTH, 410.);
+        for width in narrowest_gallery() as u32..=6000 {
+            let width = px(width as f32);
+            let columns = columns_for(width);
+            let card = f32::from(card_width_at(width, columns));
+            assert!(columns >= 2, "{width:?} has {columns} column");
+            assert!(
+                (MIN_CARD_WIDTH..=MAX_CARD_WIDTH).contains(&card),
+                "{width:?}: {columns} columns of {card}"
+            );
+            // What is stored is never narrower than the card, so no thumbnail is stretched.
+            for scale in [1., 1.25, 1.5, 2.] {
+                let stored = thumbnail_width_for((3840, 2160), scale);
+                assert!(stored as f32 >= card * scale, "{width:?} at {scale}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_wide_picture_gets_a_thumbnail_tall_enough_to_fill_the_card() {
+        // Most pictures: the widest card.
+        assert_eq!(thumbnail_width_for((1920, 1080), 1.), 410);
+        assert_eq!(thumbnail_width_for((800, 1000), 1.5), 615);
+        // A strip 12 times as wide as it is tall fills the 140px thumbnail at 1680 wide.
+        assert_eq!(thumbnail_width_for((1200, 100), 1.), 1680);
+        assert_eq!(thumbnail_width_for((1200, 100), 2.), 3360);
+        // A picture with no height can't divide by it.
+        assert_eq!(thumbnail_width_for((10, 0), 1.), 1400);
+    }
+
+    /// The listed cards of groups of these sizes laid out `columns` across, as `shown` gives
+    /// them: each with its row, where a header takes a row before each group's cards.
+    fn grid(groups: &[usize], columns: usize) -> Vec<(usize, usize)> {
+        let mut shown = Vec::new();
+        let (mut row, mut id) = (0, 0);
+        for &cards in groups {
+            for chunk in 0..cards.div_ceil(columns) {
+                row += 1;
+                let in_row = columns.min(cards - chunk * columns);
+                shown.extend((0..in_row).map(|offset| (row, id + offset)));
+                id += in_row;
+            }
+            row += 1;
+        }
+        shown
+    }
+
+    /// The id of the card `keys` lead to from card `from`.
+    fn walk(shown: &[(usize, usize)], from: usize, keys: &[&str]) -> usize {
+        let at = keys.iter().fold(from, |at, key| {
+            key_target(shown, at, key).expect("a grid key")
+        });
+        shown[at].1
+    }
+
+    #[test]
+    fn arrows_follow_the_columns_the_window_has_room_for() {
+        // Five cards over four: 0 1 2 / 3 4, then 5 6 7 / 8.
+        let three = grid(&[5, 4], 3);
+        assert_eq!(walk(&three, 0, &["right", "right"]), 2);
+        // Down keeps the column, or takes the last card of a shorter row.
+        assert_eq!(walk(&three, 1, &["down"]), 4);
+        assert_eq!(walk(&three, 2, &["down"]), 4);
+        // From a short row, down goes on into the next group in the same column.
+        assert_eq!(walk(&three, 4, &["down"]), 6);
+        assert_eq!(walk(&three, 8, &["up"]), 5);
+        assert_eq!(walk(&three, 6, &["up"]), 4);
+        // Left and Right cross rows and groups in reading order.
+        assert_eq!(walk(&three, 2, &["right"]), 3);
+        assert_eq!(walk(&three, 5, &["left"]), 4);
+        assert_eq!(walk(&three, 4, &["home"]), 0);
+        assert_eq!(walk(&three, 4, &["end"]), 8);
+
+        // The same cards at the smallest window: 0 1 / 2 3 / 4, then 5 6 / 7 8.
+        let two = grid(&[5, 4], 2);
+        assert_eq!(walk(&two, 1, &["down"]), 3);
+        assert_eq!(walk(&two, 3, &["down"]), 4);
+        assert_eq!(walk(&two, 4, &["down"]), 5);
+        // Up through the short row lands in its column, the first.
+        assert_eq!(walk(&two, 8, &["up", "up"]), 4);
+        assert_eq!(walk(&two, 8, &["up", "up", "up"]), 2);
+
+        // And on a wide one: 0 1 2 3 / 4, then 5 6 7 8.
+        let four = grid(&[5, 4], 4);
+        assert_eq!(walk(&four, 3, &["down"]), 4);
+        assert_eq!(walk(&four, 4, &["down"]), 5);
+        assert_eq!(walk(&four, 8, &["up"]), 4);
+        assert_eq!(walk(&four, 2, &["down", "up"]), 0);
+    }
+
+    #[test]
+    fn arrows_stop_at_the_ends_and_other_keys_are_not_the_grids() {
+        let shown = grid(&[5, 4], 3);
+        assert_eq!(walk(&shown, 0, &["left"]), 0);
+        assert_eq!(walk(&shown, 1, &["up"]), 1);
+        assert_eq!(walk(&shown, 8, &["right"]), 8);
+        assert_eq!(walk(&shown, 8, &["down"]), 8);
+        assert_eq!(key_target(&shown, 0, "tab"), None);
+        assert_eq!(key_target(&shown, 0, "space"), None);
+        // One card alone goes nowhere.
+        let alone = grid(&[1], 3);
+        for key in ["left", "right", "up", "down", "home", "end"] {
+            assert_eq!(key_target(&alone, 0, key), Some(0));
+        }
     }
 
     #[test]

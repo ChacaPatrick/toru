@@ -5,8 +5,8 @@ use gpui::FontWeight;
 use toru_core::settings::Look;
 
 use super::{
-    Border, Borders, CUSTOM_PALETTE, Colors, CustomPalette, DayDate, Fill, Fonts, Icons, Overlay,
-    Palette, Radii, Shadows, Sizes, Strings, Theme, TypeScale,
+    Border, Borders, CUSTOM_PALETTE, Colors, CustomPalette, DayDate, EmptyState, Fill, Fonts,
+    Icons, Ornament, Overlay, Palette, Radii, Shadows, Sizes, Strings, Theme, TypeScale,
     css::{body, display, grid, hard_shadow, hex, hex_alpha, mono},
 };
 
@@ -346,6 +346,13 @@ fn base() -> Theme {
             edge_halo: black,
             loupe: Border::solid(3., black),
             crosshair: hex(0x4d7cff),
+        },
+        // A blunt statement set left beside a block of thumbnail colour, in the dashed frame.
+        empty: EmptyState {
+            title: "Nothing yet.",
+            ornament: Ornament::Block,
+            framed: true,
+            centered: false,
         },
     }
 }

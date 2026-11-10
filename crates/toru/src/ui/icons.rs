@@ -27,6 +27,7 @@ pub enum Icon {
     ChevronDown,
     ChevronUp,
     ChevronRight,
+    Folder,
     // The editor's tools, in pill order.
     Select,
     Pan,
@@ -59,7 +60,8 @@ impl Icon {
             | Icon::Spinner
             | Icon::ChevronDown
             | Icon::ChevronUp
-            | Icon::ChevronRight => px(16.),
+            | Icon::ChevronRight
+            | Icon::Folder => px(16.),
             Icon::Region
             | Icon::Window
             | Icon::Screen
@@ -106,6 +108,10 @@ impl Icon {
             Icon::ChevronDown => r#"<path d="M6 9l6 6 6-6"/>"#,
             Icon::ChevronUp => r#"<path d="M6 15l6-6 6 6"/>"#,
             Icon::ChevronRight => r#"<path d="M9 6l6 6-6 6"/>"#,
+            // Not in the mockups: Open folder when its label has no room on a card.
+            Icon::Folder => {
+                r#"<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>"#
+            }
             Icon::Select => r#"<path d="M5 3l14 9-6 1.5L10 20z"/>"#,
             Icon::Pan => {
                 r#"<path d="M8 13V5a1.5 1.5 0 0 1 3 0v6M11 10V4a1.5 1.5 0 0 1 3 0v7M14 11V6a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6h-1a6 6 0 0 1-5-2.7L3 13a1.6 1.6 0 0 1 2.7-1.7L8 14"/>"#
@@ -136,7 +142,14 @@ impl Icon {
     }
 
     pub fn render(self, theme: &Theme, color: Hsla) -> Svg {
+        self.render_at(theme, color, self.size())
+    }
+
+    /// The icon at `size` instead of the mockups' size, with its lines as heavy on screen as
+    /// they are there, so a small one beside small type doesn't thin out.
+    pub fn render_at(self, theme: &Theme, color: Hsla, size: Pixels) -> Svg {
         let icons = &theme.icons;
+        let stroke = f32::from(icons.stroke) * (self.size() / size);
         let (cap, join) = if icons.square {
             ("square", "miter")
         } else {
@@ -144,12 +157,12 @@ impl Icon {
         };
         let markup = format!(
             r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="{}" stroke-linecap="{cap}" stroke-linejoin="{join}">{}</svg>"##,
-            f32::from(icons.stroke),
+            stroke,
             self.body()
         );
         svg()
             .data(markup.as_bytes())
-            .size(self.size())
+            .size(size)
             .flex_none()
             .text_color(color)
     }

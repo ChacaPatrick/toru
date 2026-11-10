@@ -93,7 +93,10 @@ impl MainWindow {
             return;
         };
         self.saving_edit = true;
-        let thumbnail_width = self.gallery.read(cx).thumbnail_width();
+        let thumbnail_width = self
+            .gallery
+            .read(cx)
+            .thumbnail_width((flattened.picture.width(), flattened.picture.height()));
         let window = self.window;
         self.enqueue(cx, async move |this, cx| {
             let Flattened {
@@ -196,7 +199,10 @@ impl MainWindow {
     /// `None` for the original tells the store the edits were all taken off again.
     fn keep_edits(&mut self, capture: CaptureId, flattened: Flattened, cx: &mut Context<Self>) {
         let store = self.store.clone();
-        let thumbnail_width = self.gallery.read(cx).thumbnail_width();
+        let thumbnail_width = self
+            .gallery
+            .read(cx)
+            .thumbnail_width((flattened.picture.width(), flattened.picture.height()));
         let window = self.window;
         self.enqueue(cx, async move |this, cx| {
             let Flattened {

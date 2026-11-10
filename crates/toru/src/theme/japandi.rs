@@ -4,8 +4,8 @@ use gpui::{FontWeight, Hsla, px};
 use toru_core::settings::Look;
 
 use super::{
-    Border, Borders, CUSTOM_PALETTE, Colors, CustomPalette, DayDate, Fill, Fonts, Icons, Overlay,
-    Palette, Radii, Shadows, Sizes, Strings, Theme, TypeScale,
+    Border, Borders, CUSTOM_PALETTE, Colors, CustomPalette, DayDate, EmptyState, Fill, Fonts,
+    Icons, Ornament, Overlay, Palette, Radii, Shadows, Sizes, Strings, Theme, TypeScale,
     css::{body, display, gradient, hex, hex_alpha, mono, soft_shadow},
 };
 
@@ -288,6 +288,13 @@ fn base() -> Theme {
             edge_halo: hex_alpha(0x2b2a26, 0.6),
             loupe: Border::solid(1., hex_alpha(0xfaf7f1, 0.3)),
             crosshair: hex(0xc4855a),
+        },
+        // Unframed and centred with air around it: a serif line under a small round seal.
+        empty: EmptyState {
+            title: "Nothing captured yet",
+            ornament: Ornament::Seal,
+            framed: false,
+            centered: true,
         },
     }
 }

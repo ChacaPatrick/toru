@@ -4,18 +4,15 @@
 //! mockup and follows On close since both are about unsaved captures, then Look and Palette
 //! (§8), which have no mockup and follow the Palettes boards. Every control shows what is in `Settings` and every change
 //! goes through `MainWindow::change_settings`. The column scrolls on its own when the window is
-//! short, and follows keyboard focus so a focused control always shows with its ring. While the
-//! bulk bar (§4) floats over the column's foot, the column ends with room for it, so the last
-//! control can be scrolled clear, and focus is kept clear of it too. Its hide button, at the
-//! right of the first label, collapses it; the toolbar's gear brings it back.
+//! short, and follows keyboard focus so a focused control always shows with its ring. Its hide
+//! button, at the right of the first label, collapses it; the toolbar's gear brings it back.
 //! The Palette group's fourth row is the custom palette (`custom_palette`), with a button that
 //! opens its editor.
 
 use std::{path::PathBuf, sync::Arc};
 
 use gpui::{
-    App, Context, Div, ElementId, Hsla, Pixels, SharedString, Stateful, Window, div, point,
-    prelude::*, px,
+    App, Context, Div, ElementId, Hsla, SharedString, Stateful, Window, div, point, prelude::*, px,
 };
 use gpui_kit::component::scroll::ScrollableElement;
 use toru_core::{
@@ -58,17 +55,12 @@ const FORMATS: [SaveFormat; 3] = [SaveFormat::Png, SaveFormat::Jpg, SaveFormat::
 const ON_CLOSE: [OnClose; 3] = [OnClose::Ask, OnClose::Keep, OnClose::Discard];
 const LOOKS: [Look; 3] = [Look::Japandi, Look::PixelArt, Look::NeoBrutalism];
 
-/// `bar`: how much of the column's foot the bulk bar covers, with its margin, while it shows.
 pub fn settings_column(
     this: &mut MainWindow,
-    bar: Option<Pixels>,
     window: &Window,
     cx: &mut Context<MainWindow>,
 ) -> Div {
-    let mut viewport = this.settings_scroll.bounds();
-    if let Some(bar) = bar {
-        viewport.size.height = (viewport.size.height - bar).max(px(0.));
-    }
+    let viewport = this.settings_scroll.bounds();
     let by = this.settings_focus.scroll_by(viewport, window, cx);
     if by != px(0.) {
         this.settings_scroll
@@ -99,7 +91,6 @@ pub fn settings_column(
         .flex_col()
         .gap(px(GROUP_GAP))
         .p(px(PADDING))
-        .when_some(bar, |content, bar| content.pb(px(PADDING) + bar))
         .child(
             group_with(theme, "Session", hide)
                 .child(toggle(
@@ -445,12 +436,15 @@ fn toggle(
             div()
                 .id(ElementId::NamedChild(Arc::new(id.into()), "label".into()))
                 // Wraps, as the PixelArt mockup's longer labels do, instead of pushing the
-                // switch out of the column.
+                // switch out of the column or running into it. A column, so the text is as wide
+                // as the label's box and wraps there: as an item of a row it would keep its
+                // whole width and spill over the row's gap.
                 .flex_1()
                 .min_w_0()
                 .min_h(px(MIN_TARGET))
                 .flex()
-                .items_center()
+                .flex_col()
+                .justify_center()
                 .type_style(theme, theme.type_scale.setting)
                 .cursor_pointer()
                 .on_click(move |_, window, cx| flip(window, cx))

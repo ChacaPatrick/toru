@@ -45,6 +45,7 @@ pub struct Theme {
     pub type_scale: TypeScale,
     pub strings: Strings,
     pub overlay: Overlay,
+    pub empty: EmptyState,
 }
 
 impl Global for Theme {}
@@ -625,6 +626,32 @@ pub struct Overlay {
     pub loupe: Border,
     /// The lines marking the pixel under the pointer in the magnifier.
     pub crosshair: Hsla,
+}
+
+/// How the look draws the gallery while it has nothing to list (`main_window::empty`), which
+/// the mockups don't show: each look says it in its own voice and builds it from parts it
+/// already has, so it reads as that look and not as an error.
+pub struct EmptyState {
+    /// The headline, set in the look's section type.
+    pub title: &'static str,
+    pub ornament: Ornament,
+    /// Inside the look's placeholder frame, as its loading row is (`borders.load` on
+    /// `load_bg`), or straight on the window.
+    pub framed: bool,
+    /// Stacked and centred, or the ornament at the left of left-aligned text.
+    pub centered: bool,
+}
+
+/// The small figure beside or above an empty state's words.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Ornament {
+    /// The Region icon in a round hairline seal on the card surface.
+    Seal,
+    /// The Region icon in the accent colour on a surface tile with the chip's hard border and
+    /// the accent button's block shadow.
+    Tile,
+    /// The Region icon on a block of the thumbnail colour, bordered like a thumbnail.
+    Block,
 }
 
 /// The strings whose tone changes with the look. Dates go where the caller puts them.

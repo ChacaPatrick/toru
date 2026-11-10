@@ -5,16 +5,27 @@
 //!
 //! A button with a sub can be split: it keeps the look of one button, but the sub is a second
 //! control, so pressing the label does the button's own work and pressing the sub opens a `Menu`.
+//!
+//! A disabled button has nothing to do right now, as Save all has with nothing unsaved. It keeps
+//! its size and type and is drawn as an empty slot in the look's own terms: unfilled and flat,
+//! outlined like the look's placeholders (`borders.load`), with its label in `muted`, which
+//! `contrast` holds to 4.5:1 on every surface. It takes no press and no focus, Tab skips it, and
+//! assistive technology is told it is disabled. One that had focus when it was turned off keeps
+//! and shows it until the user moves on, so a button that turns itself off, as Save all does,
+//! doesn't drop the keyboard's place.
+//!
+//! `width` works out how wide a button will be before it is laid out, for the rows that choose
+//! what to show by what fits: the toolbar, a card's actions, the bottom bar and the bulk bar.
 
 use std::{rc::Rc, sync::Arc};
 
 use gpui::{
-    AccessibleAction, App, ElementId, FocusHandle, Hsla, Role, SharedString, StyleRefinement,
-    Window, div, prelude::*, px,
+    AccessibleAction, App, ElementId, FocusHandle, Hsla, Pixels, Role, SharedString,
+    StyleRefinement, Window, div, prelude::*, px,
 };
 
-use super::{Handler, Icon, focus_marks, focus_marks_in, keyed_focus, refined, shadowed};
-use crate::theme::{ActiveTheme, Border, ThemedText, contrast, hover_tint};
+use super::{Handler, Icon, Tooltip, focus_marks, focus_marks_in, keyed_focus, refined, shadowed};
+use crate::theme::{ActiveTheme, Border, Theme, ThemedText, TypeStyle, contrast, hover_tint};
 
 /// How much of the button's text colour the `.sub` label keeps. The mockups' CSS says .75, which
 /// leaves Game Boy green's sub at 4.4:1; .8 is 4.8:1 there and reads the same (DESIGN.md §7).
@@ -28,6 +39,12 @@ pub const SMALL_HEIGHT: f32 = 32.;
 /// `.bulk button`'s height and horizontal padding.
 pub const BULK_HEIGHT: f32 = 36.;
 const BULK_PADDING: f32 = 12.;
+/// `.btn{padding:0 16px}`.
+const PADDING: f32 = 16.;
+/// Between the icon, the label, the sub and the note; also the sub's padding after its rule.
+const CONTENT_GAP: f32 = 8.;
+/// The rule at the left of a sub.
+const SUB_RULE: f32 = 1.;
 /// How much of the bar's text colour a bulk note keeps (`.bulk .n{opacity:.7}`).
 const NOTE_OPACITY: f32 = 0.7;
 
@@ -64,6 +81,9 @@ pub struct Button {
     /// As wide as it is tall, with the content centred: icon-only and glyph-only buttons.
     square: bool,
     check_mark: bool,
+    disabled: bool,
+    /// Shown on hover: what an icon-only button standing in for a labelled one is called.
+    tooltip: Option<SharedString>,
     expanded: Option<bool>,
     focus: Option<FocusHandle>,
     /// `Some(false)` keeps the button out of the tab order (`tab_stop`).
@@ -90,6 +110,8 @@ impl Button {
             small: false,
             square: false,
             check_mark: false,
+            disabled: false,
+            tooltip: None,
             expanded: None,
             focus: None,
             tab_stop: None,
@@ -178,6 +200,29 @@ impl Button {
         self
     }
 
+    /// Nothing for the button to do right now: it takes no press and leaves the tab order.
+    pub fn disabled(mut self, disabled: bool) -> Button {
+        self.disabled = disabled;
+        self
+    }
+
+    /// A hint shown on hover, for an icon-only button whose label has no room.
+    pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Button {
+        self.tooltip = Some(tooltip.into());
+        self
+    }
+
+    /// With no room for the label: the icon alone, with any sub or note, and the label as the
+    /// button's name and tooltip.
+    pub fn compact(mut self, compact: bool) -> Button {
+        if compact && let Some(label) = self.label.take() {
+            self.square = self.sub.is_none() && self.note.is_none();
+            self.tooltip.get_or_insert(label.clone());
+            self.aria_label.get_or_insert(label);
+        }
+        self
+    }
+
     /// Whether the menu this button opens is open.
     pub(super) fn expanded(mut self, expanded: bool) -> Button {
         self.expanded = Some(expanded);
@@ -238,6 +283,60 @@ impl Button {
         self.on_click = Some(Rc::new(handler));
         self
     }
+
+    fn label_style(&self, theme: &Theme) -> TypeStyle {
+        let scale = &theme.type_scale;
+        match (self.kind, self.small) {
+            (Kind::Bulk { .. }, _) => scale.bulk_button,
+            (Kind::Primary, true) => scale.primary_button_sm,
+            (Kind::Primary, false) => scale.primary_button,
+            (Kind::Plain, true) => scale.button_sm,
+            (Kind::Plain, false) => scale.button,
+        }
+    }
+
+    /// The button's height and its horizontal padding.
+    fn box_size(&self, theme: &Theme) -> (Pixels, Pixels) {
+        match self.kind {
+            Kind::Bulk { .. } => (px(BULK_HEIGHT), px(BULK_PADDING)),
+            _ if self.small => (px(SMALL_HEIGHT), theme.sizes.button_sm_padding),
+            _ => (px(HEIGHT), px(PADDING)),
+        }
+    }
+
+    fn border_width(&self, theme: &Theme) -> Pixels {
+        match self.kind {
+            Kind::Plain => theme.borders.button.width,
+            Kind::Primary => theme.borders.accent.width,
+            Kind::Bulk { .. } => px(0.),
+        }
+    }
+
+    /// How wide the button will be laid out, from what it shows. A check mark or being disabled
+    /// changes neither.
+    pub fn width(&self, theme: &Theme, window: &Window) -> Pixels {
+        let (height, padding) = self.box_size(theme);
+        if self.square {
+            return height;
+        }
+        let scale = &theme.type_scale;
+        let text = |text: &SharedString, style: TypeStyle| style.text_width(text, theme, window);
+        let parts = [
+            self.icon.map(Icon::size),
+            self.label
+                .as_ref()
+                .map(|label| text(label, self.label_style(theme))),
+            self.sub
+                .as_ref()
+                .map(|sub| px(CONTENT_GAP + SUB_RULE) + text(sub, scale.button_sub)),
+            self.note.as_ref().map(|note| text(note, scale.bulk_count)),
+        ];
+        let shown = parts.iter().flatten().count();
+        let content = parts.iter().flatten().fold(px(0.), |sum, part| sum + *part);
+        (self.border_width(theme) + padding) * 2.
+            + content
+            + px(CONTENT_GAP) * shown.saturating_sub(1) as f32
+    }
 }
 
 impl Styled for Button {
@@ -250,12 +349,22 @@ impl RenderOnce for Button {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let mut focus = self
             .focus
+            .clone()
             .unwrap_or_else(|| keyed_focus(window, cx, &self.id));
         if let Some(tab_stop) = self.tab_stop {
             focus = focus.tab_stop(tab_stop);
         }
+        let disabled = self.disabled;
+        if disabled {
+            focus = focus.tab_stop(false);
+        }
+        // A disabled button can't be given focus, by Tab or by a press, but one that held it
+        // when it was turned off keeps it until the user moves on.
+        let focusable = !disabled || focus.is_focused(window);
         let theme = cx.theme();
         let c = &theme.colors;
+        let font = self.label_style(theme);
+        let (height, padding) = self.box_size(theme);
         let none = Vec::new();
         let (bg, text, border, shadow, ring) = match self.kind {
             Kind::Plain => (
@@ -287,18 +396,16 @@ impl RenderOnce for Button {
                 c.bulk_focus,
             ),
         };
-        let scale = &theme.type_scale;
-        let font = match (self.kind, self.small) {
-            (Kind::Bulk { .. }, _) => scale.bulk_button,
-            (Kind::Primary, true) => scale.primary_button_sm,
-            (Kind::Primary, false) => scale.primary_button,
-            (Kind::Plain, true) => scale.button_sm,
-            (Kind::Plain, false) => scale.button,
-        };
-        let (height, padding) = match self.kind {
-            Kind::Bulk { .. } => (px(BULK_HEIGHT), px(BULK_PADDING)),
-            _ if self.small => (px(SMALL_HEIGHT), theme.sizes.button_sm_padding),
-            _ => (px(HEIGHT), px(16.)),
+        // An empty slot: the look's placeholder outline at the button's own border width, so
+        // turning off moves nothing, with no fill and no shadow to lift it.
+        let (bg, text, border, shadow) = if disabled {
+            let outline = Border {
+                width: border.width,
+                ..theme.borders.load
+            };
+            (gpui::transparent_black(), c.muted, outline, &none)
+        } else {
+            (bg, text, border, shadow)
         };
         // What lies under the text: the bar for an unfilled bulk button.
         let under = if bg.a == 0. { c.bulk_bg } else { bg };
@@ -325,16 +432,21 @@ impl RenderOnce for Button {
         let sub_id = ElementId::NamedChild(Arc::new(self.id.clone()), "sub".into());
 
         let sub = self.sub.map(|sub| {
-            let sub_text = contrast::over(
-                Hsla {
-                    a: SUB_OPACITY,
-                    ..text
-                },
-                bg,
-            );
+            // A disabled button is muted throughout, with no fill to blend into.
+            let sub_text = if disabled {
+                text
+            } else {
+                contrast::over(
+                    Hsla {
+                        a: SUB_OPACITY,
+                        ..text
+                    },
+                    bg,
+                )
+            };
             let sub = div()
-                .pl_2()
-                .border_l_1()
+                .pl(px(CONTENT_GAP))
+                .border_l(px(SUB_RULE))
                 .border_color(sub_text)
                 .type_style(theme, sub_font)
                 .child(sub_font.case.apply(&sub));
@@ -384,13 +496,17 @@ impl RenderOnce for Button {
 
         let note = self.note.map(|note| {
             let note_font = theme.type_scale.bulk_count;
-            let note_text = contrast::over(
-                Hsla {
-                    a: NOTE_OPACITY,
-                    ..text
-                },
-                under,
-            );
+            let note_text = if disabled {
+                text
+            } else {
+                contrast::over(
+                    Hsla {
+                        a: NOTE_OPACITY,
+                        ..text
+                    },
+                    under,
+                )
+            };
             div()
                 .type_style(theme, note_font)
                 .text_color(note_text)
@@ -400,7 +516,7 @@ impl RenderOnce for Button {
             .h_full()
             .flex()
             .items_center()
-            .gap_2()
+            .gap(px(CONTENT_GAP))
             .when(self.check_mark, |this| this.invisible())
             .children(self.icon.map(|icon| icon.render(theme, text)))
             .children(self.label.map(|label| font.case.apply(&label)))
@@ -412,7 +528,7 @@ impl RenderOnce for Button {
             .role(Role::Button)
             .aria_label(aria_label)
             .when_some(self.description, |this, text| this.aria_description(text))
-            .track_focus(&focus)
+            .when(focusable, |this| this.track_focus(&focus))
             .when_some(self.expanded, |this, expanded| this.aria_expanded(expanded))
             .relative()
             .flex_none()
@@ -430,9 +546,20 @@ impl RenderOnce for Button {
             .rounded(radius)
             .type_style(theme, font)
             .whitespace_nowrap()
-            .cursor_pointer()
-            .when(bulk, |this| this.hover(|style| style.bg(hover_bg)))
-            .when_some(self.on_click, |this, handler| {
+            .when(border.dashed, |this| this.border_dashed())
+            .when_some(self.tooltip, |this, tooltip| {
+                this.tooltip(Tooltip::build(tooltip))
+            })
+            .when(disabled, |this| {
+                this.a11y_synthetic_children(|builder| {
+                    builder.parent_node().set_disabled();
+                })
+            })
+            .when(!disabled, |this| this.cursor_pointer())
+            .when(bulk && !disabled, |this| {
+                this.hover(|style| style.bg(hover_bg))
+            })
+            .when_some(self.on_click.filter(|_| !disabled), |this, handler| {
                 let for_a11y = handler.clone();
                 this.on_click(move |_, window, cx| {
                     // The press is the button's alone, not the card's beneath it.

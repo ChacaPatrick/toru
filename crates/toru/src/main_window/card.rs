@@ -1,8 +1,10 @@
 //! A gallery card (DESIGN.md §2): the thumbnail with its caption tag, the name field, the status
 //! chip, Copy with Save or Open folder, and the `⋯` menu. The file size is in a tooltip on the
 //! thumbnail and at the top of the menu. The gallery's list needs every row's height before it
-//! is laid out, so `height` works a card's height out from the theme, and every card in a look
-//! gets the same height whatever its status, as DESIGN.md §2 asks.
+//! is laid out, and DESIGN.md §2 asks that every card be the same height whatever its status,
+//! so `layout` works both out from the theme: the chip and the actions share one row, and when
+//! a saved card's row has no room for Open folder's label at the gallery's card width, every
+//! saved card shows it as a folder icon instead, named and with a tooltip.
 //!
 //! The card is focusable itself, for the gallery's arrow keys, and shows the §7 ring when it has
 //! keyboard focus. Only the gallery's current card and its controls are tab stops; a press
@@ -30,17 +32,17 @@ use super::{
     gallery::{Card, Gallery, GalleryEvent},
     selection::path_hint,
 };
-use crate::theme::{ActiveTheme, Theme, ThemedText, TypeStyle};
+use crate::theme::{ActiveTheme, Theme, ThemedText};
 use crate::ui::{
-    BUTTON_SMALL_HEIGHT, Button, CHECKBOX_SIZE, Checkbox, Chip, MIN_TARGET, Menu, TextField,
+    BUTTON_SMALL_HEIGHT, Button, CHECKBOX_SIZE, Checkbox, Chip, Icon, MIN_TARGET, Menu, TextField,
     Tooltip, fill, focus_marks, selection_ring, shadowed, spoken,
 };
 
 const PADDING: f32 = 10.;
 const GAP: f32 = 8.;
-const THUMB_HEIGHT: f32 = 140.;
+pub const THUMB_HEIGHT: f32 = 140.;
 const NAME_HEIGHT: f32 = 34.;
-/// Between the chip and the actions, and between wrapped lines of them.
+/// Between the chip and the actions.
 const ROW_GAP: f32 = 10.;
 const ACTION_GAP: f32 = 6.;
 const TAG_LEFT: f32 = 8.;
@@ -48,71 +50,48 @@ const TAG_BOTTOM: f32 = 6.;
 /// `.check{left:18px;top:18px}`: where the checkbox's box sits inside the card.
 const CHECK_INSET: f32 = 18.;
 
-/// The card's height at `card_width`, from the theme: the actions wrap under the chip and onto
-/// further lines as the mockups' larger-type looks and narrower windows need, and the height
-/// allows for whichever status needs more lines, so every card in a look is the same height.
-pub fn height(card_width: Pixels, theme: &Theme, window: &Window, cx: &gpui::App) -> Pixels {
-    let scale = &theme.type_scale;
-    let b = &theme.borders;
-    let inner = card_width - px(PADDING * 2.) - b.card.width * 2.;
-    let button = |text: &str, style: TypeStyle| {
-        style.text_width(text, theme, window)
-            + theme.sizes.button_sm_padding * 2.
-            + b.button.width * 2.
-    };
-    let chip = |text: &str, border: Pixels| {
-        scale.chip.text_width(text, theme, window) + px(9. * 2.) + border * 2.
-    };
-    let chip_height = scale.chip.natural_line_height(theme, cx) + px(3. * 2.) + b.accent.width * 2.;
-    let button_height = px(BUTTON_SMALL_HEIGHT);
+/// What every card in the gallery shares at one card width.
+#[derive(Clone, Copy)]
+pub struct Layout {
+    pub height: Pixels,
+    /// A saved card's row has no room for Open folder's label, so it is a folder icon.
+    pub open_folder_icon: bool,
+}
 
-    // The chip and the buttons on one line if they fit; else the chip alone, then the buttons
-    // on as many lines as they need.
-    let actions_height = |chip_width: Pixels, buttons: [Pixels; 3]| {
-        let all = buttons.iter().fold(px(0.), |sum, w| sum + *w) + px(ACTION_GAP * 2.);
-        if chip_width + px(ROW_GAP) + all <= inner {
-            return button_height;
-        }
-        let mut lines = 1;
-        let mut line = px(0.);
-        for width in buttons {
-            let next = if line > px(0.) {
-                line + px(ACTION_GAP) + width
-            } else {
-                width
-            };
-            if next > inner && line > px(0.) {
-                lines += 1;
-                line = width;
-            } else {
-                line = next;
-            }
-        }
-        chip_height
-            + px(ROW_GAP)
-            + button_height * lines as f32
-            + px(ACTION_GAP) * (lines - 1) as f32
-    };
-    let more = button_height;
-    let unsaved = actions_height(
-        chip("Unsaved", b.chip.width),
-        [
-            button("Copy", scale.button_sm),
-            button("Save", scale.primary_button_sm),
-            more,
-        ],
-    );
-    let saved = actions_height(
-        chip("Saved ✓", b.accent.width),
-        [
-            button("Copy", scale.button_sm),
-            button("Open folder", scale.button_sm),
-            more,
-        ],
-    );
-    b.card.width * 2.
-        + px(PADDING * 2. + THUMB_HEIGHT + GAP + NAME_HEIGHT + GAP)
-        + unsaved.max(saved)
+/// The cards' layout at `card_width`, from the theme. The lower row is one button tall, since
+/// nothing in it wraps.
+pub fn layout(card_width: Pixels, theme: &Theme, window: &Window) -> Layout {
+    let border = theme.borders.card.width;
+    let inner = card_width - px(PADDING * 2.) - border * 2.;
+    let saved_row = Chip::new("status", SAVED).saved(true).width(theme, window)
+        + px(ROW_GAP)
+        + copy_button(false).width(theme, window)
+        + open_folder_button(false).width(theme, window)
+        + px(BUTTON_SMALL_HEIGHT + ACTION_GAP * 2.);
+    Layout {
+        height: border * 2.
+            + px(PADDING * 2. + THUMB_HEIGHT + GAP + NAME_HEIGHT + GAP + BUTTON_SMALL_HEIGHT),
+        open_folder_icon: saved_row > inner,
+    }
+}
+
+const SAVED: &str = "Saved ✓";
+
+fn copy_button(copied: bool) -> Button {
+    Button::new("copy", "Copy").small().check_mark(copied)
+}
+
+/// Open folder, as its label or, with no room for it, as an icon. It shares its id with Save,
+/// so keyboard focus stays on the button when a save finishes.
+fn open_folder_button(icon: bool) -> Button {
+    const NAME: &str = "Open folder";
+    if icon {
+        Button::icon_only("save-or-open", Icon::Folder, NAME)
+            .small()
+            .tooltip(NAME)
+    } else {
+        Button::new("save-or-open", NAME).small()
+    }
 }
 
 /// A mouse press stops at a control this is on, so it never registers on the card beneath and
@@ -153,6 +132,7 @@ pub fn file_size(bytes: u64) -> String {
 /// What varies between two cards of one capture: `earlier` marks a group whose session has
 /// ended, `copied` shows the check mark, `active` makes the card and its controls the grid's
 /// tab stops, `select_mode` shows the checkbox and the path hint, and `selected` the outline.
+/// `open_folder_icon` is the gallery's `Layout`'s.
 #[derive(Clone, Copy)]
 pub struct State {
     pub earlier: bool,
@@ -160,6 +140,7 @@ pub struct State {
     pub active: bool,
     pub select_mode: bool,
     pub selected: bool,
+    pub open_folder_icon: bool,
 }
 
 /// `position` is the card's place in its group, which chooses among the look's thumbnail fills.
@@ -178,6 +159,7 @@ pub fn render(
         active,
         select_mode,
         selected,
+        open_folder_icon,
     } = state;
     let focus = card.focus.clone().tab_stop(active);
     let theme = cx.theme();
@@ -245,31 +227,25 @@ pub fn render(
     .item("Delete", delete)
     .align_right();
 
-    // Save and Open folder share an id, so keyboard focus stays on the button when a save finishes.
-    let second = Button::new("save-or-open", if saved { "Open folder" } else { "Save" })
-        .small()
-        .tab_stop(active);
-    let second = if saved { second } else { second.primary() };
+    let second = if saved {
+        open_folder_button(open_folder_icon)
+    } else {
+        Button::new("save-or-open", "Save").small().primary()
+    };
     let open_editor_by_click = act(cx, move |this, cx| this.open_editor(id, cx));
     let actions = div()
         .on_any_mouse_down(keep_press)
+        .flex_none()
         .flex()
-        .flex_wrap()
-        .justify_end()
         .gap(px(ACTION_GAP))
-        .child(
-            Button::new("copy", "Copy")
-                .small()
-                .check_mark(copied)
-                .tab_stop(active)
-                .on_click(copy),
-        )
-        .child(second.on_click(save_or_open))
+        .child(copy_button(copied).tab_stop(active).on_click(copy))
+        .child(second.tab_stop(active).on_click(save_or_open))
         .child(menu);
-    let chip = Chip::new("status", if saved { "Saved ✓" } else { "Unsaved" }).saved(saved);
+    let chip = Chip::new("status", if saved { SAVED } else { "Unsaved" }).saved(saved);
+    // One button tall in select mode too, so the card keeps its shape (DESIGN.md §2).
     let status = div()
+        .h(px(BUTTON_SMALL_HEIGHT))
         .flex()
-        .flex_wrap()
         .items_center()
         .justify_between()
         .gap(px(ROW_GAP))

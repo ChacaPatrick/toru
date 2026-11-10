@@ -1,6 +1,7 @@
 //! The main window (DESIGN.md §2): title bar, capture toolbar, the body with the gallery and the
 //! settings column, then the bottom bar, with the toast above it. While anything is selected the
-//! bulk bar (§4) floats over the gallery's foot in the bottom bar's place. Opening a card in the
+//! bulk bar (§4) floats over the gallery's foot, centred on the gallery, in the bottom bar's
+//! place. Opening a card in the
 //! editor (§5) replaces everything under the title bar with it. Captures come in through
 //! `captures`, the gallery's buttons act on them in `actions` and `delete`, and the gallery pages through
 //! earlier days itself (`history`). Each choice that is a setting reads and writes `Settings`,
@@ -18,6 +19,7 @@ mod custom_palette;
 mod delayed;
 mod delete;
 mod edit_actions;
+mod empty;
 mod gallery;
 mod history;
 mod retention;
@@ -224,7 +226,7 @@ impl MainWindow {
         let now = platform::local_now();
         let gallery = cx.new(|cx| {
             let mut gallery = Gallery::new(store.clone(), session, now.date, window, cx);
-            gallery.set_width(gallery_width(&settings, window), window.scale_factor());
+            gallery.set_width(gallery_width(&settings, window), window.scale_factor(), cx);
             gallery
         });
         cx.subscribe(&gallery, |this, _, event: &GalleryEvent, cx| match event {
@@ -602,19 +604,16 @@ impl Render for MainWindow {
             None => {
                 let width = gallery_width(&self.settings, window);
                 let show_previous = self.settings.show_previous;
+                let region_shortcut = self.region_shortcut();
                 self.gallery.update(cx, |gallery, cx| {
-                    gallery.set_width(width, window.scale_factor());
+                    gallery.set_width(width, window.scale_factor(), cx);
                     gallery.set_show_previous(show_previous, cx);
+                    gallery.set_region_shortcut(region_shortcut);
                 });
                 let counts = self.gallery.read(cx).selection_counts();
-                // While anything is selected the bulk bar floats over the foot of the gallery
-                // and, at widths under about 1450px, of the settings column too; both keep a
-                // focused control clear of it (§7).
-                let bar = (counts.selected > 0)
-                    .then(|| px(bulk_bar::BOTTOM) + bulk_bar::height(cx.theme()));
                 frame
                     .on_key_down(cx.listener(|this, event, _, cx| this.key_down(event, cx)))
-                    .child(toolbar::toolbar(self, cx))
+                    .child(toolbar::toolbar(self, window, cx))
                     .child(
                         div()
                             .flex_1()
@@ -628,15 +627,15 @@ impl Render for MainWindow {
                                     .child(self.gallery.clone()),
                             )
                             .when(!self.settings.settings_collapsed, |body| {
-                                body.child(settings::settings_column(self, bar, window, cx))
+                                body.child(settings::settings_column(self, window, cx))
                             }),
                     )
                     // The bulk bar takes the bottom bar's place while anything is selected (§4).
                     .when(counts.selected == 0, |this| {
-                        this.child(bottom_bar::bottom_bar(self, cx))
+                        this.child(bottom_bar::bottom_bar(self, window, cx))
                     })
                     .when(counts.selected > 0, |this| {
-                        this.child(bulk_bar::bulk_bar(&counts, cx))
+                        this.child(bulk_bar::bulk_bar(&counts, width, window, cx))
                     })
             }
         };

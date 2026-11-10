@@ -33,7 +33,8 @@ use tray::{Request, Tray};
 
 /// The mockups' size.
 const WINDOW_SIZE: (f32, f32) = (1280., 940.);
-/// Wide enough for three usable cards beside the open settings column; the toolbar wraps.
+/// Wide enough for two cards beside the open settings column, with the toolbar and the bottom
+/// bar each on one row (`main_window::gallery`'s tests hold the columns to this).
 const MIN_WINDOW_SIZE: (f32, f32) = (900., 480.);
 
 /// `toru [japandi|pixel_art|neo_brutalism] [palette|custom] [editor [demo]]` opens the window in

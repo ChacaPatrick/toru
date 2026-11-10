@@ -5,8 +5,8 @@ use gpui::FontWeight;
 use toru_core::settings::Look;
 
 use super::{
-    Border, Borders, CUSTOM_PALETTE, Colors, CustomPalette, DayDate, Fonts, Icons, Overlay,
-    Palette, Radii, Shadows, Sizes, Strings, Theme, TypeScale,
+    Border, Borders, CUSTOM_PALETTE, Colors, CustomPalette, DayDate, EmptyState, Fonts, Icons,
+    Ornament, Overlay, Palette, Radii, Shadows, Sizes, Strings, Theme, TypeScale,
     css::{body, checker, display, hard_shadow, hex, hex_alpha, inset_shadow, mono},
 };
 
@@ -299,9 +299,18 @@ fn base() -> Theme {
             day_count: body(17., FontWeight::NORMAL),
             button: body(17., FontWeight::NORMAL),
             button_sm: body(13., FontWeight::NORMAL),
-            primary_button: display(11., FontWeight::NORMAL),
-            primary_button_sm: display(11., FontWeight::NORMAL),
-            button_sub: body(12., FontWeight::NORMAL),
+            // tokens.json sets every `.btn.primary` in the display face at 11px, beside which
+            // the body face's 17px and 13px labels look a size smaller: Press Start 2P's letters
+            // fill most of its em, VT323's about half. At 10px and 8px the two faces' x-heights
+            // match, so a row of buttons reads as one size; 8px is also the display face's own
+            // pixel grid, so the card's Save is crisp.
+            primary_button: display(10., FontWeight::NORMAL),
+            primary_button_sm: display(8., FontWeight::NORMAL),
+            // tokens.json leaves the base CSS's 12px here, 11px on the bulk bar's counts and
+            // sets `.tool .k` to 8px. In VT323, whose letters are about half its em, those are
+            // too small to read, so the two body sizes go to the chip's 14px and the tool's
+            // letter to the display face at 8px, its own pixel grid.
+            button_sub: body(14., FontWeight::NORMAL),
             chip: body(14., FontWeight::NORMAL),
             tag: body(13., FontWeight::NORMAL),
             field: mono(17., FontWeight::NORMAL),
@@ -314,8 +323,8 @@ fn base() -> Theme {
             load_more: display(10., FontWeight::NORMAL),
             bulk_button: body(17., FontWeight::NORMAL),
             bulk_selected: body(18., FontWeight::NORMAL),
-            bulk_count: body(11., FontWeight::NORMAL),
-            tool_key: body(8., FontWeight::NORMAL),
+            bulk_count: body(14., FontWeight::NORMAL),
+            tool_key: display(8., FontWeight::NORMAL),
             option: body(17., FontWeight::NORMAL),
             corner: body(17., FontWeight::NORMAL),
             anno_text: display(11., FontWeight::NORMAL),
@@ -340,6 +349,14 @@ fn base() -> Theme {
             edge_halo: ink,
             loupe: Border::solid(3., ink),
             crosshair: hex(0xff6b97),
+        },
+        // The loading row's dashed frame around the Region icon on a tile, like an empty save
+        // slot showing what goes in it.
+        empty: EmptyState {
+            title: "NO SHOTS YET",
+            ornament: Ornament::Tile,
+            framed: true,
+            centered: true,
         },
     }
 }
@@ -490,6 +507,21 @@ mod tests {
             &css_hex(theme(2).colors.surface_sel),
         );
         assert_token(&entry().base(), "--muted", &css_hex(theme(0).colors.muted));
+        // The tokens' 11px primary buttons read a size larger than the body face's labels
+        // beside them, so the theme sets them where the two faces' x-heights match.
+        assert!(entry().base().contains(
+            ".btn.primary,.toggle.on,.tab.on{font-family:var(--display);font-size:11px}"
+        ));
+        let scale = theme(0).type_scale;
+        assert_eq!(scale.primary_button.size, px(10.));
+        assert_eq!(scale.primary_button_sm.size, px(8.));
+        // The tokens' smallest sizes can't be read in VT323: the tool's letter keeps its 8px in
+        // the display face, and a button's sub and the bulk bar's counts take the chip's size.
+        assert!(entry().base().contains(".tool .k{font-size:8px}"));
+        assert_eq!(scale.tool_key.family, crate::theme::Family::Display);
+        assert_eq!(scale.tool_key.size, px(8.));
+        assert_eq!(scale.button_sub.size, scale.chip.size);
+        assert_eq!(scale.bulk_count.size, scale.chip.size);
     }
 
     #[test]

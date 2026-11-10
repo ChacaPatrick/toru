@@ -63,7 +63,7 @@ impl MainWindow {
         let open_editor = self.settings.open_editor_after_capture;
         let auto_save = self.auto_save_target();
         let store = self.store.clone();
-        let thumbnail_width = self.gallery.read(cx).thumbnail_width();
+        let thumbnail_width = self.gallery.read(cx).thumbnail_width(image.dimensions());
         self.enqueue(cx, async move |this, cx| {
             // Asked here, as a change of session queued ahead of this has only now finished.
             let Ok(session) = this.read_with(cx, |this, _| this.session) else {
