@@ -140,6 +140,7 @@ mod windows {
     /// The first letter, digit and function key; the rest follow in order.
     const VK_A: i32 = 0x41;
     const VK_0: i32 = 0x30;
+    const VK_NUMPAD0: i32 = 0x60;
     const VK_F1: i32 = 0x70;
 
     #[link(name = "user32")]
@@ -256,9 +257,9 @@ mod windows {
         (unsafe { GetKeyState(key) } as u16) & 0x8000 != 0
     }
 
-    /// The virtual-key code of a key a shortcut can use, by the key's name: the letters, digits
-    /// and function keys are numbered in order, and the few other keys are named one by one.
-    /// `None` for a key a shortcut can't use.
+    /// The virtual-key code of a key a shortcut can use, by the key's name: the letters, digits,
+    /// number pad digits and function keys are numbered in order, and the few other keys are
+    /// named one by one. `None` for a key a shortcut can't use.
     pub(super) fn virtual_key(key: Code) -> Option<i32> {
         let name = key.to_string();
         match name.as_bytes() {
@@ -267,6 +268,9 @@ mod windows {
             }
             [b'D', b'i', b'g', b'i', b't', digit @ b'0'..=b'9'] => {
                 return Some(VK_0 + i32::from(digit - b'0'));
+            }
+            [b'N', b'u', b'm', b'p', b'a', b'd', digit @ b'0'..=b'9'] => {
+                return Some(VK_NUMPAD0 + i32::from(digit - b'0'));
             }
             _ => {}
         }
@@ -969,6 +973,8 @@ mod tests {
         assert_eq!(windows::virtual_key(Code::KeyZ), Some(0x5A));
         assert_eq!(windows::virtual_key(Code::Digit0), Some(0x30));
         assert_eq!(windows::virtual_key(Code::Digit9), Some(0x39));
+        assert_eq!(windows::virtual_key(Code::Numpad0), Some(0x60));
+        assert_eq!(windows::virtual_key(Code::Numpad9), Some(0x69));
         assert_eq!(windows::virtual_key(Code::F1), Some(0x70));
         assert_eq!(windows::virtual_key(Code::F24), Some(0x87));
         assert_eq!(windows::virtual_key(Code::PrintScreen), Some(0x2C));
@@ -999,6 +1005,11 @@ mod tests {
         assert_eq!(
             windows::pressed_among(keys(), |vk| vk == 0x31),
             Some(Code::Digit1)
+        );
+        // Ctrl+Numpad1: GPUI would say "1", as for the top row.
+        assert_eq!(
+            windows::pressed_among(keys(), |vk| vk == 0x61),
+            Some(Code::Numpad1)
         );
         assert_eq!(
             windows::pressed_among(keys(), |vk| vk == 0x2C),

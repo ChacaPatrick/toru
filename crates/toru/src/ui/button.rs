@@ -66,6 +66,18 @@ pub(super) struct MenuTrigger {
     pub toggle: Handler,
 }
 
+/// Lets assistive technology open and close a menu by expanding and collapsing its trigger (UIA's
+/// ExpandCollapse pattern), as it can by clicking it. Only the action that changes the state is
+/// offered; AccessKit asks for no other.
+fn expand_collapse<E: StatefulInteractiveElement>(element: E, open: bool, toggle: Handler) -> E {
+    let action = if open {
+        AccessibleAction::Collapse
+    } else {
+        AccessibleAction::Expand
+    };
+    element.on_a11y_action(action, move |_, window, cx| toggle(window, cx))
+}
+
 #[derive(IntoElement)]
 pub struct Button {
     id: ElementId,
@@ -459,8 +471,8 @@ impl RenderOnce for Button {
             // Hovered, it shows as its own target: its text at full strength over a tint of it.
             let toggle = menu.toggle;
             let toggle_a11y = toggle.clone();
-            div()
-                .id(sub_id)
+            let sub_button = div().id(sub_id);
+            expand_collapse(sub_button, menu.open, toggle.clone())
                 .role(Role::Button)
                 .aria_label(name)
                 .aria_expanded(menu.open)
@@ -523,6 +535,11 @@ impl RenderOnce for Button {
             .children(sub)
             .children(note);
 
+        // A menu trigger's click is the menu's toggle (`menu_trigger`).
+        let menu_toggle = self
+            .expanded
+            .zip(self.on_click.clone())
+            .filter(|_| !disabled);
         let button = div().id(self.id);
         let button = shadowed(button, shadow, radius)
             .role(Role::Button)
@@ -530,6 +547,9 @@ impl RenderOnce for Button {
             .when_some(self.description, |this, text| this.aria_description(text))
             .when(focusable, |this| this.track_focus(&focus))
             .when_some(self.expanded, |this, expanded| this.aria_expanded(expanded))
+            .when_some(menu_toggle, |this, (open, toggle)| {
+                expand_collapse(this, open, toggle)
+            })
             .relative()
             .flex_none()
             .flex()

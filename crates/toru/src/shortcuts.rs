@@ -141,8 +141,23 @@ const DIGITS: [Code; 10] = [
     Code::Digit9,
 ];
 
-/// The key for a name as stored, or as GPUI names a pressed key: a letter or digit, "F1" to
-/// "F24", or one of `NAMED_KEYS`, in any case.
+/// The number pad's digits, a key apart from the top row's: Windows tells them apart, so a
+/// shortcut recorded on one only fires on that one.
+const NUMPAD_DIGITS: [Code; 10] = [
+    Code::Numpad0,
+    Code::Numpad1,
+    Code::Numpad2,
+    Code::Numpad3,
+    Code::Numpad4,
+    Code::Numpad5,
+    Code::Numpad6,
+    Code::Numpad7,
+    Code::Numpad8,
+    Code::Numpad9,
+];
+
+/// The key for a name as stored, or as GPUI names a pressed key: a letter or digit, "Num 0" to
+/// "Num 9" (or "Numpad0"), "F1" to "F24", or one of `NAMED_KEYS`, in any case.
 fn key_from_name(name: &str) -> Option<Code> {
     let upper = name.to_ascii_uppercase();
     if let [letter @ b'A'..=b'Z'] = upper.as_bytes() {
@@ -150,6 +165,13 @@ fn key_from_name(name: &str) -> Option<Code> {
     }
     if let [digit @ b'0'..=b'9'] = upper.as_bytes() {
         return Some(DIGITS[usize::from(digit - b'0')]);
+    }
+    if let Some(rest) = upper
+        .strip_prefix("NUMPAD")
+        .or_else(|| upper.strip_prefix("NUM"))
+        && let [digit @ b'0'..=b'9'] = rest.trim_start().as_bytes()
+    {
+        return Some(NUMPAD_DIGITS[usize::from(digit - b'0')]);
     }
     if let Some(number) = upper.strip_prefix('F')
         && let Ok(number @ 1..=24) = number.parse::<usize>()
@@ -173,6 +195,7 @@ pub fn keys() -> impl Iterator<Item = Code> {
     LETTERS
         .into_iter()
         .chain(DIGITS)
+        .chain(NUMPAD_DIGITS)
         .chain(FUNCTION_KEYS)
         .chain(NAMED_KEYS.iter().map(|(code, _)| *code))
 }
@@ -183,6 +206,9 @@ fn key_name(key: Code) -> String {
     }
     if let Some(index) = DIGITS.iter().position(|code| *code == key) {
         return index.to_string();
+    }
+    if let Some(index) = NUMPAD_DIGITS.iter().position(|code| *code == key) {
+        return format!("Num {index}");
     }
     if let Some(index) = FUNCTION_KEYS.iter().position(|code| *code == key) {
         return format!("F{}", index + 1);
@@ -629,7 +655,7 @@ mod tests {
     #[test]
     fn every_key_name_round_trips() {
         let keys: Vec<Code> = keys().collect();
-        assert_eq!(keys.len(), 26 + 10 + 24 + 12);
+        assert_eq!(keys.len(), 26 + 10 + 10 + 24 + 12);
         for key in keys {
             let name = key_name(key);
             assert_eq!(key_from_name(&name), Some(key), "{name}");
@@ -743,6 +769,23 @@ mod tests {
             Shortcut::from_held(Code::KeyW, held(false, false, true, false)),
             Err(ShortcutError::NeedsModifier)
         );
+    }
+
+    #[test]
+    fn a_number_pad_digit_stays_a_number_pad_digit() {
+        let held = HeldModifiers {
+            control: true,
+            alt: false,
+            shift: false,
+            win: false,
+        };
+        let recorded = Shortcut::from_held(Code::Numpad1, held).unwrap();
+        assert_eq!(recorded.to_string(), "Ctrl+Num 1");
+        assert_eq!(shortcut("Ctrl+Num 1"), recorded);
+        assert_eq!(shortcut("ctrl+numpad1"), recorded);
+        assert_ne!(recorded, shortcut("Ctrl+1"));
+        assert_eq!(recorded.hotkey().key, Code::Numpad1);
+        assert_ne!(recorded.hotkey().id(), shortcut("Ctrl+1").hotkey().id());
     }
 
     #[test]
