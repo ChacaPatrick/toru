@@ -26,6 +26,10 @@ Left open by the review cap. Fix these in section 10.1.
 - An invalid hex field's border colour has no visible effect.
 - Cancelling the quit dialog over the custom palette editor sends focus behind it.
 
+## Screen reader
+- Menu buttons (`⋯`, Delayed, Save as, the display picker) expose expand/collapse to assistive tools but don't act on it, so a screen reader's own activate command may not open them. Enter and Space still do.
+- Narrator's headings list may not show the gallery headings; they are still read as text.
+
 ## Decided by the owner, to build in 10.1
 - Clear unsaved asks for confirmation first.
 - "Also delete files" sends files to the Recycle Bin.
@@ -35,4 +39,4 @@ Left open by the review cap. Fix these in section 10.1.
 - Installer tool for 10.3: Inno Setup is proposed. Unsigned, so Windows shows a SmartScreen warning.
 
 ## Needs a person
-Real keyboard and mouse use has not been tested: overlay dragging and Esc, tray clicks, arrow keys and Tab, wheel scrolling, drawing on the canvas, recording a shortcut. PrtScn with Windows' setting off (1.1) and a Narrator listening test (1.5) are also open.
+Real keyboard and mouse use has not been tested: overlay dragging and Esc, tray clicks, arrow keys and Tab, wheel scrolling, drawing on the canvas, recording a shortcut. PrtScn with Windows' setting off (1.1) is also open, and so is a Narrator listening test of the 10.2 changes, which were checked only through the accessibility tree.
