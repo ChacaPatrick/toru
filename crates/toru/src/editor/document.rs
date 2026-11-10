@@ -14,7 +14,10 @@ use tiny_skia::{
 };
 use xcap::image::{Frame, RgbaImage};
 
-use super::annotation::{self, Annotation};
+use super::{
+    annotation::{self, Annotation},
+    text,
+};
 
 /// Undo and redo over a value: every edit keeps the value before it.
 pub struct History<T> {
@@ -94,6 +97,16 @@ impl PartialEq for Edits {
         Arc::ptr_eq(&self.base, &other.base)
             && self.annotations == other.annotations
             && self.crop == other.crop
+    }
+}
+
+impl Edits {
+    /// Whether some text holds a character no font can draw, which the picture leaves blank.
+    pub fn has_blanks(&self) -> bool {
+        self.annotations
+            .iter()
+            .filter_map(Annotation::text)
+            .any(|text| text::has_blanks(&text.shown(), &text.font))
     }
 }
 

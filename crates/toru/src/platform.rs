@@ -2,7 +2,8 @@
 //! a maximized window, a display's size in physical pixels and the monitor's own identity, which
 //! key and modifiers are down in a key event, the local time, the app-data and default save folders, showing
 //! a file in the file manager, keeping Toru's own windows out of a
-//! capture, bringing the capture overlay to the foreground, telling which windows a user can
+//! capture, the system fonts that draw what the bundled ones lack, bringing the capture overlay
+//! to the foreground, telling which windows a user can
 //! pick, hiding the main window in the tray and showing it again, and telling a running Toru
 //! that a second one was launched. Windows is done here; the other platforms get the fallbacks
 //! at the bottom until they are.
@@ -460,6 +461,25 @@ mod windows {
         explorer.spawn().map(drop)
     }
 
+    /// The system fonts that draw what the editor's bundled fonts lack, in the order they are
+    /// tried: Segoe UI for Latin, Greek and Cyrillic, its symbols and emoji (the emoji's plain
+    /// outlines), then Chinese, Japanese, Korean and the Indic scripts. A file this Windows
+    /// doesn't have is skipped when it is read.
+    pub fn fallback_fonts() -> Vec<PathBuf> {
+        const FILES: [&str; 7] = [
+            "segoeui.ttf",
+            "seguisym.ttf",
+            "seguiemj.ttf",
+            "msyh.ttc",
+            "YuGothM.ttc",
+            "malgun.ttf",
+            "Nirmala.ttc",
+        ];
+        let windows = std::env::var_os("WINDIR").unwrap_or_else(|| r"C:\Windows".into());
+        let fonts = PathBuf::from(windows).join("Fonts");
+        FILES.iter().map(|file| fonts.join(file)).collect()
+    }
+
     /// What `find_maximized` looks for and what it found.
     struct Search {
         monitor: isize,
@@ -708,9 +728,9 @@ pub const EXCLUDE_SETTLE: Duration = Duration::from_millis(50);
 
 #[cfg(windows)]
 pub use windows::{
-    bring_overlay_to_foreground, default_save_folder, exclude_windows_from_capture, held_modifiers,
-    hide_main_window, is_window_pickable, local_now, main_window_hidden, pressed_key,
-    request_close, restore_window, reveal_file, show_main_window, show_startup_error,
+    bring_overlay_to_foreground, default_save_folder, exclude_windows_from_capture, fallback_fonts,
+    held_modifiers, hide_main_window, is_window_pickable, local_now, main_window_hidden,
+    pressed_key, request_close, restore_window, reveal_file, show_main_window, show_startup_error,
     signal_running_instance, watch_for_show,
 };
 
@@ -756,6 +776,11 @@ pub fn reveal_file(_path: &std::path::Path) -> std::io::Result<()> {
 
 #[cfg(not(windows))]
 pub fn bring_overlay_to_foreground() {}
+
+#[cfg(not(windows))]
+pub fn fallback_fonts() -> Vec<PathBuf> {
+    Vec::new()
+}
 
 #[cfg(not(windows))]
 pub fn exclude_windows_from_capture(_exclude: bool) {}

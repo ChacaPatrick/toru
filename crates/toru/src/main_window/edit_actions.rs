@@ -21,11 +21,22 @@ use crate::editor::{
     Editor, EditorEvent,
     document::{Flattened, to_rgba},
 };
-use crate::ui::Toast;
+use crate::{theme::ActiveTheme, ui::Toast};
 
 const SAVE_AS_FAILED: &str = "Couldn't save a copy there. Check the folder and its free space.";
 const KEEP_EDITS_FAILED: &str = "Couldn't keep those edits. Check for free space.";
 const NOTHING_TO_SAVE: &str = "Nothing new to save";
+const BLANKS_KEPT: &str = "Edits kept · some characters left blank";
+
+/// `message`, saying so when some text in the picture has characters no font could draw.
+fn noting_blanks(message: impl Into<String>, blanks: bool) -> String {
+    let message = message.into();
+    if blanks {
+        format!("{message} · some characters left blank")
+    } else {
+        message
+    }
+}
 
 impl MainWindow {
     pub(super) fn editor_event(
@@ -62,6 +73,7 @@ impl MainWindow {
         flattened: Flattened,
         cx: &mut Context<Self>,
     ) {
+        let blanks = flattened.edits.has_blanks();
         self.enqueue(cx, async move |this, cx| {
             let picture = flattened.picture;
             let copied = cx
@@ -71,7 +83,12 @@ impl MainWindow {
                 if copied.is_ok() {
                     editor.update(cx, |editor, cx| editor.show_copied(cx)).ok();
                 }
-                this.report_copy(copied, cx);
+                if copied.is_ok() && blanks {
+                    let message = noting_blanks(cx.theme().strings.copied, true);
+                    this.show_toast(Toast::new(message), cx);
+                } else {
+                    this.report_copy(copied, cx);
+                }
             })
             .ok();
         });
@@ -106,6 +123,7 @@ impl MainWindow {
                 edits,
             } = flattened;
             let size = (picture.width(), picture.height());
+            let blanks = edits.has_blanks();
             let saved = cx
                 .background_spawn(async move {
                     check_chosen_folder(&target.folder, target.chosen)?;
@@ -128,7 +146,8 @@ impl MainWindow {
                         Ok(file) => file,
                         Err(_) => return this.report_failure(SAVE_FAILED, cx),
                     };
-                    this.show_toast(Toast::new(saved_message(&file)), cx);
+                    let message = noting_blanks(saved_message(&file), blanks);
+                    this.show_toast(Toast::new(message), cx);
                     this.gallery.update(cx, |gallery, cx| {
                         gallery.picture_changed(capture, size, file.bytes, window, cx);
                         gallery.mark_saved(capture, file, cx);
@@ -154,6 +173,7 @@ impl MainWindow {
             return;
         }
         self.saving_edit = true;
+        let blanks = flattened.edits.has_blanks();
         let extension = format.extension();
         let name = self
             .store
@@ -183,7 +203,10 @@ impl MainWindow {
                     this.update(cx, |this, cx| {
                         this.saving_edit = false;
                         match saved {
-                            Ok(file) => this.show_toast(Toast::new(saved_message(&file)), cx),
+                            Ok(file) => {
+                                let message = noting_blanks(saved_message(&file), blanks);
+                                this.show_toast(Toast::new(message), cx);
+                            }
                             Err(_) => this.report_failure(SAVE_AS_FAILED, cx),
                         }
                     })
@@ -218,6 +241,7 @@ impl MainWindow {
             .read(cx)
             .thumbnail_width((flattened.picture.width(), flattened.picture.height()));
         let window = self.window;
+        let blanks = flattened.edits.has_blanks();
         self.enqueue(cx, async move |this, cx| {
             let Flattened {
                 picture,
@@ -239,9 +263,14 @@ impl MainWindow {
                 .await;
             cx.update_window(window, |_, window, cx| {
                 this.update(cx, |this, cx| match stored {
-                    Ok(bytes) => this.gallery.update(cx, |gallery, cx| {
-                        gallery.picture_changed(capture, size, bytes, window, cx)
-                    }),
+                    Ok(bytes) => {
+                        this.gallery.update(cx, |gallery, cx| {
+                            gallery.picture_changed(capture, size, bytes, window, cx)
+                        });
+                        if blanks {
+                            this.show_toast(Toast::new(BLANKS_KEPT), cx);
+                        }
+                    }
                     Err(_) => this.report_failure(KEEP_EDITS_FAILED, cx),
                 })
             })
