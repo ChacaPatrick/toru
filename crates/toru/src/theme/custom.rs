@@ -187,7 +187,7 @@ impl CustomPalette {
 }
 
 /// `from` moved `amount` of the way to `to`, in sRGB as the screen blends.
-fn mix(from: Hsla, to: Hsla, amount: f32) -> Hsla {
+pub(super) fn mix(from: Hsla, to: Hsla, amount: f32) -> Hsla {
     over(Hsla { a: amount, ..to }, from)
 }
 

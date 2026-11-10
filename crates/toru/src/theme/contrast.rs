@@ -112,13 +112,12 @@ pub fn pairs(theme: &Theme) -> Vec<Pair> {
         text(&format!("text on {name}"), c.text, bg);
         text(&format!("muted on {name}"), c.muted, bg);
     }
-    // The empty state's headline, on the window or in the placeholder frame over it.
+    // The empty state's headline and its instruction, on the window or in the placeholder frame
+    // over it.
     for (name, bg) in &windows {
-        text(
-            &format!("empty state on {name}"),
-            c.text,
-            over(c.load_bg, *bg),
-        );
+        let frame = over(c.load_bg, *bg);
+        text(&format!("empty state on {name}"), c.text, frame);
+        text(&format!("empty state hint on {name}"), window_muted, frame);
     }
     // A disabled button is unfilled, so its label sits on the bar it is in.
     text("disabled button", c.muted, c.surface_2);
