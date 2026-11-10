@@ -33,7 +33,7 @@ use super::{
 use crate::theme::{ActiveTheme, Theme, ThemedText, TypeStyle};
 use crate::ui::{
     BUTTON_SMALL_HEIGHT, Button, CHECKBOX_SIZE, Checkbox, Chip, MIN_TARGET, Menu, TextField,
-    Tooltip, fill, focus_marks, selection_ring, shadowed,
+    Tooltip, fill, focus_marks, selection_ring, shadowed, spoken,
 };
 
 const PADDING: f32 = 10.;
@@ -121,6 +121,15 @@ fn keep_press(_: &MouseDownEvent, _: &mut Window, cx: &mut App) {
     cx.stop_propagation();
 }
 
+/// What assistive technology calls a card: its name, its caption (or why its name was refused,
+/// which the caption tag shows instead), and whether it is saved and selected, so the status is
+/// never only the colour (DESIGN.md §7).
+fn card_label(name: &str, caption: &str, saved: bool, selected: bool) -> String {
+    let status = if saved { "Saved" } else { "Unsaved" };
+    let selected = if selected { ", selected" } else { "" };
+    format!("{name}, {}, {status}{selected}", spoken(caption))
+}
+
 /// Whether a click on the card is a press on it. GPUI also turns Space and Enter's key-up on a
 /// focused card into a click, but the gallery's `key_down` has already handled those keys.
 fn counts_as_press(event: &ClickEvent) -> bool {
@@ -177,6 +186,26 @@ pub fn render(
     let radius = theme.radii.lg;
     let saved = card.capture.is_saved();
     let size = file_size(card.bytes);
+    // `.card .row .hint`: the saved path, or "no path yet", elided from the left.
+    let path = card
+        .capture
+        .saved_path
+        .as_deref()
+        .map_or_else(|| "no path yet".to_string(), path_hint);
+    let label = card_label(
+        &card.name.read(cx).value(),
+        &card
+            .name_error
+            .clone()
+            .map_or_else(|| card.capture.caption(today), |error| error.to_string()),
+        saved,
+        select_mode && selected,
+    );
+    let description = if select_mode {
+        format!("{size}, {path}")
+    } else {
+        size.clone()
+    };
 
     let id = card.id;
     let copy = act(cx, move |this, cx| this.copy(id, cx));
@@ -246,12 +275,6 @@ pub fn render(
         .gap(px(ROW_GAP))
         .child(chip);
     let status = if select_mode {
-        // `.card .row .hint`: the saved path, or "no path yet", elided from the left.
-        let hint = card
-            .capture
-            .saved_path
-            .as_deref()
-            .map_or_else(|| "no path yet".to_string(), path_hint);
         status.child(
             div()
                 .flex_1()
@@ -262,7 +285,7 @@ pub fn render(
                 .whitespace_nowrap()
                 .overflow_hidden()
                 .text_ellipsis()
-                .child(hint),
+                .child(path),
         )
     } else {
         status.child(actions)
@@ -289,7 +312,8 @@ pub fn render(
     let card_element = div()
         .id(("card", card.id))
         .role(Role::Group)
-        .aria_label(card.name.read(cx).value())
+        .aria_label(label)
+        .aria_description(description)
         .track_focus(&focus)
         // On the way down, so it runs for a press a control keeps to itself.
         .capture_any_mouse_down(move |_, window, cx| make_current(window, cx))
@@ -458,6 +482,23 @@ mod tests {
         assert!(counts_as_press(&ClickEvent::Mouse(
             MouseClickEvent::default()
         )));
+    }
+
+    #[test]
+    fn a_card_is_read_with_its_caption_and_status() {
+        assert_eq!(
+            card_label(
+                "Settings-Panel",
+                "800×1000 · Window · 9:44 AM",
+                false,
+                false
+            ),
+            "Settings-Panel, 800×1000, Window, 9:44 AM, Unsaved"
+        );
+        assert_eq!(
+            card_label("Dashboard", "1×1 · Region · 1:00 PM", true, true),
+            "Dashboard, 1×1, Region, 1:00 PM, Saved, selected"
+        );
     }
 
     #[test]

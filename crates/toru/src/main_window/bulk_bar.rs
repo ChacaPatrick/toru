@@ -11,7 +11,7 @@ use gpui::{Context, Hsla, Pixels, Role, div, prelude::*, px};
 
 use super::{MainWindow, act, selection::Counts};
 use crate::theme::{ActiveTheme, Theme, ThemedText, contrast};
-use crate::ui::{BULK_BUTTON_HEIGHT, Button, Icon};
+use crate::ui::{BULK_BUTTON_HEIGHT, Button, Icon, Readable};
 
 /// `.bulk{bottom:20px}`: the bar's distance from the bottom of the window, and so of the gallery.
 pub const BOTTOM: f32 = 20.;
@@ -83,6 +83,13 @@ pub fn bulk_bar(counts: &Counts, cx: &Context<MainWindow>) -> impl IntoElement {
                 .whitespace_nowrap()
                 .child(
                     div()
+                        .id("bulk-count")
+                        .read_as_text(format!(
+                            "{} selected · {} saved · {} unsaved",
+                            counts.selected,
+                            counts.saved,
+                            counts.unsaved()
+                        ))
                         .px(px(8.))
                         .type_style(theme, theme.type_scale.bulk_selected)
                         .child(format!("{} selected", counts.selected)),

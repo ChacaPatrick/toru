@@ -30,6 +30,7 @@ const DETAIL_GAP: f32 = 2.;
 pub struct RadioGroup {
     id: ElementId,
     label: SharedString,
+    description: Option<SharedString>,
     options: Vec<SharedString>,
     selected: usize,
     details: Vec<Option<AnyElement>>,
@@ -47,11 +48,18 @@ impl RadioGroup {
         RadioGroup {
             id: id.into(),
             label: label.into(),
+            description: None,
             options: options.into_iter().map(Into::into).collect(),
             selected,
             details: Vec::new(),
             on_change: None,
         }
+    }
+
+    /// A hint for the group as a whole, such as the text under it.
+    pub fn description(mut self, description: impl Into<SharedString>) -> RadioGroup {
+        self.description = Some(description.into());
+        self
     }
 
     /// One element per option, drawn under its label and aligned with it.
@@ -194,6 +202,7 @@ impl RenderOnce for RadioGroup {
             .id(self.id)
             .role(Role::RadioGroup)
             .aria_label(self.label)
+            .when_some(self.description, |this, text| this.aria_description(text))
             .on_key_down(on_key_down)
             .flex()
             .flex_col()

@@ -1,8 +1,9 @@
 //! The status chip on a card: `Unsaved`, or `Saved ✓` in the accent. Status is always text, never
 //! colour alone, so the chip's words carry the state.
 
-use gpui::{App, ElementId, Role, SharedString, Window, div, prelude::*, px};
+use gpui::{App, ElementId, SharedString, Window, div, prelude::*, px};
 
+use super::Readable;
 use crate::theme::{ActiveTheme, ThemedText};
 
 #[derive(IntoElement)]
@@ -41,8 +42,8 @@ impl RenderOnce for Chip {
         let line_height = style.natural_line_height(theme, cx);
         div()
             .id(self.id)
-            .role(Role::Label)
-            .aria_label(self.text.clone())
+            // The check mark is decoration; the word says it.
+            .read_as_text(self.text.trim_end_matches('✓').trim_end())
             .flex_none()
             .py(px(3.))
             .px(px(9.))

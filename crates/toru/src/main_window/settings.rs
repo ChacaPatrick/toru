@@ -14,7 +14,8 @@
 use std::{path::PathBuf, sync::Arc};
 
 use gpui::{
-    App, Context, Div, ElementId, Hsla, Pixels, SharedString, Window, div, point, prelude::*, px,
+    App, Context, Div, ElementId, Hsla, Pixels, SharedString, Stateful, Window, div, point,
+    prelude::*, px,
 };
 use gpui_kit::component::scroll::ScrollableElement;
 use toru_core::{
@@ -28,7 +29,8 @@ use super::{
 use crate::shortcuts::{Binding, Planned, Problem};
 use crate::theme::{ActiveTheme, Theme, ThemedText, custom_palette, set_theme};
 use crate::ui::{
-    BUTTON_SMALL_HEIGHT, Button, Icon, MIN_TARGET, RadioGroup, Segmented, TextField, Toggle,
+    BUTTON_SMALL_HEIGHT, Button, Icon, MIN_TARGET, RadioGroup, Readable, Segmented, TextField,
+    Toggle,
 };
 
 pub const WIDTH: f32 = 300.;
@@ -48,6 +50,9 @@ const TARGET_GAP: f32 = 8.;
 /// The Palettes boards' `.swatches`: a strip of four, the width of its row.
 const SWATCH_HEIGHT: f32 = 26.;
 const SWATCH_GAP: f32 = 6.;
+
+const SHOW_PREVIOUS_HINT: &str =
+    "Off = clean slate each session. On = earlier shots load below, a day at a time as you scroll.";
 
 const FORMATS: [SaveFormat; 3] = [SaveFormat::Png, SaveFormat::Jpg, SaveFormat::WebP];
 const ON_CLOSE: [OnClose; 3] = [OnClose::Ask, OnClose::Keep, OnClose::Discard];
@@ -102,16 +107,10 @@ pub fn settings_column(
                     "show-previous",
                     "Show previous screenshots",
                     settings.show_previous,
+                    Some(SHOW_PREVIOUS_HINT),
                     |settings, on| settings.show_previous = on,
                 ))
-                .child(
-                    hint(
-                        theme,
-                        "Off = clean slate each session. On = earlier shots load below, a day \
-                         at a time as you scroll.",
-                    )
-                    .mt(px(-4.)),
-                ),
+                .child(hint(theme, SHOW_PREVIOUS_HINT).mt(px(-4.))),
         )
         .child(
             group(theme, "Capture")
@@ -120,6 +119,7 @@ pub fn settings_column(
                     "copy-on-capture",
                     "Copy to clipboard on capture",
                     settings.copy_on_capture,
+                    None,
                     |settings, on| settings.copy_on_capture = on,
                 ))
                 .child(toggle(
@@ -127,6 +127,7 @@ pub fn settings_column(
                     "auto-save",
                     "Auto-save every capture",
                     settings.auto_save,
+                    None,
                     |settings, on| settings.auto_save = on,
                 ))
                 .child(toggle(
@@ -134,6 +135,7 @@ pub fn settings_column(
                     "keep-in-tray",
                     "Keep running in the tray",
                     settings.keep_in_tray,
+                    None,
                     |settings, on| settings.keep_in_tray = on,
                 ))
                 .child(toggle(
@@ -141,6 +143,7 @@ pub fn settings_column(
                     "open-editor",
                     "Open editor after capture",
                     settings.open_editor_after_capture,
+                    None,
                     |settings, on| settings.open_editor_after_capture = on,
                 )),
         )
@@ -164,10 +167,12 @@ pub fn settings_column(
                         .filter(|row| row.text.is_some())
                         .map(|row| shortcut(theme, Some(row), "Delayed")),
                 )
-                .children(
-                    shortcuts_dialog::column_note(&this.shortcuts)
-                        .map(|note| hint(theme, note).text_color(c.text)),
-                )
+                .children(shortcuts_dialog::column_note(&this.shortcuts).map(|note| {
+                    hint(theme, note)
+                        .id("shortcuts-note")
+                        .read_as_text(note)
+                        .text_color(c.text)
+                }))
                 // The row keeps the button at its own width, as the mockups'
                 // `align-self: flex-start` does.
                 .child(
@@ -184,12 +189,17 @@ pub fn settings_column(
                     .flex()
                     .gap(px(8.))
                     .child(folder_field(theme, this.save_folder()))
-                    .child(Button::new("change-folder", "Change").small().on_click({
-                        let view = cx.entity();
-                        move |window, cx| {
-                            view.update(cx, |this, cx| this.change_save_folder(window, cx))
-                        }
-                    })),
+                    .child(
+                        Button::new("change-folder", "Change")
+                            .named("Change save folder")
+                            .small()
+                            .on_click({
+                                let view = cx.entity();
+                                move |window, cx| {
+                                    view.update(cx, |this, cx| this.change_save_folder(window, cx))
+                                }
+                            }),
+                    ),
             ),
         )
         .child(
@@ -407,6 +417,8 @@ fn label_row(theme: &Theme, label: &'static str) -> Div {
         .min_h(px(LABEL_ROW_HEIGHT))
         .child(
             div()
+                .id(label)
+                .read_as_heading(label)
                 .type_style(theme, style)
                 .text_color(theme.colors.label)
                 .child(style.case.apply(label)),
@@ -420,6 +432,7 @@ fn toggle(
     id: &'static str,
     label: &'static str,
     on: bool,
+    description: Option<&'static str>,
     set: impl Fn(&mut Settings, bool) + Clone + 'static,
 ) -> Div {
     let theme = cx.theme();
@@ -444,21 +457,25 @@ fn toggle(
                 .child(label),
         )
         .child(
-            Toggle::new(id, label, on).on_change(act_with(cx, move |this, cx, on| {
-                this.change_settings(cx, |settings| set(settings, on))
-            })),
+            Toggle::new(id, label, on)
+                .when_some(description, Toggle::description)
+                .on_change(act_with(cx, move |this, cx, on| {
+                    this.change_settings(cx, |settings| set(settings, on))
+                })),
         )
 }
 
 /// A shortcut row: the keys, or "Not set", with what they capture at the right. A shortcut
 /// that isn't working says so in the text colour under its keys; the dialog says why.
-fn shortcut(theme: &Theme, planned: Option<&Planned>, action: &'static str) -> Div {
+fn shortcut(theme: &Theme, planned: Option<&Planned>, action: &'static str) -> Stateful<Div> {
     let keys = planned
         .and_then(|row| row.text.as_deref())
         .map_or_else(|| "Not set".to_string(), shortcut_text);
     let broken =
         planned.is_some_and(|row| !matches!(row.problem, None | Some(Problem::Disconnected)));
     row(theme)
+        .id(action)
+        .read_as_text(shortcut_row_text(&keys, action, broken))
         .child(
             div()
                 .flex()
@@ -492,13 +509,15 @@ pub(super) fn hint(theme: &Theme, text: impl Into<SharedString>) -> Div {
 }
 
 /// `.field`: the save folder as one line of the field font, clipped at the right.
-fn folder_field(theme: &Theme, folder: Option<PathBuf>) -> Div {
+fn folder_field(theme: &Theme, folder: Option<PathBuf>) -> Stateful<Div> {
     let border = theme.borders.input;
     let path = folder.map_or_else(
         || "Pictures folder not found".to_string(),
         |path| path.display().to_string(),
     );
     div()
+        .id("save-folder")
+        .read_as_text(format!("Save to folder: {path}"))
         .flex_1()
         .min_w_0()
         .h(px(FIELD_HEIGHT))
@@ -518,7 +537,7 @@ fn folder_field(theme: &Theme, folder: Option<PathBuf>) -> Div {
 /// Under the pattern field: its hint, or, while the typed pattern is invalid, what is wrong, in
 /// the text colour so the words carry it (DESIGN.md §7). Both are one line in the same place, so
 /// nothing below moves when one replaces the other.
-fn pattern_hint(theme: &Theme, error: Option<&NameError>) -> Div {
+fn pattern_hint(theme: &Theme, error: Option<&NameError>) -> Stateful<Div> {
     let (text, color) = match error {
         Some(error) => (pattern_message(error), theme.colors.text),
         None => (
@@ -526,7 +545,10 @@ fn pattern_hint(theme: &Theme, error: Option<&NameError>) -> Div {
             theme.colors.muted,
         ),
     };
-    hint(theme, text)
+    hint(theme, text.clone())
+        .id("pattern-hint")
+        // `Input` has no description to put this on.
+        .read_as_text(text)
         .text_color(color)
         .whitespace_nowrap()
         .overflow_hidden()
@@ -548,6 +570,12 @@ pub fn pattern_message(error: &NameError) -> String {
     }
 }
 
+/// A row of the Shortcuts list, read as one line.
+fn shortcut_row_text(keys: &str, action: &str, broken: bool) -> String {
+    let broken = if broken { ", not working" } else { "" };
+    format!("{keys} — {action}{broken}")
+}
+
 /// "Ctrl+Shift+W" as the mockups space it: "Ctrl + Shift + W".
 pub fn shortcut_text(keys: &str) -> String {
     keys.replace('+', " + ")
@@ -561,6 +589,18 @@ mod tests {
     fn shortcuts_are_spaced_like_the_mockups() {
         assert_eq!(shortcut_text("PrtScn"), "PrtScn");
         assert_eq!(shortcut_text("Ctrl+Shift+W"), "Ctrl + Shift + W");
+    }
+
+    #[test]
+    fn shortcut_rows_read_as_one_line() {
+        assert_eq!(
+            shortcut_row_text("PrtScn", "Region (default)", false),
+            "PrtScn — Region (default)"
+        );
+        assert_eq!(
+            shortcut_row_text("Not set", "Window", true),
+            "Not set — Window, not working"
+        );
     }
 
     #[test]

@@ -250,12 +250,12 @@ impl Colors {
     /// colour, then the yellow and blue the mockups give every look.
     pub fn stroke_swatches(&self) -> [Swatch; 5] {
         [
-            Swatch::new("Ink", self.text),
-            Swatch::new("White", gpui::white()),
-            Swatch::new("Red", self.anno),
+            Swatch::new(self.text),
+            Swatch::new(gpui::white()),
+            Swatch::new(self.anno),
             // The mockups' CSS writes these two out rather than naming tokens.
-            Swatch::new("Yellow", css::hex(0xf1c40f)),
-            Swatch::new("Blue", css::hex(0x2e86de)),
+            Swatch::new(css::hex(0xf1c40f)),
+            Swatch::new(css::hex(0x2e86de)),
         ]
     }
 
@@ -280,7 +280,8 @@ impl Colors {
     }
 }
 
-/// A stroke colour the editor's panel offers, with the name assistive technology reads.
+/// A stroke colour the editor's panel offers, with the name assistive technology reads: what it
+/// looks like in this palette, which a custom palette decides.
 #[derive(Clone, Copy)]
 pub struct Swatch {
     pub name: &'static str,
@@ -288,8 +289,47 @@ pub struct Swatch {
 }
 
 impl Swatch {
-    fn new(name: &'static str, color: Hsla) -> Swatch {
-        Swatch { name, color }
+    fn new(color: Hsla) -> Swatch {
+        Swatch {
+            name: color_name(color),
+            color,
+        }
+    }
+}
+
+/// The everyday name of a colour. A dark colour keeps a name of its own (maroon, olive, navy)
+/// unless it is nearly black or has little colour in it.
+fn color_name(color: Hsla) -> &'static str {
+    let (hue, saturation, lightness) = (color.h * 360., color.s, color.l);
+    let dark = lightness < 0.3;
+    if lightness < 0.1 || (lightness < 0.2 && saturation < 0.25) {
+        "Black"
+    } else if lightness > 0.98 {
+        "White"
+    } else if lightness > 0.88 {
+        "Off-white"
+    } else if saturation < 0.12 {
+        "Gray"
+    } else {
+        match hue {
+            h if !(15. ..330.).contains(&h) && dark => "Maroon",
+            h if !(15. ..345.).contains(&h) && lightness > 0.75 => "Pink",
+            h if !(15. ..345.).contains(&h) => "Red",
+            h if h < 45. && lightness < 0.5 => "Brown",
+            h if h < 45. && (saturation < 0.5 || lightness > 0.8) => "Beige",
+            h if h < 45. => "Orange",
+            h if h < 70. && lightness < 0.4 => "Olive",
+            h if h < 70. => "Yellow",
+            h if h < 170. && dark => "Dark green",
+            h if h < 170. => "Green",
+            h if h < 200. && lightness < 0.45 => "Teal",
+            h if h < 200. => "Cyan",
+            h if h < 255. && dark => "Navy",
+            h if h < 255. => "Blue",
+            h if h < 290. => "Purple",
+            h if h < 330. && lightness < 0.4 => "Purple",
+            _ => "Pink",
+        }
     }
 }
 
@@ -610,4 +650,63 @@ pub enum DayDate {
     ShortUpper,
     /// "TUE NOV 4"
     LongUpper,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(look: Look, palette: usize) -> Vec<&'static str> {
+        Theme::new(look, palette)
+            .colors
+            .stroke_swatches()
+            .iter()
+            .map(|swatch| swatch.name)
+            .collect()
+    }
+
+    #[test]
+    fn swatches_are_named_for_what_they_show_in_the_look() {
+        assert_eq!(
+            names(Look::Japandi, 0),
+            ["Black", "White", "Brown", "Yellow", "Blue"]
+        );
+        assert_eq!(names(Look::PixelArt, 0)[2], "Pink");
+        assert_eq!(names(Look::NeoBrutalism, 0)[2], "Black");
+    }
+
+    #[test]
+    fn colours_get_their_everyday_names() {
+        let name = |rgb| color_name(css::hex(rgb));
+        assert_eq!(name(0x7a5c3e), "Brown");
+        assert_eq!(name(0xff6b97), "Pink");
+        assert_eq!(name(0xe74c3c), "Red");
+        assert_eq!(name(0xe67e22), "Orange");
+        assert_eq!(name(0x27ae60), "Green");
+        assert_eq!(name(0x808080), "Gray");
+        assert_eq!(name(0xf1f1e6), "Off-white");
+    }
+
+    #[test]
+    fn dark_and_pale_colours_are_not_named_for_their_bright_hue() {
+        let name = |rgb| color_name(css::hex(rgb));
+        assert_eq!(name(0x6b5b00), "Olive");
+        assert_eq!(name(0x800080), "Purple");
+        assert_eq!(name(0x4a0000), "Maroon");
+        assert_eq!(name(0x0a1a4a), "Navy");
+        assert_eq!(name(0xd2b48c), "Beige");
+        assert_eq!(name(0x00ffff), "Cyan");
+        assert_eq!(name(0x008080), "Teal");
+        assert_eq!(name(0x0b3d0b), "Dark green");
+        assert_eq!(name(0x2b2a26), "Black");
+        assert_eq!(name(0x0d0d18), "Black");
+        assert_eq!(name(0xf1c40f), "Yellow");
+        assert_eq!(name(0x2e86de), "Blue");
+        assert_eq!(name(0xb388ff), "Purple");
+        assert_eq!(name(0x9370db), "Purple");
+        assert_eq!(name(0x4b0082), "Purple");
+        assert_eq!(name(0xff1493), "Pink");
+        assert_eq!(name(0xc71585), "Pink");
+        assert_eq!(name(0xffe6b3), "Beige");
+    }
 }

@@ -23,7 +23,7 @@ use crate::theme::{
     custom::{FIELDS, hex_text, parse_hex},
     custom_palette, scrim, set_theme,
 };
-use crate::ui::{Button, FocusInView, TextField, close_menus, dialog, menus_open};
+use crate::ui::{Button, FocusInView, Readable, TextField, close_menus, dialog, menus_open};
 
 const WIDTH: f32 = 480.;
 const PADDING: f32 = 22.;
@@ -291,6 +291,7 @@ impl MainWindow {
                     .child({
                         let view = cx.entity();
                         Button::new("change-background", "Change…")
+                            .named("Change background photo")
                             .small()
                             .track_focus(change)
                             .on_click(move |window, cx| {
@@ -301,6 +302,7 @@ impl MainWindow {
                         let view = cx.entity();
                         row.child(
                             Button::new("remove-background", "Remove")
+                                .named("Remove background photo")
                                 .small()
                                 .track_focus(remove)
                                 .on_click(move |window, cx| {
@@ -318,6 +320,8 @@ impl MainWindow {
         );
         let hint = theme.type_scale.hint;
         let warning = div()
+            .id("palette-warnings")
+            .read_as_text(lines.join(" "))
             .flex()
             .flex_col()
             .gap(px(2.))
@@ -352,10 +356,17 @@ impl MainWindow {
         let (next, previous) = (step(1), step(-1));
         let escape = act(cx, |this, cx| this.cancel_custom_editor(cx));
 
+        let about = format!(
+            "Your own colours for {}. Six hex colours; the rest of the palette follows them. \
+             Apply shows them.",
+            look_name(editor.look)
+        );
         let panel = div()
             .id("custom-palette")
             .role(Role::Dialog)
             .aria_label("Custom palette")
+            .aria_description(about.clone())
+            .modal_dialog()
             .key_context(dialog::KEY_CONTEXT)
             .on_key_down(move |event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" {
@@ -406,11 +417,7 @@ impl MainWindow {
                                     .type_style(theme, hint)
                                     .line_height(hint.size * LEADING)
                                     .text_color(c.muted)
-                                    .child(format!(
-                                        "Your own colours for {}. Six hex colours; the rest of \
-                                         the palette follows them. Apply shows them.",
-                                        look_name(editor.look)
-                                    )),
+                                    .child(about),
                             )
                             .child(div().flex().flex_col().gap(px(ROW_GAP)).children(fields))
                             .child(photo)
@@ -530,6 +537,8 @@ fn photo_field(theme: &Theme, path: Option<&Path>) -> impl IntoElement {
         |name| name.to_string_lossy().into_owned(),
     );
     div()
+        .id("background-photo")
+        .read_as_text(format!("Background photo: {name}"))
         .flex_1()
         .min_w_0()
         .h(px(FIELD_HEIGHT))

@@ -9,7 +9,7 @@ use toru_core::settings::SaveFormat;
 
 use super::{Editor, act, on, tools::*};
 use crate::theme::{ActiveTheme, Theme, ThemedText, contrast};
-use crate::ui::{Button, Choices, Icon, Menu, Pressable, TextField, shadowed};
+use crate::ui::{Button, Choices, Icon, Menu, Pressable, Readable, TextField, shadowed};
 
 /// The pill's top edge and the corners' distance from the canvas edges.
 pub const EDGE: f32 = 16.;
@@ -41,7 +41,7 @@ pub fn top_bar(editor: &Editor, window: &Window, cx: &Context<Editor>) -> Div {
     let save_as = Menu::new(
         "save-as",
         "Save as",
-        Button::new("save-as-button", "Save as ▾"),
+        Button::new("save-as-button", "Save as ▾").named("Save as"),
     )
     .header("Save a copy as")
     .item("PNG…", on(cx, |this, cx| this.save_as(SaveFormat::Png, cx)))
@@ -76,8 +76,15 @@ pub fn top_bar(editor: &Editor, window: &Window, cx: &Context<Editor>) -> Div {
         // A refused name is said here in place of the status, right after its field, so the bar
         // keeps its shape, as the card does.
         .child(match &editor.name_error {
-            Some(error) => status_text(theme, c.text).child(error.clone()),
-            None => status_text(theme, c.muted).child(editor.status()),
+            Some(error) => status_text(theme, c.text)
+                .read_as_text(error)
+                .child(error.clone()),
+            None => {
+                let status = editor.status();
+                status_text(theme, c.muted)
+                    .read_as_text(&status)
+                    .child(status)
+            }
         })
         .child(div().flex_1().min_w(px(40.)))
         .child(Button::new("reset", "Reset edits").on_click(on(cx, |this, cx| this.reset(cx))))
@@ -95,8 +102,9 @@ pub fn top_bar(editor: &Editor, window: &Window, cx: &Context<Editor>) -> Div {
         .child(save_as)
 }
 
-fn status_text(theme: &Theme, color: Hsla) -> Div {
+fn status_text(theme: &Theme, color: Hsla) -> Stateful<Div> {
     div()
+        .id("status")
         .type_style(theme, theme.type_scale.hint)
         .text_color(color)
         .whitespace_nowrap()
@@ -217,10 +225,14 @@ pub fn zoom_corner(editor: &Editor, cx: &Context<Editor>) -> Stateful<Div> {
                 .on_click(on(cx, |this, cx| this.zoom_step(-1, cx))),
         )
         .child(
-            corner_button(theme, "zoom-level", "Zoom level, click to zoom to 100%")
-                .min_w(px(ZOOM_READOUT_MIN_WIDTH))
-                .child(percent)
-                .on_click(on(cx, |this, cx| this.zoom_to(1., cx))),
+            corner_button(
+                theme,
+                "zoom-level",
+                format!("Zoom {percent}, press for 100%"),
+            )
+            .min_w(px(ZOOM_READOUT_MIN_WIDTH))
+            .child(percent)
+            .on_click(on(cx, |this, cx| this.zoom_to(1., cx))),
         )
         .child(
             corner_button(theme, "zoom-in", "Zoom in")
@@ -278,7 +290,7 @@ fn corner(theme: &Theme, id: &'static str) -> Stateful<Div> {
         .rounded(theme.radii.md)
 }
 
-fn corner_button(theme: &Theme, id: &'static str, label: &'static str) -> Pressable {
+fn corner_button(theme: &Theme, id: &'static str, label: impl Into<SharedString>) -> Pressable {
     Pressable::new(id, label, theme.colors.text)
         .radius(theme.radii.sm)
         .h(px(CORNER_BUTTON))
@@ -301,6 +313,7 @@ pub fn hint_chip(editor: &Editor, cx: &Context<Editor>) -> AnyElement {
         .child(
             div()
                 .id("hint")
+                .read_as_text(editor.hint())
                 .occlude()
                 .max_w(relative(0.8))
                 .px(px(12.))

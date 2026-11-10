@@ -6,7 +6,7 @@ use gpui::{Context, Div, div, prelude::*, px};
 
 use super::{MainWindow, act, gallery::plural};
 use crate::theme::{ActiveTheme, ThemedText};
-use crate::ui::Button;
+use crate::ui::{Button, Readable};
 
 pub fn bottom_bar(this: &MainWindow, cx: &Context<MainWindow>) -> Div {
     let theme = cx.theme();
@@ -32,6 +32,8 @@ pub fn bottom_bar(this: &MainWindow, cx: &Context<MainWindow>) -> Div {
         .border_color(hair.color)
         .child(
             div()
+                .id("session-summary")
+                .read_as_text(&summary)
                 .min_w_0()
                 .type_style(theme, theme.type_scale.hint)
                 .text_color(c.muted)

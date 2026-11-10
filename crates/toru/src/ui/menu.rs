@@ -15,7 +15,7 @@ use gpui::{
 };
 
 use super::{
-    Button, Handler, Icon, button::MenuTrigger, focus_ring, keyboard_focus, keyed_focus,
+    Button, Handler, Icon, Readable, button::MenuTrigger, focus_ring, keyboard_focus, keyed_focus,
     menu_opened,
 };
 use crate::theme::{ActiveTheme, ThemedText};
@@ -239,6 +239,8 @@ impl RenderOnce for Menu {
                 Row::Header(label) => {
                     top += HEADER_HEIGHT;
                     div()
+                        .id(child_id(&format!("header {label}")))
+                        .read_as_text(&label)
                         .h(px(HEADER_HEIGHT))
                         .px_2()
                         .flex()

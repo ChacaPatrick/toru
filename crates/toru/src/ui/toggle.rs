@@ -17,6 +17,7 @@ type ChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
 pub struct Toggle {
     id: ElementId,
     label: SharedString,
+    description: Option<SharedString>,
     on: bool,
     on_change: Option<ChangeHandler>,
 }
@@ -27,9 +28,16 @@ impl Toggle {
         Toggle {
             id: id.into(),
             label: label.into(),
+            description: None,
             on,
             on_change: None,
         }
+    }
+
+    /// A hint read after the name and state, such as the text under the switch.
+    pub fn description(mut self, description: impl Into<SharedString>) -> Toggle {
+        self.description = Some(description.into());
+        self
     }
 
     pub fn on_change(mut self, handler: impl Fn(bool, &mut Window, &mut App) + 'static) -> Toggle {
@@ -82,6 +90,7 @@ impl RenderOnce for Toggle {
             .id(self.id)
             .role(Role::Switch)
             .aria_label(self.label)
+            .when_some(self.description, |this, text| this.aria_description(text))
             .aria_toggled(toggled)
             .track_focus(&focus)
             .flex_none()

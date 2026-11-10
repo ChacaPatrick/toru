@@ -10,7 +10,7 @@ use gpui_kit::component::scroll::ScrollableElement;
 
 use super::{Editor, TRAY_ICON, act, chrome, on, sticker::Sticker, tools::*};
 use crate::theme::{ActiveTheme, Family, Theme, ThemedText};
-use crate::ui::{Button, Choices, MIN_TARGET, Pressable, Slider};
+use crate::ui::{Button, Choices, MIN_TARGET, Pressable, Readable, Slider};
 
 pub const WIDTH: f32 = 200.;
 pub const LEFT: f32 = 16.;
@@ -277,6 +277,8 @@ fn crop_group(editor: &Editor, theme: &Theme, cx: &Context<Editor>) -> Div {
         .gap(px(LABEL_GAP))
         .child(
             div()
+                .id("crop-size")
+                .read_as_text(&size)
                 .type_style(theme, theme.type_scale.hint)
                 .text_color(theme.colors.muted)
                 .child(size),

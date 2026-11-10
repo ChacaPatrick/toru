@@ -11,6 +11,7 @@
 //! release. `init` binds the keys the controls handle as actions and starts watching for key
 //! presses.
 
+mod a11y;
 mod button;
 mod checkbox;
 mod chip;
@@ -39,6 +40,7 @@ use gpui::{
 
 use crate::theme::Theme;
 
+pub use a11y::{Readable, spoken};
 pub use button::{
     BULK_HEIGHT as BULK_BUTTON_HEIGHT, Button, SMALL_HEIGHT as BUTTON_SMALL_HEIGHT, SUB_OPACITY,
 };

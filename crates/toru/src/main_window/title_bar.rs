@@ -11,6 +11,7 @@ use gpui::{
 
 use crate::platform;
 use crate::theme::{ActiveTheme, Theme, ThemedText, hover_tint};
+use crate::ui::Readable;
 
 const HEIGHT: f32 = 38.;
 const CONTROL_WIDTH: f32 = 46.;
@@ -60,6 +61,8 @@ pub fn title_bar(title: SharedString, window: &Window, cx: &App) -> impl IntoEle
                 .child(dot)
                 .child(
                     div()
+                        .id("title")
+                        .read_as_text(&title)
                         .type_style(theme, style)
                         .whitespace_nowrap()
                         .overflow_hidden()

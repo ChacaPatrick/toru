@@ -62,7 +62,7 @@ use super::{
     selection::{Counts, Selection, enters_select_mode},
 };
 use crate::theme::{ActiveTheme, DayDate, Theme, ThemedText};
-use crate::ui::{Button, Flash, FocusInView, Icon, JUMP_HEIGHT, Jump, TextField};
+use crate::ui::{Button, Flash, FocusInView, Icon, JUMP_HEIGHT, Jump, Readable, TextField};
 
 const PADDING_X: f32 = 18.;
 const PADDING_TOP: f32 = 16.;
@@ -1114,9 +1114,15 @@ impl Gallery {
             .filter(|card| card.capture.is_saved())
             .count();
         let section = theme.type_scale.section;
+        // Collapse and Expand name their group by this, without the look's "Earlier — ".
+        let short_title = match group.kind {
+            GroupKind::Session => strings.session.to_string(),
+            GroupKind::Day(date) if date == self.today => strings.earlier_today.to_string(),
+            GroupKind::Day(date) => day_date(date, strings.day_date),
+        };
         let (title, hint, color) = match group.kind {
             GroupKind::Session => (
-                strings.session.to_string(),
+                short_title.clone(),
                 format!(
                     "{} · {saved} saved · nothing saved to your folder until you save",
                     plural(count, "capture")
@@ -1125,9 +1131,9 @@ impl Gallery {
             ),
             GroupKind::Day(date) => (
                 if date == self.today {
-                    strings.earlier_today.to_string()
+                    short_title.clone()
                 } else {
-                    format!("{}{}", strings.earlier, day_date(date, strings.day_date))
+                    format!("{}{short_title}", strings.earlier)
                 },
                 format!(
                     "{} · {} unsaved · shown because “Show previous” is on",
@@ -1138,6 +1144,8 @@ impl Gallery {
             ),
         };
         let titles = div()
+            .id(("group-heading", index))
+            .read_as_heading(format!("{title} · {hint}"))
             .flex()
             .items_baseline()
             .gap(px(10.))
@@ -1210,6 +1218,8 @@ impl Gallery {
                 .child(row)
                 .child(
                     div()
+                        .id("select-hint")
+                        .read_as_text(SELECT_HINT)
                         .mt(px(SELECT_HINT_GAP))
                         .type_style(theme, hint_style)
                         .line_height(hint_style.size * HINT_LEADING)
@@ -1239,6 +1249,7 @@ impl Gallery {
                             "Collapse ▴"
                         },
                     )
+                    .named(collapse_name(group.collapsed, &short_title))
                     .small()
                     .on_click(act(cx, move |this, cx| this.toggle_collapsed(index, cx))),
                 ),
@@ -1479,6 +1490,12 @@ pub fn plural(count: usize, noun: &str) -> String {
     }
 }
 
+/// What assistive technology calls a group's Collapse or Expand button.
+fn collapse_name(collapsed: bool, group: &str) -> String {
+    let action = if collapsed { "Expand" } else { "Collapse" };
+    format!("{action} {group}")
+}
+
 /// A day as the look writes it: "Tue, Nov 4", "NOV 4" or "TUE NOV 4".
 fn day_date(date: LocalDate, style: DayDate) -> String {
     let (weekday, month, day) = (date.weekday_short(), date.month_short(), date.day);
@@ -1545,6 +1562,15 @@ mod tests {
             "Nothing in this session matches “bug”"
         );
         assert_eq!(no_match_text("bug", false), "Nothing matches “bug”");
+    }
+
+    #[test]
+    fn collapse_buttons_name_their_group_without_the_glyph() {
+        assert_eq!(
+            collapse_name(false, "Earlier today"),
+            "Collapse Earlier today"
+        );
+        assert_eq!(collapse_name(true, "Sun, Nov 8"), "Expand Sun, Nov 8");
     }
 
     #[test]

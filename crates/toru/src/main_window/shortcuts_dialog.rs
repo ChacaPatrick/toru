@@ -348,6 +348,7 @@ impl MainWindow {
                     .as_ref()
                     .map(|problem| problem_text(problem, |other| self.binding_name(other, cx))),
             };
+            let name = self.binding_name(&binding, cx);
             stops.push(keys_focus.clone());
             let mut line = div()
                 .flex()
@@ -358,10 +359,16 @@ impl MainWindow {
                         .flex_1()
                         .min_w_0()
                         .type_style(theme, theme.type_scale.setting)
-                        .child(self.binding_name(&binding, cx)),
+                        .child(name.clone()),
                 )
                 .child(
                     Button::new(("shortcut-keys", index), keys)
+                        .named(keys_button_name(
+                            &name,
+                            row.text.as_deref().map(shortcut_text).as_deref(),
+                            is_recording,
+                        ))
+                        .when_some(note.clone(), Button::description)
                         .small()
                         .when(is_recording, Button::primary)
                         .track_focus(keys_focus)
@@ -374,6 +381,7 @@ impl MainWindow {
                 stops.push(clear_focus.clone());
                 line = line.child(
                     Button::new(("shortcut-clear", index), "Clear")
+                        .named(format!("Clear {} shortcut", short_binding_name(&name)))
                         .small()
                         .track_focus(clear_focus)
                         .on_click(act(cx, {
@@ -461,6 +469,22 @@ fn dialog_rows(planned: &[Planned], connected: &[&str]) -> Vec<Planned> {
     rows
 }
 
+/// A row's name without the display's size: "Display 2 · 2560×1440" is just "Display 2" here.
+fn short_binding_name(name: &str) -> &str {
+    name.split(" · ").next().unwrap_or(name)
+}
+
+/// What assistive technology calls a row's shortcut button: what it sets and what it is set to,
+/// or that it is waiting for the new keys.
+fn keys_button_name(binding: &str, keys: Option<&str>, recording: bool) -> String {
+    let state = match (recording, keys) {
+        (true, _) => "recording, press the new keys",
+        (false, Some(keys)) => keys,
+        (false, None) => "not set",
+    };
+    format!("{} shortcut, {state}", short_binding_name(binding))
+}
+
 /// Whether two plans want the same registrations: the same rows with the same keys, and the
 /// same ones held back before registration. Registration results aren't compared, since they
 /// are what applying finds out.
@@ -499,6 +523,22 @@ mod tests {
             shortcut,
             problem,
         }
+    }
+
+    #[test]
+    fn shortcut_buttons_are_named_by_what_they_set() {
+        assert_eq!(
+            keys_button_name("Region", Some("PrtScn"), false),
+            "Region shortcut, PrtScn"
+        );
+        assert_eq!(
+            keys_button_name("Display 2 · 2560×1440", None, false),
+            "Display 2 shortcut, not set"
+        );
+        assert_eq!(
+            keys_button_name("Full screen", Some("F9"), true),
+            "Full screen shortcut, recording, press the new keys"
+        );
     }
 
     #[test]

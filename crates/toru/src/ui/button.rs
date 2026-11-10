@@ -56,6 +56,7 @@ pub struct Button {
     icon: Option<Icon>,
     sub: Option<SharedString>,
     aria_label: Option<SharedString>,
+    description: Option<SharedString>,
     kind: Kind,
     /// The small note after the label, such as the count a bulk action covers.
     note: Option<SharedString>,
@@ -83,6 +84,7 @@ impl Button {
             icon: None,
             sub: None,
             aria_label: None,
+            description: None,
             kind: Kind::Plain,
             note: None,
             small: false,
@@ -122,6 +124,19 @@ impl Button {
         button.aria_label = Some(aria_label.into());
         button.square = true;
         button
+    }
+
+    /// What assistive technology calls the button, where the label alone wouldn't say or
+    /// carries a glyph.
+    pub fn named(mut self, name: impl Into<SharedString>) -> Button {
+        self.aria_label = Some(name.into());
+        self
+    }
+
+    /// A hint read after the name, such as why the control can't do what it says.
+    pub fn description(mut self, description: impl Into<SharedString>) -> Button {
+        self.description = Some(description.into());
+        self
     }
 
     pub fn icon(mut self, icon: Icon) -> Button {
@@ -396,6 +411,7 @@ impl RenderOnce for Button {
         let button = shadowed(button, shadow, radius)
             .role(Role::Button)
             .aria_label(aria_label)
+            .when_some(self.description, |this, text| this.aria_description(text))
             .track_focus(&focus)
             .when_some(self.expanded, |this, expanded| this.aria_expanded(expanded))
             .relative()

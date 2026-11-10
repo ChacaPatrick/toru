@@ -20,7 +20,7 @@ use gpui::{
     actions, div, prelude::*, px,
 };
 
-use super::{Button, Checkbox, Handler, close_menus, keyed_focus, menus_open};
+use super::{Button, Checkbox, Handler, Readable, close_menus, keyed_focus, menus_open};
 use crate::theme::{ActiveTheme, ThemedText, scrim};
 
 actions!(dialog, [NextAction, PreviousAction]);
@@ -270,6 +270,8 @@ impl RenderOnce for Dialog {
             .id(child_id("panel"))
             .role(Role::AlertDialog)
             .aria_label(self.title.clone())
+            .aria_description(self.body.clone())
+            .modal_dialog()
             .track_focus(&panel_focus)
             .key_context(KEY_CONTEXT)
             .on_key_down(on_key_down)

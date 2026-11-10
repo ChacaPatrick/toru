@@ -30,8 +30,9 @@ mod toolbar;
 use std::{cell::Cell, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
 use gpui::{
-    AnyWindowHandle, App, Context, DisplayId, Entity, FocusHandle, Focusable, KeyDownEvent, Pixels,
-    RenderImage, ScrollHandle, SharedString, Task, Window, div, prelude::*, px,
+    AnyElement, AnyWindowHandle, App, Context, DisplayId, Entity, FocusHandle, Focusable,
+    KeyDownEvent, Pixels, RenderImage, ScrollHandle, SharedString, Task, Window, div, prelude::*,
+    px,
 };
 use gpui_kit::component::input::{InputEvent, InputState};
 use toru_core::{
@@ -50,7 +51,7 @@ use crate::overlay;
 use crate::platform;
 use crate::shortcuts::{Hotkeys, Planned};
 use crate::theme::{ActiveTheme, ThemedText};
-use crate::ui::{Flash, FocusInView, Toast};
+use crate::ui::{Flash, FocusInView, Readable, Toast};
 use backdrop::Backdrop;
 use custom_palette::{BackgroundPicker, CustomEditor};
 use gallery::{Gallery, GalleryEvent};
@@ -587,13 +588,12 @@ impl Render for MainWindow {
         let theme = cx.theme();
         let c = &theme.colors;
         let frame = div()
+            .id("frame")
             .relative()
             .size_full()
             .flex()
             .flex_col()
             .bg(c.bg)
-            .text_color(c.text)
-            .type_style(theme, theme.type_scale.body)
             // First, so everything else paints over them.
             .children(self.backdrop_layers(cx))
             .child(title_bar::title_bar(self.title(cx), window, cx));
@@ -640,21 +640,41 @@ impl Render for MainWindow {
                     })
             }
         };
-        // Absolute, so showing them moves nothing (DESIGN.md §2). The dialogs lie over the
-        // editor as much as the gallery: quitting is asked about wherever the user is.
-        frame
+        // In the order they stack, each keeping its place in this list, and so its id, however
+        // many are up. The dialogs lie over the editor as much as the gallery: quitting is asked
+        // about wherever the user is.
+        let dialogs: Vec<(usize, AnyElement)> = [
+            self.retention_dialog(cx).map(IntoElement::into_any_element),
+            self.custom_editor_view(window, cx),
+            self.shortcuts_dialog(cx).map(IntoElement::into_any_element),
+            self.quit_prompt
+                .map(|unsaved| self.quit_dialog(unsaved, cx).into_any_element()),
+            self.delete_prompt
+                .as_ref()
+                .map(|prompt| self.delete_dialog(prompt, cx).into_any_element()),
+        ]
+        .into_iter()
+        .enumerate()
+        .filter_map(|(place, dialog)| Some((place, dialog?)))
+        .collect();
+        let top = dialogs.last().map(|(place, _)| *place);
+        let theme = cx.theme();
+        // Absolute, so showing them moves nothing (DESIGN.md §2). Only the top dialog can be
+        // reached, by the mouse and the keyboard and so by a screen reader too.
+        div()
+            .relative()
+            .size_full()
+            .text_color(theme.colors.text)
+            .type_style(theme, theme.type_scale.body)
+            .child(frame.hidden_from_readers(top.is_some()))
             .children(self.toast.get().cloned())
-            .children(self.retention_dialog(cx))
-            .children(self.custom_editor_view(window, cx))
-            .children(self.shortcuts_dialog(cx))
-            .children(
-                self.quit_prompt
-                    .map(|unsaved| self.quit_dialog(unsaved, cx)),
-            )
-            .children(
-                self.delete_prompt
-                    .as_ref()
-                    .map(|prompt| self.delete_dialog(prompt, cx)),
-            )
+            .children(dialogs.into_iter().map(|(place, dialog)| {
+                div()
+                    .id(("dialog-layer", place))
+                    .hidden_from_readers(Some(place) != top)
+                    .absolute()
+                    .inset_0()
+                    .child(dialog)
+            }))
     }
 }

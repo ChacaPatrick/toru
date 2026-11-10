@@ -377,6 +377,7 @@ pub(super) fn retention_group(this: &MainWindow, cx: &Context<MainWindow>) -> Di
                     options,
                     selected_row(this.settings.retention, control.custom),
                 )
+                .description(text)
                 .detail(CUSTOM_ROW, days_field(&control.days).into_any_element())
                 .on_change(act_with(cx, |this, cx, row| this.choose_retention(row, cx))),
             ),

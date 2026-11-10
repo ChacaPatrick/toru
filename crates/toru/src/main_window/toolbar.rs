@@ -6,7 +6,7 @@ use toru_core::{capture::CaptureMode, settings::DELAY_SECONDS};
 
 use super::{MainWindow, act};
 use crate::theme::{ActiveTheme, ThemedText};
-use crate::ui::{Button, Icon, Menu};
+use crate::ui::{Button, Icon, Menu, Readable};
 
 const MODES: [CaptureMode; 3] = [
     CaptureMode::Region,
@@ -65,6 +65,7 @@ pub fn toolbar(this: &MainWindow, cx: &Context<MainWindow>) -> Div {
     let c = &theme.colors;
     let hair = theme.borders.hair;
     let settings = &this.settings;
+    let shortcut_hint = this.toolbar_hint();
 
     // A split button: the label captures, the sub opens the display picker.
     let (displays, chosen) = this.displays(cx);
@@ -119,11 +120,15 @@ pub fn toolbar(this: &MainWindow, cx: &Context<MainWindow>) -> Div {
         .child(delayed(this, cx))
         .child(
             div()
+                .id("toolbar-hint")
+                .when(!shortcut_hint.is_empty(), |hint| {
+                    hint.read_as_text(format!("Shortcuts: {shortcut_hint}"))
+                })
                 .ml(px(4.))
                 .type_style(theme, theme.type_scale.hint)
                 .text_color(c.muted)
                 .whitespace_nowrap()
-                .child(this.toolbar_hint()),
+                .child(shortcut_hint),
         )
         .child(div().flex_1().min_w(px(40.)))
         .child(
