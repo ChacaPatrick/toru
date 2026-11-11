@@ -131,8 +131,9 @@ pub struct Document {
     /// The capture as it was taken: what Reset edits returns to.
     original: Arc<Pixmap>,
     edits: History<Edits>,
-    /// The state the card's picture and thumbnail show, so Back writes only what changed.
-    written: Edits,
+    /// The state the card's picture and thumbnail show, so Back writes only what changed;
+    /// `None` once writing one failed, as the card may show anything then.
+    written: Option<Edits>,
     /// The state the user's saved file shows, if there is a file and it shows one of these.
     saved: Option<Edits>,
     /// The picture as opened, if it already hides some of the capture.
@@ -159,7 +160,7 @@ impl Document {
         };
         Document {
             original,
-            written: start.clone(),
+            written: Some(start.clone()),
             saved: in_file.then(|| start.clone()),
             edits: History::new(start),
             redacted_base: None,
@@ -223,7 +224,7 @@ impl Document {
                 crop: None,
             };
             if to_card && present == *saved {
-                self.written = start.clone();
+                self.written = Some(start.clone());
                 self.saved = Some(start.clone());
             }
             start
@@ -290,7 +291,7 @@ impl Document {
 
     /// Whether the card's picture shows something other than this.
     pub fn is_unwritten(&self) -> bool {
-        *self.edits.get() != self.written
+        self.written.as_ref() != Some(self.edits.get())
     }
 
     /// Whether the user's saved file shows exactly this.
@@ -300,8 +301,22 @@ impl Document {
 
     /// `edits` have been written to the user's file, and so to the card.
     pub fn mark_saved(&mut self, edits: Edits) {
-        self.written = edits.clone();
+        self.written = Some(edits.clone());
         self.saved = Some(edits);
+    }
+
+    /// The card shows `edits`, though no file does: a redacted Save stored them on the card,
+    /// then couldn't write the file.
+    pub fn mark_written(&mut self, edits: Edits) {
+        self.written = Some(edits);
+    }
+
+    /// Writing `edits` to the card failed, so if they are still what counts as written, the
+    /// next Back writes whatever is there.
+    pub fn write_failed(&mut self, edits: &Edits) {
+        if self.written.as_ref() == Some(edits) {
+            self.written = None;
+        }
     }
 
     /// The picture for the card if it shows something else, which from then on counts as
@@ -311,7 +326,7 @@ impl Document {
             return None;
         }
         let flattened = self.flatten();
-        self.written = flattened.edits.clone();
+        self.written = Some(flattened.edits.clone());
         Some(flattened)
     }
 
@@ -1050,6 +1065,27 @@ mod tests {
         assert!(!document.is_unwritten());
         assert!(!document.is_saved());
         assert!(document.take_unwritten().is_none());
+
+        // A failed write leaves the edits unwritten, so Back tries again; one that failed
+        // after another write took its place changes nothing.
+        let kept = document.flatten();
+        document.write_failed(&kept.edits);
+        assert!(document.is_unwritten());
+        assert!(document.take_unwritten().is_some());
+        document.set_crop(None);
+        let newer = document.take_unwritten().unwrap();
+        document.write_failed(&kept.edits);
+        assert!(!document.is_unwritten());
+
+        // A redacted Save that stored its picture on the card but wrote no file: the card
+        // shows it, so Undo then Back writes the undone state, but nothing is saved.
+        document.set_crop(IntRect::from_xywh(0, 0, 5, 5));
+        let saving = document.flatten();
+        document.mark_written(saving.edits.clone());
+        assert!(!document.is_unwritten());
+        assert!(!document.is_saved());
+        document.undo();
+        assert!(document.take_unwritten().unwrap().edits == newer.edits);
 
         // Edits waiting for Save, or a capture never saved, match no file.
         let opened = Document::opened(plain(4, 3, 0), None, false);

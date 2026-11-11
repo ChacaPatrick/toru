@@ -10,7 +10,7 @@ use image::buffer::ConvertBuffer;
 use image::codecs::jpeg::JpegEncoder;
 
 use crate::settings::SaveFormat;
-use crate::store::{CaptureId, Result, Store, encode_png, path_text};
+use crate::store::{CaptureId, Result, Store, StoreError, encode_png, path_text};
 
 const JPEG_QUALITY: u8 = 90;
 
@@ -71,13 +71,49 @@ pub fn save_edited(
     folder: &Path,
     format: SaveFormat,
     max_thumbnail_width: u32,
-) -> Result<SavedFile> {
+) -> std::result::Result<SavedFile, SaveEditedError> {
     store.check_not_revealing(id, redacted)?;
     // The card's own picture takes the redactions first, as on Back, so if its temp copy can't
     // be deleted once saved, what is left shows what the file shows.
-    if redacted && store.image_path(id).is_file() {
-        store.store_edit(id, edited, original, true, max_thumbnail_width)?;
+    let stored = if redacted && store.image_path(id).is_file() {
+        Some(store.store_edit(id, edited, original, true, max_thumbnail_width)?)
+    } else {
+        None
+    };
+    let saved = write_edited(store, id, edited, original, redacted, folder, format)
+        .map_err(|error| SaveEditedError { error, stored })?;
+    // The file is what was asked for; a thumbnail that couldn't follow is only out of date.
+    let _ = store.replace_thumbnail(id, edited, max_thumbnail_width);
+    Ok(saved)
+}
+
+/// A Save of edits that failed. `stored` is the size of the card's picture if it had already
+/// taken the edits: it shows them now, though no file does.
+#[derive(Debug)]
+pub struct SaveEditedError {
+    pub error: StoreError,
+    pub stored: Option<u64>,
+}
+
+impl From<StoreError> for SaveEditedError {
+    fn from(error: StoreError) -> Self {
+        SaveEditedError {
+            error,
+            stored: None,
+        }
     }
+}
+
+/// `save_edited`'s file, and the record moving to it.
+fn write_edited(
+    store: &Store,
+    id: CaptureId,
+    edited: &RgbaImage,
+    original: Option<&RgbaImage>,
+    redacted: bool,
+    folder: &Path,
+    format: SaveFormat,
+) -> Result<SavedFile> {
     let capture = store.capture(id)?;
     let bytes = encoded_pixels(edited, format)?;
     store.keep_original(id, original)?;
@@ -87,8 +123,6 @@ pub fn save_edited(
         let _ = fs::remove_file(&path);
         return Err(error);
     }
-    // The file is what was asked for; a thumbnail that couldn't follow is only out of date.
-    let _ = store.replace_thumbnail(id, edited, max_thumbnail_width);
     Ok(SavedFile {
         path,
         bytes: bytes.len() as u64,
@@ -231,7 +265,7 @@ mod tests {
 
     use super::*;
     use crate::capture::{Capture, CaptureMode};
-    use crate::store::{Redaction, SessionId, StoreError};
+    use crate::store::{Redaction, SessionId};
     use crate::time::{LocalDate, LocalDateTime};
 
     struct TestDir(PathBuf);
@@ -388,9 +422,46 @@ mod tests {
             8,
         );
 
-        assert!(result.is_err());
+        assert!(matches!(result, Err(SaveEditedError { stored: None, .. })));
         assert_eq!(store.capture(id).unwrap().saved_path, None);
         assert_eq!(png_at(&store.image_path(id)), frame());
+    }
+
+    #[test]
+    fn a_failed_redacted_save_says_the_card_took_the_redactions() {
+        let dir = TestDir::new();
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot");
+        let blocked = dir.0.join("blocked");
+        fs::write(&blocked, b"").unwrap();
+
+        let result = save_edited(
+            &store,
+            id,
+            &edited(),
+            Some(&frame()),
+            true,
+            &blocked,
+            SaveFormat::Png,
+            8,
+        );
+
+        let Err(SaveEditedError {
+            stored: Some(bytes),
+            ..
+        }) = result
+        else {
+            panic!("the card's picture was stored before the write failed");
+        };
+        assert_eq!(bytes, fs::metadata(store.image_path(id)).unwrap().len());
+        assert_eq!(png_at(&store.image_path(id)), edited());
+        assert_eq!(png_at(&store.thumbnail_path(id)).dimensions(), (8, 8));
+        assert_eq!(store.capture(id).unwrap().saved_path, None);
+        // No file shows the redacted picture yet, so the original stays for Reset edits.
+        let redaction = store.redaction(id).unwrap();
+        assert!(redaction.redacted && !redaction.original_removed);
+        assert_eq!(png_at(&store.original_path(id)), frame());
     }
 
     #[test]
@@ -593,7 +664,13 @@ mod tests {
             SaveFormat::Png,
             8,
         );
-        assert!(matches!(save, Err(StoreError::WouldReveal)));
+        assert!(matches!(
+            save,
+            Err(SaveEditedError {
+                error: StoreError::WouldReveal,
+                stored: None
+            })
+        ));
         assert!(!store.image_path(id).exists());
         assert!(!store.original_path(id).exists());
         assert_eq!(png_at(&store.full_image_path(id).unwrap()), edited());

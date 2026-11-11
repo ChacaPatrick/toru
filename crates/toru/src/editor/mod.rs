@@ -804,6 +804,17 @@ impl Editor {
         cx.notify();
     }
 
+    /// The card shows `edits`, which no file does: a redacted Save stored them on the card
+    /// first, then couldn't write the file.
+    pub fn written(&mut self, edits: Edits) {
+        self.document.mark_written(edits);
+    }
+
+    /// Writing `edits` to the card failed, so Back tries again.
+    pub fn write_failed(&mut self, edits: &Edits) {
+        self.document.write_failed(edits);
+    }
+
     /// A save of `picture`, flattened from `saved`, deleted the capture's original, as the
     /// picture hid some of it. The saved picture becomes the one edited, with no undo back past
     /// it, so neither Reset edits nor Undo can bring back what was hidden. `to_card` says the

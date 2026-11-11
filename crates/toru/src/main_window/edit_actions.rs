@@ -7,7 +7,7 @@ use std::path::Path;
 use gpui::{Context, Entity, WeakEntity, Window, prelude::*};
 use rfd::AsyncFileDialog;
 use toru_core::{
-    export::{SavedFile, save_copy, save_edited},
+    export::{SaveEditedError, SavedFile, save_copy, save_edited},
     settings::SaveFormat,
     store::{CaptureId, Result as StoreResult, StoreError},
 };
@@ -33,9 +33,9 @@ const WOULD_REVEAL: &str = "Not kept: that would show what the saved picture hid
 
 /// What to say when a write failed: `otherwise`, unless the store refused it for showing what
 /// a saved redaction hid.
-fn failure_message<T>(result: &StoreResult<T>, otherwise: &'static str) -> &'static str {
-    match result {
-        Err(StoreError::WouldReveal) => WOULD_REVEAL,
+fn failure_message(error: &StoreError, otherwise: &'static str) -> &'static str {
+    match error {
+        StoreError::WouldReveal => WOULD_REVEAL,
         _ => otherwise,
     }
 }
@@ -161,15 +161,25 @@ impl MainWindow {
                         .store
                         .redaction(capture)
                         .is_ok_and(|redaction| redaction.original_removed);
-                    StoreResult::Ok((file, removed))
+                    Ok::<_, SaveEditedError>((file, removed))
                 })
                 .await;
             cx.update_window(window, |_, window, cx| {
                 this.update(cx, |this, cx| {
                     this.saving_edit = false;
-                    let message = failure_message(&saved, SAVE_FAILED);
-                    let Ok((file, removed)) = saved else {
-                        return this.report_failure(message, cx);
+                    let (file, removed) = match saved {
+                        Ok(saved) => saved,
+                        Err(SaveEditedError { error, stored }) => {
+                            // A redacted picture goes on the card before the file is written,
+                            // so the card and the editor learn it shows it even so.
+                            if let Some(bytes) = stored {
+                                this.gallery.update(cx, |gallery, cx| {
+                                    gallery.picture_changed(capture, size, bytes, window, cx)
+                                });
+                                editor.update(cx, |editor, _| editor.written(edits)).ok();
+                            }
+                            return this.report_failure(failure_message(&error, SAVE_FAILED), cx);
+                        }
                     };
                     let message = noting_blanks(saved_message(&file), blanks);
                     this.show_toast(Toast::new(message), cx);
@@ -248,7 +258,6 @@ impl MainWindow {
                         .await;
                     this.update(cx, |this, cx| {
                         this.saving_edit = false;
-                        let message = failure_message(&saved, SAVE_AS_FAILED);
                         match saved {
                             Ok((file, removed)) => {
                                 let message = noting_blanks(saved_message(&file), blanks);
@@ -261,7 +270,9 @@ impl MainWindow {
                                         .ok();
                                 }
                             }
-                            Err(_) => this.report_failure(message, cx),
+                            Err(error) => {
+                                this.report_failure(failure_message(&error, SAVE_AS_FAILED), cx)
+                            }
                         }
                     })
                     .ok();
@@ -302,7 +313,7 @@ impl MainWindow {
                 original,
                 is_edited,
                 redacted,
-                ..
+                edits,
             } = flattened;
             let size = (picture.width(), picture.height());
             let stored = cx
@@ -318,7 +329,6 @@ impl MainWindow {
                 })
                 .await;
             cx.update_window(window, |_, window, cx| {
-                let message = failure_message(&stored, KEEP_EDITS_FAILED);
                 this.update(cx, |this, cx| match stored {
                     Ok(bytes) => {
                         this.gallery.update(cx, |gallery, cx| {
@@ -328,7 +338,17 @@ impl MainWindow {
                             this.show_toast(Toast::new(BLANKS_KEPT), cx);
                         }
                     }
-                    Err(_) => this.report_failure(message, cx),
+                    Err(error) => {
+                        // Quitting keeps the editor open, and may be cancelled: Back tries again.
+                        if let Some(editor) = this.editor.clone() {
+                            editor.update(cx, |editor, _| {
+                                if editor.stored() == capture {
+                                    editor.write_failed(&edits);
+                                }
+                            });
+                        }
+                        this.report_failure(failure_message(&error, KEEP_EDITS_FAILED), cx)
+                    }
                 })
             })
             .ok();
