@@ -2,12 +2,13 @@
 //! `tiny-skia` has no text of its own, so each glyph's outline is read with `ttf-parser` from the
 //! same files GPUI sets the interface in, and filled as a path: the picture on screen and the
 //! saved file show the same letters. A character the bundled face lacks, such as Chinese or an
-//! emoji, is taken from the first system font that has it (`platform::fallback_fonts`), read the
-//! first time one is needed. Everything here is a plain function of the text and its font, in
-//! picture pixels, so the tests can check the pixels.
+//! emoji, is taken from the first system font that has it (`platform::fallback_fonts`). Those
+//! files are mapped rather than read, so asking one whether it has a character costs a few pages
+//! of it, and the CJK ones are tried in the user's language's order (`Cjk`). Everything here is
+//! a plain function of the text and its font, in picture pixels, so the tests can check the
+//! pixels.
 
 use std::{
-    fs,
     path::PathBuf,
     sync::{LazyLock, OnceLock},
 };
@@ -36,9 +37,80 @@ impl Font {
     }
 }
 
-/// A system font to fall back on, read and parsed on first use and kept for the app's life.
+/// The languages written with Han characters, which each draw many of them their own way, so
+/// a Japanese text wants its kanji from a Japanese font.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Cjk {
+    Simplified,
+    Traditional,
+    Japanese,
+    Korean,
+}
+
+impl Cjk {
+    /// The language a locale name such as `ja-JP`, `zh-Hant-TW` or `ko_KR.UTF-8` is in, or
+    /// `None` when it is none of these.
+    fn of_locale(locale: &str) -> Option<Cjk> {
+        let locale = locale.to_ascii_lowercase();
+        let mut parts = locale.split(['-', '_', '.']);
+        match parts.next()? {
+            "ja" => Some(Cjk::Japanese),
+            "ko" => Some(Cjk::Korean),
+            "zh" => {
+                let rest: Vec<&str> = parts.collect();
+                let traditional = !rest.contains(&"hans")
+                    && rest
+                        .iter()
+                        .any(|part| ["hant", "tw", "hk", "mo"].contains(part));
+                Some(if traditional {
+                    Cjk::Traditional
+                } else {
+                    Cjk::Simplified
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// The fonts `content` takes its CJK characters from first: Japanese ones if it has kana,
+    /// which only Japanese is written in, else those of the first of the user's languages
+    /// (`platform::user_languages`) that is one of these, else Simplified Chinese.
+    fn preferred(content: &str, languages: &[String]) -> Cjk {
+        if content.chars().any(is_kana) {
+            return Cjk::Japanese;
+        }
+        languages
+            .iter()
+            .find_map(|language| Cjk::of_locale(language))
+            .unwrap_or(Cjk::Simplified)
+    }
+}
+
+/// Hiragana and katakana, full- and half-width.
+fn is_kana(ch: char) -> bool {
+    matches!(ch, '\u{3041}'..='\u{30FF}' | '\u{31F0}'..='\u{31FF}' | '\u{FF66}'..='\u{FF9F}')
+}
+
+/// `fonts` in the order they are tried for text that prefers `cjk`: the fonts for `cjk` move up
+/// to where the first CJK font is, and the rest keep their order.
+fn ordered<T>(fonts: &[T], cjk: Cjk, language: impl Fn(&T) -> Option<Cjk>) -> Vec<&T> {
+    let first = fonts
+        .iter()
+        .position(|font| language(font).is_some())
+        .unwrap_or(fonts.len());
+    let (before, after) = fonts.split_at(first);
+    let preferred = |font: &&T| language(font) == Some(cjk);
+    before
+        .iter()
+        .chain(after.iter().filter(preferred))
+        .chain(after.iter().filter(|font| !preferred(font)))
+        .collect()
+}
+
+/// A system font to fall back on, mapped and parsed on first use and kept for the app's life.
 struct Fallback {
     path: PathBuf,
+    cjk: Option<Cjk>,
     face: OnceLock<Option<Face<'static>>>,
 }
 
@@ -46,10 +118,7 @@ impl Fallback {
     /// `None` if the file is missing or isn't a font, which is then never tried again.
     fn face(&self) -> Option<&Face<'static>> {
         self.face
-            .get_or_init(|| {
-                let data = fs::read(&self.path).ok()?;
-                Face::parse(Box::leak(data.into_boxed_slice()), 0).ok()
-            })
+            .get_or_init(|| Face::parse(platform::map_file(&self.path)?, 0).ok())
             .as_ref()
     }
 }
@@ -57,23 +126,44 @@ impl Fallback {
 static FALLBACKS: LazyLock<Vec<Fallback>> = LazyLock::new(|| {
     platform::fallback_fonts()
         .into_iter()
-        .map(|path| Fallback {
+        .map(|(path, cjk)| Fallback {
             path,
+            cjk,
             face: OnceLock::new(),
         })
         .collect()
 });
 
-/// The face that draws `ch` and its glyph there: `face` if it has one, else the first fallback
-/// that does. A later fallback is only read when the ones before it lack the character.
-fn glyph<'a>(face: &'a Face<'static>, ch: char) -> Option<(&'a Face<'static>, GlyphId)> {
-    if let Some(glyph) = face.glyph_index(ch) {
-        return Some((face, glyph));
+static LANGUAGES: LazyLock<Vec<String>> = LazyLock::new(platform::user_languages);
+
+/// The faces a text is set in: its font's bundled face, then the fallbacks in the order that
+/// text tries them.
+struct Faces {
+    main: Face<'static>,
+    fallbacks: Vec<&'static Fallback>,
+}
+
+impl Faces {
+    fn new(font: &Font, content: &str) -> Faces {
+        let cjk = Cjk::preferred(content, &LANGUAGES);
+        Faces {
+            main: font.face(),
+            fallbacks: ordered(&FALLBACKS, cjk, |font| font.cjk),
+        }
     }
-    FALLBACKS
-        .iter()
-        .filter_map(Fallback::face)
-        .find_map(|face| Some((face, face.glyph_index(ch)?)))
+
+    /// The face that draws `ch` and its glyph there: the main face if it has one, else the
+    /// first fallback that does. A later fallback is only opened when the ones before it lack
+    /// the character.
+    fn glyph(&self, ch: char) -> Option<(&Face<'static>, GlyphId)> {
+        if let Some(glyph) = self.main.glyph_index(ch) {
+            return Some((&self.main, glyph));
+        }
+        self.fallbacks
+            .iter()
+            .filter_map(|fallback| fallback.face())
+            .find_map(|face| Some((face, face.glyph_index(ch)?)))
+    }
 }
 
 /// Joiners and variation selectors, which only steer how their neighbours are drawn: where no
@@ -91,9 +181,9 @@ fn is_invisible(ch: char) -> bool {
 
 /// Whether `content` holds a character no face can draw, which is left blank.
 pub fn has_blanks(content: &str, font: &Font) -> bool {
-    let face = font.face();
+    let faces = Faces::new(font, content);
     content.chars().any(|ch| {
-        !ch.is_whitespace() && !ch.is_control() && !is_invisible(ch) && glyph(&face, ch).is_none()
+        !ch.is_whitespace() && !ch.is_control() && !is_invisible(ch) && faces.glyph(ch).is_none()
     })
 }
 
@@ -112,13 +202,13 @@ pub struct Layout {
 /// `line-height: normal`: each line is the face's ascent, descent and line gap tall. A
 /// character from a fallback font is as wide as that font sets it, on the same line.
 pub fn layout(content: &str, font: &Font, size: f32) -> Layout {
-    let face = font.face();
-    let metrics = Metrics::of(&face, size);
+    let faces = Faces::new(font, content);
+    let metrics = Metrics::of(&faces.main, size);
     let mut width: f32 = 0.;
     let mut last = 0.;
     let mut lines = 0;
     for line in content.split('\n') {
-        last = line.chars().map(|ch| metrics.advance(&face, ch)).sum();
+        last = line.chars().map(|ch| metrics.advance(&faces, ch)).sum();
         width = width.max(last);
         lines += 1;
     }
@@ -135,8 +225,8 @@ pub fn layout(content: &str, font: &Font, size: f32) -> Layout {
 /// The outlines of `content` set as `layout` lays it out, with the top-left corner at
 /// `origin`, as one path to fill. `None` when there is nothing to draw.
 pub fn outline(content: &str, font: &Font, size: f32, origin: Point<f32>) -> Option<Path> {
-    let face = font.face();
-    let metrics = Metrics::of(&face, size);
+    let faces = Faces::new(font, content);
+    let metrics = Metrics::of(&faces.main, size);
     let mut builder = Outline {
         path: PathBuilder::new(),
         scale: 0.,
@@ -148,11 +238,11 @@ pub fn outline(content: &str, font: &Font, size: f32, origin: Point<f32>) -> Opt
             origin.y + row as f32 * metrics.line_height + metrics.baseline,
         );
         for ch in line.chars() {
-            if let Some((face, glyph)) = glyph(&face, ch) {
+            if let Some((face, glyph)) = faces.glyph(ch) {
                 builder.scale = metrics.scale(face);
                 face.outline_glyph(glyph, &mut builder);
             }
-            builder.at.x += metrics.advance(&face, ch);
+            builder.at.x += metrics.advance(&faces, ch);
         }
     }
     builder.path.finish()
@@ -198,8 +288,8 @@ impl Metrics {
     }
 
     /// How far `ch` moves the pen, from whichever face draws it.
-    fn advance(&self, face: &Face<'static>, ch: char) -> f32 {
-        match glyph(face, ch) {
+    fn advance(&self, faces: &Faces, ch: char) -> f32 {
+        match faces.glyph(ch) {
             Some((face, glyph)) => self.advance_of(face, glyph),
             None if is_invisible(ch) => 0.,
             None => self.missing,
@@ -365,7 +455,7 @@ mod tests {
     #[test]
     fn characters_the_face_lacks_come_from_system_fonts() {
         let font = vt323();
-        for text in ["文", "あ", "한", "Ж", "😀"] {
+        for text in ["文", "あ", "한", "Ж", "😀", "ह"] {
             let face = font.face();
             let ch = text.chars().next().unwrap();
             assert!(face.glyph_index(ch).is_none(), "VT323 now has {text}");
@@ -379,6 +469,132 @@ mod tests {
                 "{text} has no width"
             );
         }
+    }
+
+    #[test]
+    fn a_locale_names_its_cjk_language() {
+        for (locale, cjk) in [
+            ("ja-JP", Some(Cjk::Japanese)),
+            ("ko-KR", Some(Cjk::Korean)),
+            ("ko_KR.UTF-8", Some(Cjk::Korean)),
+            ("zh-CN", Some(Cjk::Simplified)),
+            ("zh-SG", Some(Cjk::Simplified)),
+            ("zh", Some(Cjk::Simplified)),
+            ("zh-TW", Some(Cjk::Traditional)),
+            ("zh-HK", Some(Cjk::Traditional)),
+            ("zh_MO", Some(Cjk::Traditional)),
+            ("zh-Hant", Some(Cjk::Traditional)),
+            ("zh-Hans-HK", Some(Cjk::Simplified)),
+            ("JA-jp", Some(Cjk::Japanese)),
+            ("en-US", None),
+            ("jv-ID", None),
+            ("", None),
+        ] {
+            assert_eq!(Cjk::of_locale(locale), cjk, "{locale}");
+        }
+    }
+
+    #[test]
+    fn kana_then_the_users_languages_pick_the_cjk_fonts() {
+        let languages = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        // The display language comes first; the formats' locale counts when it isn't CJK.
+        assert_eq!(
+            Cjk::preferred("漢字", &languages(&["ja-JP", "zh-TW"])),
+            Cjk::Japanese
+        );
+        assert_eq!(
+            Cjk::preferred("漢字", &languages(&["en-US", "ko-KR"])),
+            Cjk::Korean
+        );
+        assert_eq!(
+            Cjk::preferred("漢字", &languages(&["zh-HK"])),
+            Cjk::Traditional
+        );
+        assert_eq!(
+            Cjk::preferred("漢字", &languages(&["en-GB", "fr-FR"])),
+            Cjk::Simplified
+        );
+        assert_eq!(Cjk::preferred("漢字", &[]), Cjk::Simplified);
+        // Kana make it Japanese whatever the locale, half-width katakana too.
+        for text in ["漢字かな", "カタカナ", "ｶﾀｶﾅ", "ㇰ"] {
+            assert_eq!(
+                Cjk::preferred(text, &languages(&["zh-CN"])),
+                Cjk::Japanese,
+                "{text}"
+            );
+        }
+        // Hangul and Chinese punctuation are not kana.
+        assert_eq!(
+            Cjk::preferred("한국어。", &languages(&["zh-CN"])),
+            Cjk::Simplified
+        );
+    }
+
+    #[test]
+    fn the_preferred_languages_fonts_move_up_to_the_first_cjk_font() {
+        let fonts = [
+            ("segoe", None),
+            ("yahei", Some(Cjk::Simplified)),
+            ("jhenghei", Some(Cjk::Traditional)),
+            ("yugothic", Some(Cjk::Japanese)),
+            ("meiryo", Some(Cjk::Japanese)),
+            ("malgun", Some(Cjk::Korean)),
+            ("nirmala", None),
+        ];
+        let order = |cjk| -> Vec<&str> {
+            ordered(&fonts, cjk, |font| font.1)
+                .into_iter()
+                .map(|font| font.0)
+                .collect()
+        };
+        assert_eq!(
+            order(Cjk::Simplified),
+            [
+                "segoe", "yahei", "jhenghei", "yugothic", "meiryo", "malgun", "nirmala"
+            ]
+        );
+        assert_eq!(
+            order(Cjk::Japanese),
+            [
+                "segoe", "yugothic", "meiryo", "yahei", "jhenghei", "malgun", "nirmala"
+            ]
+        );
+        assert_eq!(
+            order(Cjk::Korean),
+            [
+                "segoe", "malgun", "yahei", "jhenghei", "yugothic", "meiryo", "nirmala"
+            ]
+        );
+        assert_eq!(
+            order(Cjk::Traditional),
+            [
+                "segoe", "jhenghei", "yahei", "yugothic", "meiryo", "malgun", "nirmala"
+            ]
+        );
+    }
+
+    /// The family name a face gives itself.
+    #[cfg(windows)]
+    fn family(face: &Face) -> String {
+        face.names()
+            .into_iter()
+            .find(|name| {
+                name.name_id == ttf_parser::name_id::FAMILY
+                    && name.language() == ttf_parser::Language::English_UnitedStates
+            })
+            .and_then(|name| name.to_string())
+            .unwrap_or_default()
+    }
+
+    /// Kanji in a text with kana come from Yu Gothic, not YaHei, whatever the user's language.
+    #[cfg(windows)]
+    #[test]
+    fn kanji_with_kana_come_from_the_japanese_font() {
+        let faces = Faces::new(&vt323(), "漢字かな");
+        let (face, _) = faces.glyph('漢').unwrap();
+        assert!(family(face).starts_with("Yu Gothic"), "{}", family(face));
+        let (face, _) = faces.glyph('か').unwrap();
+        assert!(family(face).starts_with("Yu Gothic"), "{}", family(face));
     }
 
     #[test]
