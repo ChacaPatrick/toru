@@ -4,8 +4,8 @@
 //! a file in the file manager, sending a file to the Recycle Bin, keeping Toru's own windows out of a
 //! capture, the system fonts that draw what the bundled ones lack, bringing the capture overlay
 //! to the foreground, telling which windows a user can
-//! pick, hiding the main window in the tray and showing it again, and telling a running Toru
-//! that a second one was launched. Windows is done here; the other platforms get the fallbacks
+//! pick, hiding the main window in the tray and showing it again, telling a running Toru
+//! that a second one was launched, and saying why Windows' shutdown waits. Windows is done here; the other platforms get the fallbacks
 //! at the bottom until they are.
 
 use std::{path::PathBuf, time::Duration};
@@ -185,6 +185,8 @@ mod windows {
             alpha: *mut u8,
             flags: *mut u32,
         ) -> i32;
+        fn ShutdownBlockReasonCreate(hwnd: isize, reason: *const u16) -> i32;
+        fn ShutdownBlockReasonDestroy(hwnd: isize) -> i32;
     }
 
     #[link(name = "kernel32")]
@@ -365,6 +367,23 @@ mod windows {
             // SAFETY: a plain user32 call on a window of this thread's.
             unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) };
         }
+    }
+
+    /// Runs `write` with `reason` on the main window, which Windows shows if it ends the session
+    /// while the write still holds it up, rather than an app that doesn't say why.
+    pub fn while_holding_up_shutdown<T>(reason: &str, write: impl FnOnce() -> T) -> T {
+        let hwnd = main_window();
+        if let Some(hwnd) = hwnd {
+            // SAFETY: a plain user32 call on a window of this thread's, with a terminated string
+            // that outlives it (Windows copies the reason).
+            unsafe { ShutdownBlockReasonCreate(hwnd, wide(reason).as_ptr()) };
+        }
+        let result = write();
+        if let Some(hwnd) = hwnd {
+            // SAFETY: as above.
+            unsafe { ShutdownBlockReasonDestroy(hwnd) };
+        }
+        result
     }
 
     /// The named event a second launch signals, one per data folder so two Torus on different
@@ -792,7 +811,7 @@ pub use windows::{
     bring_overlay_to_foreground, default_save_folder, exclude_windows_from_capture, fallback_fonts,
     held_modifiers, hide_main_window, is_window_pickable, local_now, main_window_hidden,
     pressed_key, recycle_file, request_close, restore_window, reveal_file, show_main_window,
-    show_startup_error, signal_running_instance, watch_for_show,
+    show_startup_error, signal_running_instance, watch_for_show, while_holding_up_shutdown,
 };
 
 /// The modifiers held along with a key (`held_modifiers`).
@@ -862,6 +881,11 @@ pub fn hide_main_window() {}
 
 #[cfg(not(windows))]
 pub fn show_main_window() {}
+
+#[cfg(not(windows))]
+pub fn while_holding_up_shutdown<T>(_reason: &str, write: impl FnOnce() -> T) -> T {
+    write()
+}
 
 #[cfg(not(windows))]
 pub fn main_window_hidden() -> bool {

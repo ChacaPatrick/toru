@@ -16,6 +16,7 @@ use super::{
     MainWindow,
     actions::{SAVE_FAILED, saved_message},
     captures::{check_chosen_folder, copy_image},
+    closing::store_flattened,
 };
 use crate::editor::{
     Editor, EditorEvent,
@@ -308,24 +309,11 @@ impl MainWindow {
         let window = self.window;
         let blanks = flattened.edits.has_blanks();
         self.enqueue(cx, async move |this, cx| {
-            let Flattened {
-                picture,
-                original,
-                is_edited,
-                redacted,
-                edits,
-            } = flattened;
-            let size = (picture.width(), picture.height());
+            let size = (flattened.picture.width(), flattened.picture.height());
+            let edits = flattened.edits.clone();
             let stored = cx
                 .background_spawn(async move {
-                    let original = is_edited.then(|| to_rgba(&original));
-                    store.store_edit(
-                        capture,
-                        &to_rgba(&picture),
-                        original.as_ref(),
-                        redacted,
-                        thumbnail_width,
-                    )
+                    store_flattened(&store, capture, &flattened, thumbnail_width)
                 })
                 .await;
             cx.update_window(window, |_, window, cx| {

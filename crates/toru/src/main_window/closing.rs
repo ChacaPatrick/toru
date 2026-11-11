@@ -10,7 +10,8 @@
 //! A capture under way or still being stored is waited for first, so a shot just taken is counted
 //! and, with Discard, is in the store before the delete rather than landing after it. When Windows
 //! shuts down or logs off there is nobody to ask, so Ask counts as Keep and only Discard acts, in
-//! the moment GPUI gives quit handlers.
+//! the moment GPUI gives quit handlers. The queue doesn't run then, so an open editor's edits are
+//! written there and then, before the setting is applied, as a quit from Toru would order them.
 
 use std::{
     cell::Cell,
@@ -19,9 +20,13 @@ use std::{
 };
 
 use gpui::{BackgroundExecutor, Context, SHUTDOWN_TIMEOUT};
-use toru_core::settings::OnClose;
+use toru_core::{
+    settings::OnClose,
+    store::{CaptureId, Result as StoreResult, Store},
+};
 
 use super::{MainWindow, act};
+use crate::editor::document::{Flattened, to_rgba};
 use crate::platform;
 use crate::ui::{Dialog, Toast};
 
@@ -35,6 +40,8 @@ const SHUTDOWN_SETTLE_LIMIT: Duration =
     Duration::from_millis(SHUTDOWN_TIMEOUT.as_millis() as u64 * 3 / 4);
 const NO_TRAY: &str = "Couldn't add the tray icon. Closing the window quits Toru.";
 const NO_TRAY_TOAST_FOR: Duration = Duration::from_secs(8);
+/// What Windows shows for Toru if it ends the session while the editor's edits are being written.
+const WRITING_EDITS: &str = "Keeping your edits";
 
 /// What quitting does with this session's unsaved captures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +80,24 @@ pub fn quit_prompt(unsaved: usize) -> String {
              history, or delete them?"
         )
     }
+}
+
+/// Writes the edited picture to its capture, for Back and for quitting, on this thread. `None`
+/// for the original tells the store the edits were all taken off again.
+pub(super) fn store_flattened(
+    store: &Store,
+    capture: CaptureId,
+    flattened: &Flattened,
+    thumbnail_width: u32,
+) -> StoreResult<u64> {
+    let original = flattened.is_edited.then(|| to_rgba(&flattened.original));
+    store.store_edit(
+        capture,
+        &to_rgba(&flattened.picture),
+        original.as_ref(),
+        flattened.redacted,
+        thumbnail_width,
+    )
 }
 
 /// Resolves once `pending` captures and store jobs have all finished, or after `limit`.
@@ -172,12 +197,14 @@ impl MainWindow {
     }
 
     /// Runs as the app quits, for whatever reason: its own Quit, or Windows shutting down or
-    /// logging off, when GPUI runs the quit handlers and exits without asking the window. The
-    /// setting is applied as `discards_at_shutdown` says. After Toru's own Quit the delete has
+    /// logging off, when GPUI runs the quit handlers and exits without asking the window. An
+    /// open editor's edits are written first, before this returns, since GPUI's time limit only
+    /// holds the future. The setting is then applied as `discards_at_shutdown` says. After Toru's own Quit the delete has
     /// been done already and finds nothing. The main thread's tasks don't run while GPUI waits
     /// on this, so the wait only helps a store write already on a background thread; the first
     /// delete makes sure the captures already there go even if the time runs out.
     pub fn on_app_quit(&mut self, cx: &mut Context<Self>) -> impl Future<Output = ()> + use<> {
+        self.write_open_edits_now(cx);
         let discard = discards_at_shutdown(self.settings.on_close);
         let (store, session, pending) = (self.store.clone(), self.session, self.pending.clone());
         let executor = cx.background_executor().clone();
@@ -191,6 +218,30 @@ impl MainWindow {
                 store.discard_unsaved(session).ok();
             }
         }
+    }
+
+    /// The open editor's edits not yet given to the card, written before this returns: at
+    /// Windows' shutdown GPUI exits once the quit handlers return, without running the queue
+    /// `keep_open_edits` uses. After Toru's own Quit that has taken them already, and this finds
+    /// nothing. A failure goes unreported, as there is no window left to say so in.
+    fn write_open_edits_now(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = self.editor.clone() else {
+            return;
+        };
+        let (capture, flattened) = editor.update(cx, |editor, cx| {
+            (editor.stored(), editor.take_unwritten(cx))
+        });
+        let Some(flattened) = flattened else {
+            return;
+        };
+        let thumbnail_width = self
+            .gallery
+            .read(cx)
+            .thumbnail_width((flattened.picture.width(), flattened.picture.height()));
+        platform::while_holding_up_shutdown(WRITING_EDITS, || {
+            store_flattened(&self.store, capture, &flattened, thumbnail_width)
+        })
+        .ok();
     }
 
     fn dismiss_quit_prompt(&mut self, cx: &mut Context<Self>) {
@@ -241,7 +292,77 @@ impl Drop for Pending {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use tiny_skia::{Color, Pixmap};
+    use toru_core::{
+        capture::{Capture, CaptureMode},
+        time::{LocalDate, LocalDateTime},
+    };
+    use xcap::image::{self, RgbaImage};
+
+    use super::super::captures::tests::TestDir;
     use super::*;
+    use crate::editor::document::Document;
+
+    fn one_capture(store: &Store) -> CaptureId {
+        let session = store.new_session().unwrap();
+        let capture = Capture {
+            name: "shot".to_string(),
+            mode: CaptureMode::Region,
+            width: 4,
+            height: 2,
+            taken_at: LocalDateTime {
+                date: LocalDate {
+                    year: 2026,
+                    month: 11,
+                    day: 10,
+                },
+                hour: 9,
+                minute: 0,
+            },
+            saved_path: None,
+        };
+        store
+            .add_capture(session, &RgbaImage::new(4, 2), &capture, 2)
+            .unwrap()
+    }
+
+    /// What the editor gives the card for a 4 × 2 capture: red all over if `edited`, the
+    /// capture as it was otherwise.
+    fn flattened(edited: bool) -> Flattened {
+        let mut flattened = Document::new(Pixmap::new(4, 2).unwrap()).flatten();
+        if edited {
+            let mut picture = Pixmap::new(4, 2).unwrap();
+            picture.fill(Color::from_rgba8(255, 0, 0, 255));
+            flattened.picture = Arc::new(picture);
+            flattened.is_edited = true;
+        }
+        flattened
+    }
+
+    #[test]
+    fn edits_written_at_shutdown_reach_the_store_before_it_returns() {
+        let dir = TestDir::new("shutdown-edits");
+        let store = dir.store();
+        let capture = one_capture(&store);
+
+        let bytes = store_flattened(&store, capture, &flattened(true), 2).unwrap();
+        let stored = image::open(store.image_path(capture)).unwrap().to_rgba8();
+        assert_eq!(stored.get_pixel(3, 1).0, [255, 0, 0, 255]);
+        assert_eq!(fs_len(&store.image_path(capture)), bytes);
+        assert!(store.original_path(capture).is_file(), "kept for Reset");
+
+        // Edits all taken off again: the capture as taken, and nothing kept for Reset.
+        store_flattened(&store, capture, &flattened(false), 2).unwrap();
+        let stored = image::open(store.image_path(capture)).unwrap().to_rgba8();
+        assert_eq!(stored.get_pixel(3, 1).0, [0, 0, 0, 0]);
+        assert!(!store.original_path(capture).exists());
+    }
+
+    fn fs_len(path: &std::path::Path) -> u64 {
+        std::fs::metadata(path).unwrap().len()
+    }
 
     #[test]
     fn the_setting_decides_what_quitting_does() {
