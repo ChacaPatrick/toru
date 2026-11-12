@@ -206,6 +206,8 @@ pub struct Gallery {
     thumbnails: Entity<RetainAllImageCache>,
     /// Cards taken away since the last render, whose thumbnails it then lets go of.
     cleared: Vec<Card>,
+    /// Whether the last render had any such cards (`focus_to_restore`).
+    cards_just_removed: bool,
     /// The width the main window gives the gallery, from which the columns and the card width
     /// follow.
     width: Pixels,
@@ -271,6 +273,7 @@ impl Gallery {
             fetch_failed: false,
             thumbnails: RetainAllImageCache::new(cx),
             cleared: Vec::new(),
+            cards_just_removed: false,
             width: px(0.),
             scale: 1.,
             columns: 1,
@@ -718,6 +721,13 @@ impl Gallery {
     /// Takes the session's unsaved cards away and returns how many there were. A focused card
     /// that goes with them stops being rendered, which the main window answers by refocusing.
     pub fn remove_unsaved(&mut self, cx: &mut Context<Self>) -> usize {
+        let going: Vec<usize> = self.groups[0]
+            .cards
+            .iter()
+            .filter(|card| !card.capture.is_saved())
+            .map(|card| card.id)
+            .collect();
+        self.move_current_off(|card| going.contains(&card.id));
         let (kept, cleared): (Vec<Card>, Vec<Card>) = std::mem::take(&mut self.groups[0].cards)
             .into_iter()
             .partition(|card| card.capture.is_saved());
@@ -736,6 +746,7 @@ impl Gallery {
     /// goes stops being rendered, which the main window answers by refocusing, and the current
     /// card is chosen afresh if it went.
     pub fn remove_captures(&mut self, deleted: &[CaptureId], cx: &mut Context<Self>) -> usize {
+        self.move_current_off(|card| deleted.contains(&card.files.id));
         let mut removed = 0;
         for group in &mut self.groups {
             let (gone, kept): (Vec<Card>, Vec<Card>) = std::mem::take(&mut group.cards)
@@ -838,6 +849,7 @@ impl Gallery {
     /// Takes these cards away, whichever groups they are in. A focused card that goes with them
     /// stops being rendered, which the main window answers by refocusing.
     pub fn remove_cards(&mut self, ids: &[usize], cx: &mut Context<Self>) {
+        self.move_current_off(|card| ids.contains(&card.id));
         for group in &mut self.groups {
             let (gone, kept): (Vec<Card>, Vec<Card>) = std::mem::take(&mut group.cards)
                 .into_iter()
@@ -876,10 +888,50 @@ impl Gallery {
         cx.notify();
     }
 
-    /// The gallery's own focus, which Tab leaves for the current card. The main window sends
-    /// focus here when the element holding it stops being drawn.
+    /// The gallery's own focus, which Tab leaves for the current card.
     pub fn focus_handle(&self) -> FocusHandle {
         self.focus.focus().clone()
+    }
+
+    /// Where the main window sends focus when the element holding it inside the gallery stops
+    /// being drawn. If cards were taken away in the frame just drawn, as by a delete, it is the
+    /// current card, which is then the one beside them, so the arrow keys carry on from there.
+    /// Otherwise it is the gallery itself, from where Tab reaches the current card: a name field
+    /// the user scrolls out of the list must not pull the list back to a card.
+    pub fn focus_to_restore(&self) -> FocusHandle {
+        let drawn = self
+            .shown()
+            .into_iter()
+            .find(|&(row, id)| Some(id) == self.current && self.rendered.contains(&row))
+            .filter(|_| self.cards_just_removed);
+        drawn
+            .and_then(|(_, id)| self.card(id))
+            .map_or_else(|| self.focus_handle(), |card| card.focus.clone())
+    }
+
+    /// Focuses the card of `capture`, scrolling to it if need be, when the editor closes on it.
+    /// A card a search or a collapsed group keeps out of the list is left alone.
+    pub fn focus_capture(
+        &mut self,
+        capture: CaptureId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let listed = self
+            .shown()
+            .into_iter()
+            .find(|&(_, id)| self.card(id).is_some_and(|card| card.files.id == capture));
+        if let Some((row, id)) = listed {
+            self.focus_card(id, row, window, cx);
+        }
+    }
+
+    /// Before the cards `gone` picks are taken away: if the current card is one of them, the
+    /// next listed card that stays becomes the current one, or failing that the last one before
+    /// it, so focus lands beside what was deleted and not at the top of the view.
+    fn move_current_off(&mut self, gone: impl Fn(&Card) -> bool) {
+        let listed = self.listed_ids();
+        self.current = current_after(&listed, self.current, |id| self.card(id).is_some_and(&gone));
     }
 
     /// A press on a card's checkbox or thumbnail, or Space on the card, with the modifiers held.
@@ -1434,6 +1486,7 @@ impl Render for Gallery {
         .track_scroll(&self.scroll);
         let jump = theme.strings.back_to_session;
         let gallery = cx.entity();
+        self.cards_just_removed = !self.cleared.is_empty();
         for card in std::mem::take(&mut self.cleared) {
             self.release_thumbnail(&card, window, cx);
         }
@@ -1599,6 +1652,21 @@ fn uncovered(mut bounds: Bounds<Pixels>, pill: bool, bar: Option<Pixels>) -> Bou
     bounds
 }
 
+/// The current card once the `listed` cards that `gone` picks are taken away: itself if it
+/// stays, else the next listed card that stays, else the last one before it.
+fn current_after(
+    listed: &[usize],
+    current: Option<usize>,
+    gone: impl Fn(usize) -> bool,
+) -> Option<usize> {
+    let Some(at) = listed.iter().position(|&id| Some(id) == current) else {
+        return current;
+    };
+    let stays = |id: &usize| !gone(*id);
+    let after = listed[at..].iter().copied().find(stays);
+    after.or_else(|| listed[..at].iter().rev().copied().find(stays))
+}
+
 /// What select mode's hint line adds to the session header: its gap and one line of hint.
 fn select_hint_height(theme: &Theme) -> Pixels {
     px(SELECT_HINT_GAP) + theme.type_scale.hint.size * HINT_LEADING
@@ -1745,6 +1813,25 @@ mod tests {
         month: 11,
         day: 4,
     };
+
+    /// A deleted current card hands its place to the next card that stays, or the one before
+    /// it at the end of the list; a current card that stays is left alone.
+    #[test]
+    fn the_current_card_moves_beside_what_was_deleted() {
+        let listed = [10, 11, 12, 13];
+        let after = |current, gone: &[usize]| {
+            current_after(&listed, Some(current), |id| gone.contains(&id))
+        };
+        assert_eq!(after(11, &[11]), Some(12));
+        assert_eq!(after(11, &[11, 12]), Some(13));
+        assert_eq!(after(13, &[13]), Some(12));
+        assert_eq!(after(12, &[12, 13]), Some(11));
+        assert_eq!(after(11, &[12]), Some(11));
+        assert_eq!(after(11, &listed), None);
+        // A current card that isn't listed, as one a search hides, is not this function's to move.
+        assert_eq!(after(99, &[11]), Some(99));
+        assert_eq!(current_after(&listed, None, |_| true), None);
+    }
 
     #[test]
     fn day_dates_follow_the_look() {

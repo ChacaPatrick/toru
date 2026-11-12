@@ -12,7 +12,7 @@ use gpui::{
     Toggled, Window, div, prelude::*, px,
 };
 
-use super::{MIN_TARGET, arrow_target, focus_marks, keyed_focus};
+use super::{MIN_TARGET, RingFocus, arrow_target, focus_marks, keyed_focus};
 use crate::theme::{ActiveTheme, ThemedText};
 
 type ChangeHandler = Rc<dyn Fn(usize, &mut Window, &mut App)>;
@@ -166,7 +166,7 @@ impl RenderOnce for RadioGroup {
                     .role(Role::RadioButton)
                     .aria_label(option.clone())
                     .aria_toggled(if on { Toggled::True } else { Toggled::False })
-                    .track_focus(focus)
+                    .track_ring_focus(focus)
                     .flex()
                     .flex_col()
                     .gap(px(DETAIL_GAP))

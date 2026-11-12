@@ -6,9 +6,10 @@
 //! languages that order them, bringing the capture overlay
 //! to the foreground, telling which windows a user can
 //! pick, hiding the main window in the tray and showing it again, telling a running Toru
-//! that a second one was launched, saying why Windows' shutdown waits, and starting Toru when
-//! the user signs in. Windows is done here; the other platforms get the fallbacks
-//! at the bottom until they are.
+//! that a second one was launched, saying why Windows' shutdown waits, starting Toru when the
+//! user signs in, whether the user has animations turned off, and handing back memory while
+//! hidden. Windows is done here; the other platforms get the fallbacks at the bottom until they
+//! are.
 
 use std::{path::PathBuf, time::Duration};
 
@@ -116,6 +117,7 @@ mod windows {
     }
 
     const SW_HIDE: i32 = 0;
+    const SPI_GETCLIENTAREAANIMATION: u32 = 0x1042;
     const SW_NORMAL: i32 = 1;
     const SW_SHOW: i32 = 5;
     const SW_RESTORE: i32 = 9;
@@ -151,6 +153,7 @@ mod windows {
 
     #[link(name = "user32")]
     unsafe extern "system" {
+        fn SystemParametersInfoW(action: u32, param: u32, value: *mut i32, update: u32) -> i32;
         fn GetKeyState(key: i32) -> i16;
         fn EnumThreadWindows(
             thread: u32,
@@ -194,6 +197,8 @@ mod windows {
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
+        fn GetCurrentProcess() -> isize;
+        fn SetProcessWorkingSetSize(process: isize, minimum: usize, maximum: usize) -> i32;
         fn GetCurrentThreadId() -> u32;
         fn GetLocalTime(time: *mut SystemTime);
         fn CreateEventW(
@@ -363,6 +368,27 @@ mod windows {
             shift: key_down(VK_SHIFT),
             win: key_down(VK_LWIN) || key_down(VK_RWIN),
         }
+    }
+
+    /// Whether the user has asked for less motion: Settings > Accessibility > Visual effects >
+    /// Animation effects is off. If Windows can't say, motion stays.
+    pub fn reduce_motion() -> bool {
+        let mut animations: i32 = 1;
+        // SAFETY: `SPI_GETCLIENTAREAANIMATION` writes one `BOOL` through the pointer, which
+        // outlives the call.
+        let read =
+            unsafe { SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &mut animations, 0) };
+        read != 0 && animations == 0
+    }
+
+    /// Hands the pages the app isn't using back to Windows, which keeps them at hand and gives
+    /// them back as they are touched. Windows does this itself for a minimized window but not
+    /// for a hidden one, so a Toru waiting in the tray would otherwise hold on to everything its
+    /// window last drew with.
+    pub fn trim_working_set() {
+        // SAFETY: the pseudo-handle of this process needs no closing, and the two `-1`s are the
+        // documented request to empty the working set.
+        unsafe { SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX) };
     }
 
     /// Takes the main window off the screen, the taskbar and Alt+Tab; the app keeps running in
@@ -1156,10 +1182,10 @@ pub const EXCLUDE_SETTLE: Duration = Duration::from_millis(50);
 pub use windows::{
     bring_overlay_to_foreground, default_save_folder, exclude_windows_from_capture, fallback_fonts,
     held_modifiers, hide_main_window, is_window_pickable, local_now, main_window_hidden, map_file,
-    mark_running, pressed_key, recycle_file, repoint_start_with_windows, request_close,
-    restore_window, reveal_file, set_starts_with_windows, show_main_window, show_startup_error,
-    signal_running_instance, starts_with_windows, user_languages, watch_for_show,
-    while_holding_up_shutdown,
+    mark_running, pressed_key, recycle_file, reduce_motion, repoint_start_with_windows,
+    request_close, restore_window, reveal_file, set_starts_with_windows, show_main_window,
+    show_startup_error, signal_running_instance, starts_with_windows, trim_working_set,
+    user_languages, watch_for_show, while_holding_up_shutdown,
 };
 
 /// The modifiers held along with a key (`held_modifiers`).
@@ -1249,9 +1275,17 @@ pub fn starts_with_windows() -> bool {
 }
 
 #[cfg(not(windows))]
+pub fn reduce_motion() -> bool {
+    false
+}
+
+#[cfg(not(windows))]
 pub fn set_starts_with_windows(_on: bool) -> std::io::Result<()> {
     Err(std::io::ErrorKind::Unsupported.into())
 }
+
+#[cfg(not(windows))]
+pub fn trim_working_set() {}
 
 #[cfg(not(windows))]
 pub fn hide_main_window() {}

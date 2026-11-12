@@ -112,6 +112,10 @@ fn main() {
     let app = application().with_quit_mode(QuitMode::Explicit);
     app.run(move |cx: &mut App| {
         gpui_kit::init(cx);
+        // GPUI's animations and the kit's scrollbar fade and overscroll bounce all stand still
+        // while this is set (DESIGN.md §7); the main window reads it again whenever it comes to
+        // the front, in case the setting changed meanwhile.
+        cx.set_reduce_motion(platform::reduce_motion());
         ui::init(cx);
         install_fonts(cx);
         let (appearance, open_editor) = appearance_from_args(&settings);

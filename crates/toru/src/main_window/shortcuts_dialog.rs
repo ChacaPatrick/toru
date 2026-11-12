@@ -187,13 +187,13 @@ impl MainWindow {
         let first = first.map(|binding| dialog.row_focus(&binding, cx).0.clone());
         self.shortcuts_dialog = Some(dialog);
         if let Some(first) = first {
-            self.focus_later(first, cx);
+            self.focus_in_dialog(first, cx);
         }
         cx.notify();
     }
 
-    /// Done, or Esc with nothing being recorded. Focus goes back to the Edit shortcuts… button's
-    /// column through `on_focus_lost`.
+    /// Done, or Esc with nothing being recorded. Focus goes back to the Edit shortcuts… button
+    /// (`return_focus`).
     pub(super) fn close_shortcuts_dialog(&mut self, cx: &mut Context<Self>) {
         self.stop_recording(cx);
         self.shortcuts_dialog = None;

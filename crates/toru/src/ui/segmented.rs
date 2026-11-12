@@ -9,7 +9,7 @@ use gpui::{
     Window, div, prelude::*, px,
 };
 
-use super::{arrow_target, focus_marks, keyed_focus};
+use super::{RingFocus, arrow_target, focus_marks, keyed_focus};
 use crate::theme::{ActiveTheme, ThemedText};
 
 type ChangeHandler = Rc<dyn Fn(usize, &mut Window, &mut App)>;
@@ -113,7 +113,7 @@ impl RenderOnce for Segmented {
                     .role(Role::RadioButton)
                     .aria_label(option.clone())
                     .aria_toggled(if on { Toggled::True } else { Toggled::False })
-                    .track_focus(focus)
+                    .track_ring_focus(focus)
                     .flex_1()
                     .h(px(32.))
                     .flex()

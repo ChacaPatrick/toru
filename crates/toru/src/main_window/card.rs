@@ -34,8 +34,8 @@ use super::{
 };
 use crate::theme::{ActiveTheme, Theme, ThemedText};
 use crate::ui::{
-    BUTTON_SMALL_HEIGHT, Button, CHECKBOX_SIZE, Checkbox, Chip, Icon, MIN_TARGET, Menu, TextField,
-    Tooltip, fill, focus_marks, selection_ring, shadowed, spoken,
+    BUTTON_SMALL_HEIGHT, Button, CHECKBOX_SIZE, Checkbox, Chip, Icon, MIN_TARGET, Menu, RingFocus,
+    TextField, Tooltip, fill, focus_marks, selection_ring, shadowed, spoken,
 };
 
 const PADDING: f32 = 10.;
@@ -290,7 +290,7 @@ pub fn render(
         .role(Role::Group)
         .aria_label(label)
         .aria_description(description)
-        .track_focus(&focus)
+        .track_ring_focus(&focus)
         // On the way down, so it runs for a press a control keeps to itself.
         .capture_any_mouse_down(move |_, window, cx| make_current(window, cx))
         .on_click(move |event, window, cx| {

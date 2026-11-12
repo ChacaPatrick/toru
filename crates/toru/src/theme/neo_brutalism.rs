@@ -257,7 +257,9 @@ fn base() -> Theme {
             controls: black,
             toast_bg: hex(0x7cf5c2),
             toast_text: black,
-            canvas: grid(0xcfe8ff, 0x7fb3e0, 32.),
+            // tokens.json's paper is #cfe8ff, where the blue focus ring of a corner button is
+            // 2.95:1. A shade lighter gives it 3:1 (DESIGN.md §7).
+            canvas: grid(0xd3eaff, 0x7fb3e0, 32.),
             shot_bg: white,
             shot_line: black,
             shot_fill: cream,

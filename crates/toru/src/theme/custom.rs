@@ -36,7 +36,6 @@ const HAIR_MIX: f32 = 0.18;
 const LINE_MIX: f32 = 0.3;
 const SHADE: f32 = 0.08;
 const HALO: f32 = 0.25;
-const TAG: f32 = 0.9;
 
 impl CustomPalette {
     /// The six colours a theme shows, as the starting point for editing it.
@@ -144,10 +143,9 @@ impl CustomPalette {
         c.toast_text = self.accent_text;
         c.chip_bg = c.surface_2;
         c.chip_text = self.muted;
-        c.tag_bg = Hsla {
-            a: TAG,
-            ..self.surface
-        };
+        // Opaque, where the looks' own tags let a little of the picture through: the muted
+        // colour then reads on the tag as it does on the surface, whatever the picture.
+        c.tag_bg = self.surface;
         c.tag_text = self.muted;
         c.thumb = Fill::Solid(c.surface_2);
         c.thumb_alt = Vec::new();

@@ -4,7 +4,8 @@
 //! Keyboard focus shows the ring from `DESIGN.md` §7: 3px of `focus` 3px outside the control, with
 //! `focus_halo` filling the gap. It is drawn as absolute children, so showing it never moves layout.
 //! Like CSS `:focus-visible`, a key press turns the ring on and a mouse press turns it off; moving
-//! the mouse changes nothing. (GPUI's own `last_input_was_keyboard` drops on a mouse move.) A
+//! the mouse changes nothing. (GPUI's own `last_input_was_keyboard` drops on a mouse move.) Focus
+//! that assistive technology asks for turns it on as a key press does (`RingFocus`). A
 //! focused control also notes where its ring is, shown or not, so a scrolling container can bring
 //! it into view (`FocusInView`) when a key or assistive technology moved the focus; a mouse press
 //! already has the control under the pointer, and scrolling then would move it away before the
@@ -33,9 +34,9 @@ mod tooltip;
 use std::{collections::HashSet, rc::Rc, sync::Arc};
 
 use gpui::{
-    AnyElement, App, Bounds, BoxShadow, ElementId, Entity, FocusHandle, Global, Hsla, KeyBinding,
-    MouseDownEvent, MouseUpEvent, Pixels, Refineable, StyleRefinement, WeakEntity, Window,
-    WindowId, canvas, div, prelude::*, px,
+    AccessibleAction, AnyElement, App, Bounds, BoxShadow, ElementId, Entity, FocusHandle, Global,
+    Hsla, KeyBinding, MouseDownEvent, MouseUpEvent, Pixels, Refineable, StyleRefinement,
+    WeakEntity, Window, WindowId, canvas, div, prelude::*, px,
 };
 
 use crate::theme::Theme;
@@ -294,6 +295,23 @@ fn set_keyboard_focus(on: bool, window: &mut Window, cx: &mut App) {
         window.refresh();
     }
 }
+
+/// `track_focus` for a control that shows the ring. Focus that assistive technology asks for
+/// shows it as a key press does: a screen reader's own navigation keys, voice control and a
+/// switch reach the app as a request to focus a control, never as a key, so without this their
+/// users would not see where focus is.
+pub trait RingFocus: StatefulInteractiveElement {
+    fn track_ring_focus(self, focus: &FocusHandle) -> Self {
+        let requested = focus.clone();
+        self.track_focus(focus)
+            .on_a11y_action(AccessibleAction::Focus, move |_, window, cx| {
+                set_keyboard_focus(true, window, cx);
+                requested.focus(window, cx);
+            })
+    }
+}
+
+impl<E: StatefulInteractiveElement> RingFocus for E {}
 
 fn mouse_held(window: &Window, cx: &App) -> bool {
     cx.try_global::<MouseHeld>()

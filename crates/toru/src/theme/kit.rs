@@ -5,7 +5,7 @@
 
 use gpui::{App, Hsla};
 
-use super::Theme;
+use super::{Theme, selection_tint};
 
 pub fn sync_kit_theme(theme: &Theme, cx: &mut App) {
     let c = &theme.colors;
@@ -13,7 +13,7 @@ pub fn sync_kit_theme(theme: &Theme, cx: &mut App) {
     gpui_kit::component::Theme::update(cx, |kit| {
         kit.colors.foreground = c.text;
         kit.colors.caret = c.text;
-        kit.colors.selection = Hsla { a: 0.3, ..c.accent };
+        kit.colors.selection = selection_tint(c.accent);
         kit.colors.muted_foreground = c.muted;
         kit.colors.background = c.input_bg;
         kit.colors.input = theme.borders.input.color;

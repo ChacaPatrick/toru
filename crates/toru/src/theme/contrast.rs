@@ -3,7 +3,7 @@
 
 use gpui::{Hsla, Rgba, black, white};
 
-use super::{Fill, Theme, backdrop_scrim, hover_tint};
+use super::{Fill, Theme, backdrop_scrim, hover_tint, selection_tint};
 use crate::editor::chrome::tool_key_color;
 use crate::ui::SUB_OPACITY;
 
@@ -122,6 +122,8 @@ pub fn pairs(theme: &Theme) -> Vec<Pair> {
     // A disabled button is unfilled, so its label sits on the bar it is in.
     text("disabled button", c.muted, c.surface_2);
     text("label on bg", c.label, c.bg);
+    // The editor's context panel.
+    text("label on surface", c.label, c.surface);
     text("label on surface_2", c.label, c.surface_2);
     text("button", c.button_text, c.button_bg);
     // Only plain buttons carry a sub (`Display 1 ▾`, `5 s ▾`); the primary ones never do.
@@ -180,6 +182,15 @@ pub fn pairs(theme: &Theme) -> Vec<Pair> {
             );
         }
     }
+    // A capture shows through a translucent tag. Black and white bound what any picture can do
+    // to it, as they do for the window over a photo.
+    for (name, picture) in [("dark", black()), ("light", white())] {
+        text(
+            &format!("tag over a {name} picture"),
+            c.tag_text,
+            over(c.tag_bg, picture),
+        );
+    }
     let rings = windows
         .iter()
         .chain(&surfaces[..3])
@@ -196,6 +207,61 @@ pub fn pairs(theme: &Theme) -> Vec<Pair> {
         }
     }
     pairs
+}
+
+/// What the built-in palettes hold besides `pairs`: the parts of a control that aren't text but
+/// say what state it is in or which one is chosen, each against what it is drawn on, at WCAG
+/// 1.4.11's 3:1 as for the focus ring, and text selected in a field. A custom palette isn't
+/// warned about these: its six colours don't set them one by one.
+pub fn parts(theme: &Theme) -> Vec<Pair> {
+    let c = &theme.colors;
+    let mut parts = vec![
+        // A switch's knob says on or off by where it sits, and a radio's dot by being there.
+        (
+            "switch knob, off".to_string(),
+            c.toggle_knob,
+            c.toggle_off,
+            RING,
+        ),
+        (
+            "switch knob, on".to_string(),
+            c.toggle_on_knob,
+            c.toggle_on,
+            RING,
+        ),
+        // The editor panel's slider and chosen swatch, and the empty state's tile.
+        ("slider on surface".to_string(), c.accent, c.surface, RING),
+        (
+            "chosen swatch outline".to_string(),
+            c.swatch_on,
+            c.surface,
+            RING,
+        ),
+        // Around a selected card, on the window.
+        ("selected card outline".to_string(), c.accent, c.bg, RING),
+        // A field that isn't valid: its border against the field inside it.
+        ("warning border".to_string(), c.warning, c.input_bg, RING),
+        // Under the kit's selection tint (`kit::sync_kit_theme`).
+        (
+            "selected text in a field".to_string(),
+            c.text,
+            over(selection_tint(c.accent), c.input_bg),
+            TEXT,
+        ),
+    ];
+    // The editor's corner buttons and tool pill float over the canvas, where the outer edge of
+    // their rings lands. A grid's lines are a pixel wide, so its paper is what the ring is on.
+    let canvas = match c.canvas {
+        Fill::Grid { bg, .. } => vec![bg],
+        ref fill => stops(fill),
+    };
+    for (stop, color) in canvas.into_iter().enumerate() {
+        parts.push((format!("focus ring on canvas {stop}"), c.focus, color, RING));
+    }
+    parts
+        .into_iter()
+        .map(|(name, fg, bg, min)| Pair { name, fg, bg, min })
+        .collect()
 }
 
 /// A pair that falls short of its ratio.
@@ -216,10 +282,15 @@ impl std::fmt::Display for Failure {
     }
 }
 
-/// Every pair in `theme` that misses DESIGN.md §7, in the order `pairs` lists them. The §7
-/// acceptance test runs this over the built-in palettes; the custom palette editor shows it.
+/// Every pair in `theme` that misses DESIGN.md §7, in the order `pairs` lists them, for the
+/// custom palette editor to show.
 pub fn failures(theme: &Theme) -> Vec<Failure> {
-    pairs(theme)
+    short(pairs(theme))
+}
+
+/// Those of `pairs` that fall short.
+fn short(pairs: Vec<Pair>) -> Vec<Failure> {
+    pairs
         .into_iter()
         .filter(|pair| pair.ratio() < pair.min)
         .map(|pair| Failure {
@@ -290,7 +361,7 @@ mod tests {
         let failures: Vec<String> = themes()
             .flat_map(|theme| {
                 let name = describe(&theme);
-                failures(&theme)
+                short(pairs(&theme).into_iter().chain(parts(&theme)).collect())
                     .into_iter()
                     .map(move |failure| format!("{name}: {failure}"))
                     .collect::<Vec<_>>()
@@ -308,23 +379,13 @@ mod tests {
         );
     }
 
-    /// An invalid field's border reads against the field as a focus ring must (DESIGN.md §7).
-    #[test]
-    fn the_warning_border_stands_out_in_every_palette() {
-        for theme in themes() {
-            let c = &theme.colors;
-            let ratio = ratio(c.warning, c.input_bg);
-            assert!(ratio >= RING, "{}: {ratio:.2}:1", describe(&theme));
-        }
-    }
-
     /// `cargo test -p toru print_contrast_table -- --ignored --nocapture` lists every pair.
     #[test]
     #[ignore]
     fn print_contrast_table() {
         for theme in themes() {
             println!("== {}", describe(&theme));
-            for pair in pairs(&theme) {
+            for pair in pairs(&theme).into_iter().chain(parts(&theme)) {
                 println!("{:6.2}  {}", pair.ratio(), pair.name);
             }
         }

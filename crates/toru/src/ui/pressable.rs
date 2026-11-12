@@ -13,7 +13,7 @@ use gpui::{
     SharedString, StyleRefinement, Toggled, Window, div, prelude::*, px,
 };
 
-use super::{Handler, arrow_target, focus_marks, keyed_focus, refined};
+use super::{Handler, RingFocus, arrow_target, focus_marks, keyed_focus, refined};
 use crate::theme::{ActiveTheme, Border, Theme, contrast, hover_tint};
 
 #[derive(IntoElement)]
@@ -168,7 +168,7 @@ impl RenderOnce for Pressable {
                     Toggled::False
                 })
             })
-            .track_focus(&focus)
+            .track_ring_focus(&focus)
             .flex_none()
             .p(self.hit_margin)
             .m(-self.hit_margin)

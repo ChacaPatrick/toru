@@ -143,6 +143,8 @@ pub struct MainWindow {
     clear_prompt: bool,
     /// The open dialog's first action, focused when the dialog opens.
     dialog_focus: FocusHandle,
+    /// What had focus when a dialog opened, to go back to when it closes (`closing`).
+    opener: Option<FocusHandle>,
     /// The Save to folder picker is open, so a second Change doesn't open another.
     picking_folder: bool,
     /// The editor's Save or Save as is under way, so a second press can't write a second file.
@@ -191,33 +193,48 @@ impl MainWindow {
         // Something must hold focus for Tab to work (`docs/spikes.md` §1.5). This fires in the
         // draw where the focused element stops being rendered, as a collapsed group's card or a
         // name field scrolled out of the list does. Focus goes to the nearest focusable ancestor
-        // still drawn, the gallery or the settings column, so Tab carries on from there. When
+        // still drawn, the gallery or the settings column, so Tab carries on from there; in the
+        // gallery, a card just deleted hands focus to the card beside it instead. When
         // there is none, it goes to the editor's Back while the editor is open; otherwise, as when
-        // the bottom bar gives way to the bulk bar or the bulk bar goes with the selection while a
-        // button on it has focus, it goes into the gallery, where Tab reaches the current card; the
-        // toolbar's Region button would start a capture on the Enter or Space that follows.
+        // the bottom bar gives way to the bulk bar, the bulk bar goes with the selection while a
+        // button on it has focus, it goes into the gallery, where Tab reaches the current card,
+        // or to that card when one was just deleted; the toolbar's Region button would start a
+        // capture on the Enter or Space that follows.
         // With no such ancestor and the custom palette panel or the Edit shortcuts dialog open,
         // focus goes back into it, to its first field or its Done: the quit dialog's Cancel
         // takes its buttons away while one has focus, and the dialogs are siblings, so nothing
         // of the one that went lies inside the one that stays. The editor gets focus this way
         // too when it opened under a dialog (`show_editor`).
         cx.on_focus_lost(window, |this, window, cx| {
-            let target = window.focus_lost_restore_target(cx).unwrap_or_else(|| {
-                if let Some(field) = this.custom_editor_focus(cx) {
-                    return field;
-                }
-                match (&this.shortcuts_dialog, &this.editor) {
-                    (Some(dialog), _) => dialog.done.clone(),
-                    (None, Some(editor)) => editor.focus_handle(cx),
-                    (None, None) => this.gallery.read(cx).focus_handle(),
-                }
-            });
+            let gallery = this.gallery.read(cx);
+            let target = window
+                .focus_lost_restore_target(cx)
+                .map(|target| {
+                    if target == gallery.focus_handle() {
+                        gallery.focus_to_restore()
+                    } else {
+                        target
+                    }
+                })
+                .unwrap_or_else(|| {
+                    if let Some(field) = this.custom_editor_focus(cx) {
+                        return field;
+                    }
+                    match (&this.shortcuts_dialog, &this.editor) {
+                        (Some(dialog), _) => dialog.done.clone(),
+                        (None, Some(editor)) => editor.focus_handle(cx),
+                        (None, None) => gallery.focus_to_restore(),
+                    }
+                });
             target.focus(window, cx)
         })
         .detach();
         cx.observe_window_activation(window, |this, window, cx| {
             this.window_active = window.is_window_active();
             if this.window_active {
+                // Windows tells no one when its Animation effects setting changes, and the user
+                // comes back from Settings through here.
+                cx.set_reduce_motion(platform::reduce_motion());
                 this.show_missed_failures(cx);
             } else {
                 // A key pressed in another app is that app's, not a new shortcut.
@@ -332,6 +349,7 @@ impl MainWindow {
             delete_prompt: None,
             clear_prompt: false,
             dialog_focus: cx.focus_handle().tab_stop(true),
+            opener: None,
             picking_folder: false,
             saving_edit: false,
             custom_editor: None,
@@ -506,11 +524,19 @@ impl MainWindow {
             .is_some_and(|editor| editor.read(cx).is_edited())
     }
 
-    /// Back to session. Focus returns to the first control through `on_focus_lost`, and the
-    /// picture leaves the GPU.
+    /// Back to session. Focus returns to the card that was in the editor, so the arrow keys
+    /// carry on from it, and the picture leaves the GPU. If that card is no longer listed,
+    /// `on_focus_lost` finds focus a place. A dialog open over the window keeps the focus.
     pub(super) fn close_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = self.editor.take() {
-            editor.update(cx, |editor, _| editor.release_images(window));
+            let stored = editor.update(cx, |editor, _| {
+                editor.release_images(window);
+                editor.stored()
+            });
+            if !self.dialog_open() {
+                self.gallery
+                    .update(cx, |gallery, cx| gallery.focus_capture(stored, window, cx));
+            }
         }
         cx.notify();
     }
@@ -641,6 +667,7 @@ fn gallery_width(settings: &Settings, window: &Window) -> Pixels {
 impl Render for MainWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_backdrop(window, cx);
+        self.return_focus(window, cx);
         let theme = cx.theme();
         let c = &theme.colors;
         let frame = div()

@@ -15,8 +15,8 @@ use gpui::{
 };
 
 use super::{
-    Button, Handler, Icon, Readable, button::MenuTrigger, focus_ring, keyboard_focus, keyed_focus,
-    menu_opened,
+    Button, Handler, Icon, Readable, RingFocus, button::MenuTrigger, focus_ring, keyboard_focus,
+    keyed_focus, menu_opened,
 };
 use crate::theme::{ActiveTheme, ThemedText};
 
@@ -295,7 +295,7 @@ impl RenderOnce for Menu {
                         .role(role)
                         .aria_label(label.clone())
                         .when_some(toggled, |this, toggled| this.aria_toggled(toggled))
-                        .track_focus(focus)
+                        .track_ring_focus(focus)
                         .h(px(ITEM_HEIGHT))
                         .px_2()
                         .flex()

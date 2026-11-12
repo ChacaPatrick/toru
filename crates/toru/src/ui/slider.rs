@@ -12,7 +12,7 @@ use gpui::{
     relative,
 };
 
-use super::{MIN_TARGET, focus_marks, keyed_focus};
+use super::{MIN_TARGET, RingFocus, focus_marks, keyed_focus};
 use crate::theme::ActiveTheme;
 
 const TRACK_HEIGHT: f32 = 4.;
@@ -218,7 +218,7 @@ impl RenderOnce for Slider {
             .id(self.id)
             .role(Role::Slider)
             .aria_label(self.label)
-            .track_focus(&focus)
+            .track_ring_focus(&focus)
             .relative()
             .flex()
             .items_center()

@@ -6,7 +6,7 @@
 
 use gpui::{AccessibleAction, App, ElementId, Role, SharedString, Window, div, prelude::*, px};
 
-use super::{Handler, Icon, focus_marks, keyed_focus};
+use super::{Handler, Icon, RingFocus, focus_marks, keyed_focus};
 use crate::theme::{ActiveTheme, ThemedText, contrast, hover_tint};
 
 pub const HEIGHT: f32 = 36.;
@@ -45,7 +45,7 @@ impl RenderOnce for Jump {
             .id(self.id)
             .role(Role::Button)
             .aria_label(self.label.clone())
-            .track_focus(&focus)
+            .track_ring_focus(&focus)
             .block_mouse_except_scroll()
             .relative()
             .flex_none()

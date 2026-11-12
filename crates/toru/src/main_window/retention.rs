@@ -246,13 +246,7 @@ impl MainWindow {
             retention: wanted,
             captures,
         });
-        // Deferred, as the quit dialog's is, since this may run inside the window's own update.
-        let (window, focus) = (self.window, self.dialog_focus.clone());
-        cx.defer(move |cx| {
-            window
-                .update(cx, |_, window, cx| focus.focus(window, cx))
-                .ok();
-        });
+        self.focus_dialog(cx);
         cx.notify();
     }
 

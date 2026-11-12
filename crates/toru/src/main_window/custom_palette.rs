@@ -107,6 +107,7 @@ impl MainWindow {
                 state
             })
             .collect();
+        self.note_opener(window.focused(cx));
         fields[0].update(cx, |state, cx| state.focus(window, cx));
         self.background_picker.sessions += 1;
         self.custom_editor = Some(CustomEditor {

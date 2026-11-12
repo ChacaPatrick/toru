@@ -10,7 +10,7 @@ use gpui::{
     div, prelude::*, px,
 };
 
-use super::{Icon, MIN_TARGET, focus_marks, keyed_focus};
+use super::{Icon, MIN_TARGET, RingFocus, focus_marks, keyed_focus};
 use crate::theme::ActiveTheme;
 
 pub const SIZE: f32 = 26.;
@@ -108,7 +108,7 @@ impl RenderOnce for Checkbox {
             .role(Role::CheckBox)
             .aria_label(self.label)
             .aria_toggled(toggled)
-            .track_focus(&focus)
+            .track_ring_focus(&focus)
             .flex_none()
             .size(px(MIN_TARGET))
             .flex()

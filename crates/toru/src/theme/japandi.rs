@@ -75,6 +75,11 @@ pub fn theme(palette: usize) -> Theme {
         _ => return theme,
     };
     follow_linen(&mut theme, line);
+    if palette == 1 {
+        // Stone & moss's muted colour (#5f665a) is 4.4:1 on its tag over a black picture; two
+        // levels darker holds 4.5:1 over any picture (DESIGN.md §7).
+        theme.colors.tag_text = hex(0x5d6458);
+    }
     if palette == 2 {
         mockup_tag(&mut theme.colors);
     }
@@ -245,7 +250,9 @@ fn base() -> Theme {
             thumb_shade: hex_alpha(0x2b2a26, 0.08),
             earlier_card_bg: hex(0xfaf7f1),
             tag_bg: hex_alpha(0xfaf7f1, 0.9),
-            tag_text: hex(0x6b665c),
+            // tokens.json uses `--tag-text` #6b665c, 4.3:1 on the tag over a black picture, which
+            // shows through it. Four levels darker holds 4.5:1 over any picture (DESIGN.md §7).
+            tag_text: hex(0x676258),
             input_bg: hex(0xfffdf9),
             chip_bg: gpui::transparent_black(),
             chip_text: hex(0x6b665c),
@@ -566,6 +573,8 @@ mod tests {
         let line = step(c, LINE);
         follow_linen(&mut derived, line);
         let greys = [
+            // Darkened a little from the token, to read over any picture.
+            "tag_text",
             "surface_sel",
             "input_bg",
             "hair",
@@ -610,7 +619,7 @@ mod tests {
         for index in 1..3 {
             let theme = theme(index);
             // Charcoal & clay's tag is Linen's on purpose: `charcoal_keeps_the_mockups_tag`.
-            let mockup_tag = |name: &str| index == 2 && name == "tag_bg";
+            let mockup_tag = |name: &str| index == 2 && matches!(name, "tag_bg" | "tag_text");
             for (name, color) in followed(&theme) {
                 assert!(
                     mockup_tag(name) || !linen.contains(&css_hex(color)),
@@ -626,7 +635,7 @@ mod tests {
             assert_eq!(css_hex(c.bulk_text), css_hex(c.surface));
             if index == 1 {
                 assert_eq!(css_hex(c.tag_bg), css_hex(c.surface));
-                assert_eq!(css_hex(c.tag_text), css_hex(c.muted));
+                assert_eq!(css_hex(c.tag_text), "#5d6458");
             }
             for hairline in [b.hair, b.card, b.pop, b.earlier_rule, b.title_divider] {
                 assert_eq!(css_hex(hairline.color), css_hex(c.hair));
@@ -681,7 +690,11 @@ mod tests {
         assert_token(&tokens, "--toast-bg", "#2b2a26");
         assert_token(&tokens, "--toast-border", "0");
         assert_token(&tokens, "--bulk-bg", "#2b2a26");
-        theme(0).colors
+        // Linen & walnut's own tag text is darkened from the token (DESIGN.md §7); the mockup
+        // draws the token.
+        let mut linen = theme(0).colors;
+        linen.tag_text = hex(0x6b665c);
+        linen
     }
 
     /// The mockup's light tag is kept on Charcoal & clay, where it stands off the dark thumbnail

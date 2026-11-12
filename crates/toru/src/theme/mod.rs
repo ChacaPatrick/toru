@@ -127,6 +127,17 @@ pub fn hover_tint(text: Hsla) -> Hsla {
     }
 }
 
+/// How strongly the accent is laid over text selected in a field.
+pub const SELECTION_TINT: f32 = 0.3;
+
+/// The fill behind text selected in a field, in a palette whose accent is `accent`.
+pub fn selection_tint(accent: Hsla) -> Hsla {
+    Hsla {
+        a: SELECTION_TINT,
+        ..accent
+    }
+}
+
 /// How strongly a dialog's backdrop lays the text colour over the window behind it: enough to
 /// say the window is waiting, while what is behind stays readable.
 pub const SCRIM: f32 = 0.4;

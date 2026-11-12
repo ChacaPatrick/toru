@@ -24,7 +24,9 @@ use gpui::{
     StyleRefinement, Window, div, prelude::*, px,
 };
 
-use super::{Handler, Icon, Tooltip, focus_marks, focus_marks_in, keyed_focus, refined, shadowed};
+use super::{
+    Handler, Icon, RingFocus, Tooltip, focus_marks, focus_marks_in, keyed_focus, refined, shadowed,
+};
 use crate::theme::{ActiveTheme, Border, Theme, ThemedText, TypeStyle, contrast, hover_tint};
 
 /// How much of the button's text colour the `.sub` label keeps. The mockups' CSS says .75, which
@@ -476,7 +478,7 @@ impl RenderOnce for Button {
                 .role(Role::Button)
                 .aria_label(name)
                 .aria_expanded(menu.open)
-                .track_focus(&menu.focus)
+                .track_ring_focus(&menu.focus)
                 .relative()
                 .h_full()
                 .flex()
@@ -545,7 +547,7 @@ impl RenderOnce for Button {
             .role(Role::Button)
             .aria_label(aria_label)
             .when_some(self.description, |this, text| this.aria_description(text))
-            .when(focusable, |this| this.track_focus(&focus))
+            .when(focusable, |this| this.track_ring_focus(&focus))
             .when_some(self.expanded, |this, expanded| this.aria_expanded(expanded))
             .when_some(menu_toggle, |this, (open, toggle)| {
                 expand_collapse(this, open, toggle)

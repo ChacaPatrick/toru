@@ -20,7 +20,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui::{BackgroundExecutor, Context, SHUTDOWN_TIMEOUT};
+use gpui::{BackgroundExecutor, Context, FocusHandle, SHUTDOWN_TIMEOUT, Window};
 use toru_core::{
     settings::OnClose,
     store::{CaptureId, Result as StoreResult, SessionId, Store},
@@ -39,6 +39,9 @@ const SETTLE_POLL: Duration = Duration::from_millis(20);
 /// How long the shutdown handler waits: under GPUI's limit, with time left for the delete.
 const SHUTDOWN_SETTLE_LIMIT: Duration =
     Duration::from_millis(SHUTDOWN_TIMEOUT.as_millis() as u64 * 3 / 4);
+/// How long after hiding in the tray the app hands its unused memory back: once the hide and
+/// the last frame are done with.
+const TRIM_AFTER: Duration = Duration::from_secs(2);
 const NO_TRAY: &str = "Couldn't add the tray icon. Closing the window quits Toru.";
 const NO_TRAY_TOAST_FOR: Duration = Duration::from_secs(8);
 /// What Windows shows for Toru if it ends the session while the editor's edits are being written.
@@ -148,6 +151,14 @@ impl MainWindow {
             // A hidden window records nothing: the next key press is some other app's.
             self.stop_recording(cx);
             platform::hide_main_window();
+            cx.spawn(async move |_, cx| {
+                cx.background_executor().timer(TRIM_AFTER).await;
+                // Not if the window is back already.
+                if platform::main_window_hidden() {
+                    platform::trim_working_set();
+                }
+            })
+            .detach();
         } else {
             self.request_quit(cx);
         }
@@ -231,12 +242,42 @@ impl MainWindow {
     /// request or a press arrives inside the window's own update, which the window can't be
     /// updated again from.
     pub(super) fn focus_dialog(&self, cx: &mut Context<Self>) {
-        let (window, focus) = (self.window, self.dialog_focus.clone());
+        self.focus_in_dialog(self.dialog_focus.clone(), cx);
+    }
+
+    /// Focuses `focus`, a control of a dialog that has just opened, and notes what had focus
+    /// until then, the control the dialog was opened from, so focus can go back there when the
+    /// dialog closes (`return_focus`). A dialog opened over another keeps the first one's note.
+    pub(super) fn focus_in_dialog(&self, focus: FocusHandle, cx: &mut Context<Self>) {
+        let window = self.window;
+        let this = cx.weak_entity();
         cx.defer(move |cx| {
             window
-                .update(cx, |_, window, cx| focus.focus(window, cx))
+                .update(cx, |_, window, cx| {
+                    let before = window.focused(cx);
+                    this.update(cx, |this, _| this.note_opener(before)).ok();
+                    focus.focus(window, cx)
+                })
                 .ok();
         });
+    }
+
+    /// Keeps `focused` as what to go back to when the dialogs close, unless one is noted.
+    pub(super) fn note_opener(&mut self, focused: Option<FocusHandle>) {
+        if self.opener.is_none() {
+            self.opener = focused;
+        }
+    }
+
+    /// Once no dialog is open, gives focus back to the control the dialog was opened from. If
+    /// that control is gone, as a deleted card's menu is, the frame drawn next finds nothing
+    /// focused and `on_focus_lost` picks a place instead. Called as the window renders.
+    pub(super) fn return_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.dialog_open()
+            && let Some(opener) = self.opener.take()
+        {
+            opener.focus(window, cx);
+        }
     }
 
     /// Deletes the session's unsaved captures and quits. Done here and now rather than on the

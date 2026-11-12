@@ -8,7 +8,7 @@ use gpui::{
     AccessibleAction, App, ElementId, Role, SharedString, Toggled, Window, div, prelude::*, px,
 };
 
-use super::{MIN_TARGET, focus_marks, keyed_focus};
+use super::{MIN_TARGET, RingFocus, focus_marks, keyed_focus};
 use crate::theme::ActiveTheme;
 
 type ChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
@@ -92,7 +92,7 @@ impl RenderOnce for Toggle {
             .aria_label(self.label)
             .when_some(self.description, |this, text| this.aria_description(text))
             .aria_toggled(toggled)
-            .track_focus(&focus)
+            .track_ring_focus(&focus)
             .flex_none()
             .h(px(MIN_TARGET))
             .flex()
