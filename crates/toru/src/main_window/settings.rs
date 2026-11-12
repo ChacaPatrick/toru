@@ -1,4 +1,5 @@
-//! The settings column (DESIGN.md §2 with CLAUDE.md's overrides): Session, Capture, Shortcuts,
+//! The settings column (DESIGN.md §2 with CLAUDE.md's overrides): Session, Capture (with Start
+//! with Windows, which has no mockup and sits by Keep running in the tray), Shortcuts,
 //! Save to, Name pattern, Format and On close, each group a label over its controls, as the
 //! mockups' `.settings` lays them out, then Delete unsaved after (`retention`), which has no
 //! mockup and follows On close since both are about unsaved captures, then Look and Palette
@@ -23,11 +24,12 @@ use toru_core::{
 use super::{
     HINT_LEADING, MainWindow, act, custom_palette::look_name, retention, shortcuts_dialog,
 };
+use crate::platform;
 use crate::shortcuts::{Binding, Planned, Problem};
 use crate::theme::{ActiveTheme, Theme, ThemedText, custom_palette, set_theme};
 use crate::ui::{
     BUTTON_SMALL_HEIGHT, Button, Icon, MIN_TARGET, RadioGroup, Readable, Segmented, TextField,
-    Toggle,
+    Toast, Toggle,
 };
 
 pub const WIDTH: f32 = 300.;
@@ -50,6 +52,9 @@ const SWATCH_GAP: f32 = 6.;
 
 const SHOW_PREVIOUS_HINT: &str =
     "Off = clean slate each session. On = earlier shots load below, a day at a time as you scroll.";
+
+const START_WITH_WINDOWS_HINT: &str = "Starts in the tray when you sign in.";
+const START_WITH_WINDOWS_FAILED: &str = "Couldn't change Start with Windows.";
 
 const FORMATS: [SaveFormat; 3] = [SaveFormat::Png, SaveFormat::Jpg, SaveFormat::WebP];
 const ON_CLOSE: [OnClose; 3] = [OnClose::Ask, OnClose::Keep, OnClose::Discard];
@@ -128,6 +133,14 @@ pub fn settings_column(
                     settings.keep_in_tray,
                     None,
                     |settings, on| settings.keep_in_tray = on,
+                ))
+                .child(toggle_with(
+                    cx,
+                    "start-with-windows",
+                    "Start with Windows",
+                    this.starts_with_windows,
+                    Some(START_WITH_WINDOWS_HINT),
+                    |this, cx, on| this.set_starts_with_windows(on, cx),
                 ))
                 .child(toggle(
                     cx,
@@ -310,6 +323,15 @@ impl MainWindow {
         });
         set_theme(Theme::from_settings(&self.settings), cx);
     }
+
+    /// Start with Windows, which lives in the registry rather than `Settings`.
+    fn set_starts_with_windows(&mut self, on: bool, cx: &mut Context<Self>) {
+        match platform::set_starts_with_windows(on) {
+            Ok(()) => self.starts_with_windows = on,
+            Err(_) => self.show_toast(Toast::failed(START_WITH_WINDOWS_FAILED), cx),
+        }
+        cx.notify();
+    }
 }
 
 /// The active look's palettes, each row its name over its four colours, then the custom one
@@ -426,10 +448,24 @@ fn toggle(
     description: Option<&'static str>,
     set: impl Fn(&mut Settings, bool) + Clone + 'static,
 ) -> Div {
+    toggle_with(cx, id, label, on, description, move |this, cx, on| {
+        this.change_settings(cx, |settings| set(settings, on))
+    })
+}
+
+/// `toggle` for a setting kept outside `Settings`, which `set` changes itself.
+fn toggle_with(
+    cx: &Context<MainWindow>,
+    id: &'static str,
+    label: &'static str,
+    on: bool,
+    description: Option<&'static str>,
+    set: impl Fn(&mut MainWindow, &mut Context<MainWindow>, bool) + Clone + 'static,
+) -> Div {
     let theme = cx.theme();
     let flip = act(cx, {
         let set = set.clone();
-        move |this, cx| this.change_settings(cx, |settings| set(settings, !on))
+        move |this, cx| set(this, cx, !on)
     });
     row(theme)
         .child(
@@ -453,9 +489,7 @@ fn toggle(
         .child(
             Toggle::new(id, label, on)
                 .when_some(description, Toggle::description)
-                .on_change(act_with(cx, move |this, cx, on| {
-                    this.change_settings(cx, |settings| set(settings, on))
-                })),
+                .on_change(act_with(cx, set)),
         )
 }
 

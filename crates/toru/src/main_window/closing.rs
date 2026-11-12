@@ -154,10 +154,30 @@ impl MainWindow {
         false
     }
 
+    /// Shows the window from the tray, restored if minimized, and brings it forward. A window
+    /// opened hidden (`--tray`) has never been placed, so the first time GPUI places it where
+    /// it would have opened, and the foreground follows once it has.
+    pub fn show_window(&mut self, cx: &mut Context<Self>) {
+        if self.started_hidden
+            && self
+                .window
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+        {
+            self.started_hidden = false;
+            // GPUI places the window in a task of its own, which runs before this one.
+            cx.spawn(async |_, _| platform::show_main_window()).detach();
+            return;
+        }
+        platform::show_main_window();
+    }
+
     /// The tray icon couldn't be added, so closing quits (`on_close_requested`), and the user is
     /// told so rather than left to find out.
     pub fn tray_unavailable(&mut self, cx: &mut Context<Self>) {
         self.has_tray = false;
+        // Started in the tray, the window would have nothing to come back from.
+        self.show_window(cx);
         self.toast
             .show(Toast::failed(NO_TRAY), NO_TRAY_TOAST_FOR, cx, |this| {
                 &mut this.toast
@@ -169,7 +189,7 @@ impl MainWindow {
     /// beyond bringing the window back for the dialog.
     pub fn request_quit(&mut self, cx: &mut Context<Self>) {
         if self.quit_prompt.is_some() {
-            platform::show_main_window();
+            self.show_window(cx);
             return;
         }
         if self.quitting {
@@ -200,7 +220,7 @@ impl MainWindow {
                 self.delete_prompt = None;
                 self.clear_prompt = false;
                 self.quit_prompt = Some(unsaved);
-                platform::show_main_window();
+                self.show_window(cx);
                 self.focus_dialog(cx);
                 cx.notify();
             }

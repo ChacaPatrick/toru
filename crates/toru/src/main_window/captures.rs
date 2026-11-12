@@ -103,7 +103,7 @@ impl MainWindow {
                             if !edits_kept {
                                 this.open_editor(id, cx);
                             }
-                            platform::show_main_window();
+                            this.show_window(cx);
                         }
                         edits_kept
                     })

@@ -6,7 +6,8 @@
 //! languages that order them, bringing the capture overlay
 //! to the foreground, telling which windows a user can
 //! pick, hiding the main window in the tray and showing it again, telling a running Toru
-//! that a second one was launched, and saying why Windows' shutdown waits. Windows is done here; the other platforms get the fallbacks
+//! that a second one was launched, saying why Windows' shutdown waits, and starting Toru when
+//! the user signs in. Windows is done here; the other platforms get the fallbacks
 //! at the bottom until they are.
 
 use std::{path::PathBuf, time::Duration};
@@ -202,6 +203,7 @@ mod windows {
             name: *const u16,
         ) -> isize;
         fn OpenEventW(access: u32, inherit: i32, name: *const u16) -> isize;
+        fn CreateMutexW(attributes: *const u8, initial_owner: i32, name: *const u16) -> isize;
         fn SetEvent(event: isize) -> i32;
         fn WaitForSingleObject(handle: isize, milliseconds: u32) -> u32;
         fn CloseHandle(handle: isize) -> i32;
@@ -821,6 +823,221 @@ mod windows {
         unsafe { MessageBoxW(0, text.as_ptr(), caption.as_ptr(), MB_ICONERROR) };
     }
 
+    /// Where Windows looks for what to start when the user signs in.
+    const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    /// Where Windows' Startup apps page (Settings and Task Manager) marks a `RUN_KEY` value of
+    /// the same name enabled or disabled, leaving the value itself in place.
+    const APPROVED_KEY: &str =
+        r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+    /// Toru's value under `RUN_KEY` and `APPROVED_KEY`. The installer's "Start Toru when Windows
+    /// starts" writes the first, and its uninstaller removes both (`installer/toru.iss`).
+    const RUN_VALUE: &str = "Toru";
+    /// `HKEY_CURRENT_USER`, sign-extended as Windows declares it.
+    const HKEY_CURRENT_USER: isize = 0x8000_0001_u32 as i32 as isize;
+    const REG_SZ: u32 = 1;
+    #[cfg(test)]
+    pub(super) const REG_BINARY: u32 = 3;
+    const RRF_RT_REG_SZ: u32 = 0x2;
+    const RRF_RT_REG_BINARY: u32 = 0x8;
+    const ERROR_FILE_NOT_FOUND: i32 = 2;
+
+    #[link(name = "advapi32")]
+    unsafe extern "system" {
+        fn RegGetValueW(
+            key: isize,
+            subkey: *const u16,
+            value: *const u16,
+            flags: u32,
+            kind: *mut u32,
+            data: *mut u8,
+            bytes: *mut u32,
+        ) -> i32;
+        fn RegSetKeyValueW(
+            key: isize,
+            subkey: *const u16,
+            value: *const u16,
+            kind: u32,
+            data: *const u8,
+            bytes: u32,
+        ) -> i32;
+        fn RegDeleteKeyValueW(key: isize, subkey: *const u16, value: *const u16) -> i32;
+        #[cfg(test)]
+        fn RegDeleteKeyW(key: isize, subkey: *const u16) -> i32;
+    }
+
+    /// Removes the key `HKEY_CURRENT_USER\subkey` a test made, which has no subkeys.
+    #[cfg(test)]
+    pub(super) fn delete_user_key(subkey: &str) {
+        let subkey = wide(subkey);
+        // SAFETY: the name is NUL-terminated.
+        unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, subkey.as_ptr()) };
+    }
+
+    /// The command Windows runs at sign-in: this exe, started in the tray (`main::start_hidden`).
+    pub(super) fn run_command(exe: &Path) -> String {
+        format!("\"{}\" --tray", exe.display())
+    }
+
+    /// The exe a Run command starts, when it is quoted as `run_command` writes it.
+    pub(super) fn run_command_exe(command: &str) -> Option<PathBuf> {
+        let (exe, _) = command.strip_prefix('"')?.split_once('"')?;
+        Some(PathBuf::from(exe))
+    }
+
+    /// Whether an `APPROVED_KEY` value says the Startup apps page turned the entry off: its
+    /// first byte is 2 (or 6) while enabled and 3 (or 7) while disabled, followed by when.
+    pub(super) fn approved_says_disabled(data: &[u8]) -> bool {
+        data.first().is_some_and(|flags| flags & 1 != 0)
+    }
+
+    /// The data of the value `value` under `HKEY_CURRENT_USER\subkey`, if there is one of a
+    /// type `flags` allows.
+    fn read_user_data(subkey: &str, value: &str, flags: u32) -> Option<Vec<u8>> {
+        let (subkey, value) = (wide(subkey), wide(value));
+        let mut buffer = vec![0u8; 2048];
+        let mut bytes = buffer.len() as u32;
+        // SAFETY: the names are NUL-terminated and the buffer's size in bytes is passed along.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                subkey.as_ptr(),
+                value.as_ptr(),
+                flags,
+                std::ptr::null_mut(),
+                buffer.as_mut_ptr(),
+                &mut bytes,
+            )
+        };
+        (status == 0).then(|| {
+            buffer.truncate(bytes as usize);
+            buffer
+        })
+    }
+
+    /// The text of the string value `value` under `HKEY_CURRENT_USER\subkey`, if there is one.
+    pub(super) fn read_user_value(subkey: &str, value: &str) -> Option<String> {
+        let data = read_user_data(subkey, value, RRF_RT_REG_SZ)?;
+        let text: Vec<u16> = data
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&pair| u16::from_le_bytes(pair))
+            .take_while(|&unit| unit != 0)
+            .collect();
+        Some(String::from_utf16_lossy(&text))
+    }
+
+    /// Writes `data` as the value `value` of type `kind` under `HKEY_CURRENT_USER\subkey`,
+    /// creating the key if need be.
+    pub(super) fn write_user_data(
+        subkey: &str,
+        value: &str,
+        kind: u32,
+        data: &[u8],
+    ) -> io::Result<()> {
+        let (subkey, value) = (wide(subkey), wide(value));
+        // SAFETY: both names are NUL-terminated, and the data's size in bytes is passed along.
+        let status = unsafe {
+            RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                subkey.as_ptr(),
+                value.as_ptr(),
+                kind,
+                data.as_ptr(),
+                data.len() as u32,
+            )
+        };
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::from_raw_os_error(status))
+        }
+    }
+
+    /// Writes `text` as the string value `value` under `HKEY_CURRENT_USER\subkey`.
+    pub(super) fn write_user_value(subkey: &str, value: &str, text: &str) -> io::Result<()> {
+        let data: Vec<u8> = wide(text)
+            .iter()
+            .flat_map(|unit| unit.to_le_bytes())
+            .collect();
+        write_user_data(subkey, value, REG_SZ, &data)
+    }
+
+    /// Removes the value `value` under `HKEY_CURRENT_USER\subkey`. One that isn't there is
+    /// already gone.
+    pub(super) fn delete_user_value(subkey: &str, value: &str) -> io::Result<()> {
+        let (subkey, value) = (wide(subkey), wide(value));
+        // SAFETY: both names are NUL-terminated.
+        let status =
+            unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, subkey.as_ptr(), value.as_ptr()) };
+        match status {
+            0 | ERROR_FILE_NOT_FOUND => Ok(()),
+            _ => Err(io::Error::from_raw_os_error(status)),
+        }
+    }
+
+    /// Holds a named mutex for the life of the process, which the installer and uninstaller
+    /// look for (`AppMutex` in `installer/toru.iss`) so they ask for Toru to be quit first.
+    pub fn mark_running() {
+        let name = wide("Toru.Running");
+        // SAFETY: the name is NUL-terminated. The handle is never closed, so the mutex lasts as
+        // long as the process.
+        unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
+    }
+
+    /// Whether Windows starts the Toru that `run_key` names at sign-in: the value is there and
+    /// the Startup apps page hasn't turned it off under `approved_key`.
+    pub(super) fn starts_at_sign_in(run_key: &str, approved_key: &str) -> bool {
+        read_user_value(run_key, RUN_VALUE).is_some()
+            && !read_user_data(approved_key, RUN_VALUE, RRF_RT_REG_BINARY)
+                .is_some_and(|data| approved_says_disabled(&data))
+    }
+
+    /// Has Windows start `exe` in the tray at sign-in, or stop. Either way the Startup apps
+    /// page's mark goes, so turning on isn't still blocked by an earlier "disabled" there.
+    pub(super) fn set_start_at_sign_in(
+        run_key: &str,
+        approved_key: &str,
+        on: bool,
+        exe: &Path,
+    ) -> io::Result<()> {
+        if on {
+            write_user_value(run_key, RUN_VALUE, &run_command(exe))?;
+        } else {
+            delete_user_value(run_key, RUN_VALUE)?;
+        }
+        delete_user_value(approved_key, RUN_VALUE)
+    }
+
+    /// Points the Run value at `exe` when the exe it names is gone, as after Toru was moved or
+    /// reinstalled elsewhere. One naming another copy that still exists, such as a development
+    /// build, is left to the user's switch.
+    pub(super) fn repoint_start_at_sign_in(run_key: &str, exe: &Path) {
+        let stale = read_user_value(run_key, RUN_VALUE)
+            .and_then(|command| run_command_exe(&command))
+            .is_some_and(|named| named != exe && !named.exists());
+        if stale {
+            write_user_value(run_key, RUN_VALUE, &run_command(exe)).ok();
+        }
+    }
+
+    /// Whether Windows starts Toru when the user signs in, whichever copy of Toru it names.
+    pub fn starts_with_windows() -> bool {
+        starts_at_sign_in(RUN_KEY, APPROVED_KEY)
+    }
+
+    /// Has Windows start this copy of Toru, in the tray, when the user signs in, or stop doing so.
+    pub fn set_starts_with_windows(on: bool) -> io::Result<()> {
+        set_start_at_sign_in(RUN_KEY, APPROVED_KEY, on, &std::env::current_exe()?)
+    }
+
+    /// `repoint_start_at_sign_in` for this exe, at start-up.
+    pub fn repoint_start_with_windows() {
+        if let Ok(exe) = std::env::current_exe() {
+            repoint_start_at_sign_in(RUN_KEY, &exe);
+        }
+    }
+
     /// The full `HWND` from the low 32 bits `xcap` keeps as a window id: handles are 32-bit
     /// values sign-extended to 64, so the top half is the bottom half's sign.
     pub fn hwnd_from_id(id: u32) -> isize {
@@ -939,8 +1156,9 @@ pub const EXCLUDE_SETTLE: Duration = Duration::from_millis(50);
 pub use windows::{
     bring_overlay_to_foreground, default_save_folder, exclude_windows_from_capture, fallback_fonts,
     held_modifiers, hide_main_window, is_window_pickable, local_now, main_window_hidden, map_file,
-    pressed_key, recycle_file, request_close, restore_window, reveal_file, show_main_window,
-    show_startup_error, signal_running_instance, user_languages, watch_for_show,
+    mark_running, pressed_key, recycle_file, repoint_start_with_windows, request_close,
+    restore_window, reveal_file, set_starts_with_windows, show_main_window, show_startup_error,
+    signal_running_instance, starts_with_windows, user_languages, watch_for_show,
     while_holding_up_shutdown,
 };
 
@@ -1017,6 +1235,22 @@ pub fn exclude_windows_from_capture(_exclude: bool) {}
 #[cfg(not(windows))]
 pub fn is_window_pickable(_id: u32) -> bool {
     true
+}
+
+#[cfg(not(windows))]
+pub fn mark_running() {}
+
+#[cfg(not(windows))]
+pub fn repoint_start_with_windows() {}
+
+#[cfg(not(windows))]
+pub fn starts_with_windows() -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+pub fn set_starts_with_windows(_on: bool) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
 }
 
 #[cfg(not(windows))]
@@ -1321,6 +1555,112 @@ mod tests {
                 win: false,
             }
         );
+    }
+
+    #[test]
+    fn the_run_command_starts_this_exe_in_the_tray() {
+        assert_eq!(
+            windows::run_command(Path::new(r"C:\Users\A B\Toru\toru.exe")),
+            r#""C:\Users\A B\Toru\toru.exe" --tray"#
+        );
+    }
+
+    /// On a key of the test's own, never the real Run key.
+    #[test]
+    fn a_user_value_is_written_read_and_deleted() {
+        let key = format!(r"Software\Toru-tests-{}", std::process::id());
+        let text = r#""C:\Users\Tōru Ä\toru.exe" --tray"#;
+        assert_eq!(windows::read_user_value(&key, "Toru"), None);
+        windows::write_user_value(&key, "Toru", text).unwrap();
+        assert_eq!(
+            windows::read_user_value(&key, "Toru").as_deref(),
+            Some(text)
+        );
+        windows::delete_user_value(&key, "Toru").unwrap();
+        assert_eq!(windows::read_user_value(&key, "Toru"), None);
+        // Deleting a value that's already gone isn't an error.
+        windows::delete_user_value(&key, "Toru").unwrap();
+        windows::delete_user_key(&key);
+    }
+
+    #[test]
+    fn the_startup_apps_mark_reads_disabled_on_its_odd_flags() {
+        // As Windows writes them: the flag, then for a disabled entry when it was turned off.
+        let enabled = [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let disabled = [3, 0, 0, 0, 0xDD, 0x5D, 0x67, 0xCC, 0xA3, 0x9E, 0xDC, 0x01];
+        assert!(!windows::approved_says_disabled(&enabled));
+        assert!(windows::approved_says_disabled(&disabled));
+        assert!(!windows::approved_says_disabled(&[6]));
+        assert!(windows::approved_says_disabled(&[7]));
+        assert!(!windows::approved_says_disabled(&[]));
+    }
+
+    #[test]
+    fn the_exe_is_read_back_from_a_quoted_run_command() {
+        let exe = Path::new(r"C:\Users\A B\Toru\toru.exe");
+        assert_eq!(
+            windows::run_command_exe(&windows::run_command(exe)).as_deref(),
+            Some(exe)
+        );
+        assert_eq!(windows::run_command_exe(r"C:\toru.exe --tray"), None);
+    }
+
+    /// On keys of the test's own, never the real Run or StartupApproved keys.
+    #[test]
+    fn start_at_sign_in_follows_the_startup_apps_mark_and_clears_it() {
+        let run = format!(r"Software\Toru-tests-{}-run", std::process::id());
+        let approved = format!(r"Software\Toru-tests-{}-approved", std::process::id());
+        let exe = std::env::current_exe().unwrap();
+        let mark = |flag: u8| {
+            windows::write_user_data(&approved, "Toru", windows::REG_BINARY, &[flag, 0, 0, 0])
+                .unwrap()
+        };
+
+        assert!(!windows::starts_at_sign_in(&run, &approved));
+        windows::set_start_at_sign_in(&run, &approved, true, &exe).unwrap();
+        assert!(windows::starts_at_sign_in(&run, &approved));
+        mark(2);
+        assert!(windows::starts_at_sign_in(&run, &approved));
+        // Turned off on the Startup apps page: the Run value stays, but Toru won't start.
+        mark(3);
+        assert!(windows::read_user_value(&run, "Toru").is_some());
+        assert!(!windows::starts_at_sign_in(&run, &approved));
+        // Turning the switch on again clears that mark.
+        windows::set_start_at_sign_in(&run, &approved, true, &exe).unwrap();
+        assert!(windows::starts_at_sign_in(&run, &approved));
+        assert_eq!(windows::read_user_value(&approved, "Toru"), None);
+        mark(3);
+        windows::set_start_at_sign_in(&run, &approved, false, &exe).unwrap();
+        assert!(!windows::starts_at_sign_in(&run, &approved));
+        assert_eq!(windows::read_user_value(&run, "Toru"), None);
+
+        windows::delete_user_key(&run);
+        windows::delete_user_key(&approved);
+    }
+
+    /// On a key of the test's own, never the real Run key.
+    #[test]
+    fn a_run_value_naming_a_missing_exe_is_repointed_and_another_copy_is_not() {
+        let run = format!(r"Software\Toru-tests-{}-repoint", std::process::id());
+        let exe = std::env::current_exe().unwrap();
+        let read = || windows::read_user_value(&run, "Toru");
+
+        // Nothing there: nothing written.
+        windows::repoint_start_at_sign_in(&run, &exe);
+        assert_eq!(read(), None);
+        // Another copy that exists, here the test's own folder standing in for one.
+        let other = windows::run_command(&std::env::temp_dir());
+        windows::write_user_value(&run, "Toru", &other).unwrap();
+        windows::repoint_start_at_sign_in(&run, &exe);
+        assert_eq!(read(), Some(other));
+        // A copy that's gone.
+        let gone = unique_dir("gone").join("toru.exe");
+        windows::write_user_value(&run, "Toru", &windows::run_command(&gone)).unwrap();
+        windows::repoint_start_at_sign_in(&run, &exe);
+        assert_eq!(read(), Some(windows::run_command(&exe)));
+
+        windows::delete_user_value(&run, "Toru").unwrap();
+        windows::delete_user_key(&run);
     }
 
     #[test]

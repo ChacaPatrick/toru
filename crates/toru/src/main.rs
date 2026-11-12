@@ -37,6 +37,10 @@ const WINDOW_SIZE: (f32, f32) = (1280., 940.);
 /// bar each on one row (`main_window::gallery`'s tests hold the columns to this).
 const MIN_WINDOW_SIZE: (f32, f32) = (900., 480.);
 
+/// The argument Windows starts Toru with when the user signs in (`platform::set_starts_with_windows`
+/// and the installer): the app starts in the tray, with its window hidden until asked for.
+const TRAY_ARG: &str = "--tray";
+
 /// `toru [japandi|pixel_art|neo_brutalism] [palette|custom] [editor [demo]]` opens the window in
 /// that look and palette, and straight in the editor if asked, with the sample marks of the
 /// Editor mockup on the picture if `demo` is given too, so each can be checked against the mockups
@@ -52,7 +56,7 @@ fn appearance_from_args(settings: &Settings) -> (Settings, Option<EditorStart>) 
             EditorStart::Plain
         }
     });
-    args.retain(|arg| arg != "editor" && arg != "demo");
+    args.retain(|arg| arg != "editor" && arg != "demo" && arg != TRAY_ARG);
     let mut args = args.into_iter();
     appearance.look = match args.next().as_deref() {
         Some("japandi") => Look::Japandi,
@@ -95,6 +99,8 @@ fn main() {
         }
         Err(error) => cannot_start(error),
     };
+    platform::mark_running();
+    platform::repoint_start_with_windows();
     // The store only fails here if the database itself can't be read, and the defaults still work.
     let settings = store.load_settings().unwrap_or_default();
     let session = store
@@ -109,6 +115,7 @@ fn main() {
         ui::init(cx);
         install_fonts(cx);
         let (appearance, open_editor) = appearance_from_args(&settings);
+        let start_hidden = std::env::args().any(|arg| arg == TRAY_ARG);
         set_theme(Theme::from_settings(&appearance), cx);
         let bounds = Bounds::centered(None, size(px(WINDOW_SIZE.0), px(WINDOW_SIZE.1)), cx);
         // One channel carries the tray's requests, a second launch and the global shortcuts'
@@ -127,12 +134,16 @@ fn main() {
                     ..Default::default()
                 }),
                 window_min_size: Some(size(px(MIN_WINDOW_SIZE.0), px(MIN_WINDOW_SIZE.1))),
+                // Opened hidden, GPUI places the window the first time it is activated
+                // (`MainWindow::show_window`).
+                show: !start_hidden,
                 ..Default::default()
             },
             cx,
             |window, cx| {
                 cx.new(|cx| {
                     let mut main = MainWindow::new(store, session, settings, hotkeys, window, cx);
+                    main.started_hidden = start_hidden;
                     main.clean_up_history(cx);
                     if let Some(start) = open_editor {
                         main.open_newest_in_editor(start, cx);
@@ -195,7 +206,7 @@ fn run_in_tray(
                 break;
             };
             cx.update(|cx| match request {
-                Request::Show => platform::show_main_window(),
+                Request::Show => main.update(cx, |this, cx| this.show_window(cx)),
                 Request::Quit => main.update(cx, |this, cx| this.request_quit(cx)),
                 Request::Hotkey(id) => main.update(cx, |this, cx| this.hotkey_pressed(id, cx)),
             });

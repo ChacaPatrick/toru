@@ -128,6 +128,13 @@ pub struct MainWindow {
     quitting: bool,
     /// The tray icon is there to bring the window back from, so closing may hide it.
     has_tray: bool,
+    /// The window was opened hidden in the tray (`--tray`) and hasn't been shown since, so GPUI
+    /// hasn't placed it yet (`show_window`).
+    pub started_hidden: bool,
+    /// Whether Windows starts Toru when the user signs in, as the registry says
+    /// (`platform::starts_with_windows`). It isn't in `Settings`, so the installer's checkbox
+    /// and this setting can't disagree.
+    starts_with_windows: bool,
     /// The quit dialog is up, asking about this many unsaved captures (`closing`).
     quit_prompt: Option<usize>,
     /// The delete dialog is up, asking about these cards (`delete`).
@@ -319,6 +326,8 @@ impl MainWindow {
             countdown: None,
             quitting: false,
             has_tray: true,
+            started_hidden: false,
+            starts_with_windows: platform::starts_with_windows(),
             quit_prompt: None,
             delete_prompt: None,
             clear_prompt: false,
