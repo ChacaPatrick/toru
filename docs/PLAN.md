@@ -67,11 +67,11 @@ Drawn with `tiny-skia`, so the screen matches the saved file exactly.
 - [x] 9.2 Custom fourth palette and background photo, with a contrast warning
 
 ## Phase 10: Finish and ship
-- [ ] 10.1 Keyboard, contrast and reduced-motion pass, plus idle memory
+- [x] 10.1 Keyboard, contrast and reduced-motion pass, plus idle memory
 - [x] 10.2 Screen reader pass, if 1.5 worked
-- [ ] 10.3 Installer that ships the font licences, start with Windows, clean-machine test
+- [x] 10.3 Installer that ships the font licences, start with Windows, clean-machine test
 - [x] 10.4 Layout and looks fixes from the Nov 9 review: columns that follow the window, empty state, select bar, bottom bar [Fable]
-- [x] 10.5 Bug fixes from KNOWN_ISSUES.md, one PR per group (10.5.1–10.5.13) [Opus]
+- [x] 10.5 Bug fixes from KNOWN_ISSUES.md, one PR per group (10.5.1–10.5.16) [Opus]
 
 ## Approved libraries
 | Job | Library |
