@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Toru third-party notices</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 60rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+  pre { white-space: pre-wrap; background: #f4f4f4; padding: 1rem; font-size: 0.85rem; }
+  ul.crates { columns: 2; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1e1e1e; color: #ddd; }
+    a { color: #8ab4f8; }
+    pre { background: #2a2a2a; }
+  }
+</style>
+</head>
+<body>
+<h1>Third-party notices</h1>
+<p>Toru is built with the open-source Rust crates listed below, under the licences shown. The source code of each
+crate is available from its crates.io page, linked from its name. The licences of the bundled fonts are in the
+<code>licences\fonts</code> folder next to this file.</p>
+
+<h2>Licences used</h2>
+<ul>
+{{#each overview}}
+  <li><a href="#{{id}}">{{name}}</a> ({{count}})</li>
+{{/each}}
+</ul>
+
+<h2>Licence texts</h2>
+{{#each licenses}}
+<section>
+  <h3{{#if first_of_kind}} id="{{id}}"{{/if}}>{{name}}</h3>
+  <p>Used by:</p>
+  <ul class="crates">
+  {{#each used_by}}
+    <li><a href="https://crates.io/crates/{{crate.name}}/{{crate.version}}">{{crate.name}} {{crate.version}}</a></li>
+  {{/each}}
+  </ul>
+  <pre>{{text}}</pre>
+</section>
+{{/each}}
+</body>
+</html>

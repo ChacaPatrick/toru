@@ -1,0 +1,148 @@
+# cargo-about config for THIRD-PARTY-NOTICES.html, the licence notices for the crates compiled
+# into toru.exe. installer\build.ps1 runs `cargo about generate` with this and about.hbs.
+
+# Only what ends up in the Windows release exe: no dev-dependencies, no build scripts' own
+# dependencies, and the workspace's own (unpublished) crates are skipped.
+targets = ["x86_64-pc-windows-msvc"]
+ignore-dev-dependencies = true
+ignore-build-dependencies = true
+private = { ignore = true }
+
+# The licences the dependency tree actually uses. For a crate offering a choice ("MIT OR
+# Apache-2.0"), the first one listed here that it offers is the one shown.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "BSD-2-Clause",
+    "ISC",
+    "Zlib",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "0BSD",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+
+# chrono keeps MIT and Apache-2.0 in one file; cargo-about has a built-in split for it.
+workarounds = ["chrono"]
+
+# Clarifications. Each pins a crate's licence files by checksum, so a version bump that changes
+# them fails the build instead of silently shipping the wrong text; refresh the checksum after
+# reading the new file. They fall into three kinds:
+# - the crate compiles code under another licence that its `license` field doesn't name;
+# - the crate's licence file has its real copyright line but cargo-about doesn't pick it up
+#   (lower-case or hidden file names, several licences in one file, Markdown), so it would fall
+#   back to the generic licence text;
+# - both.
+
+# libwebp-sys builds the libwebp C library it vendors, which is under Google's BSD licence.
+[libwebp-sys.clarify]
+license = "MIT AND BSD-3-Clause"
+files = [{ path = "vendor/COPYING", license = "BSD-3-Clause", checksum = "5aec868f669e384a22372a4e8a1a6cd7d44c64cd451f960ca69cc170d1e13acf" }]
+
+# regex-syntax's Unicode tables are generated from Unicode data files, under Unicode's licence.
+[regex-syntax.clarify]
+license = "(MIT OR Apache-2.0) AND Unicode-DFS-2016"
+files = [
+    { path = "LICENSE-MIT", license = "MIT", checksum = "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb" },
+    { path = "LICENSE-APACHE", license = "Apache-2.0", checksum = "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2" },
+    { path = "src/unicode_tables/LICENSE-UNICODE", license = "Unicode-DFS-2016", checksum = "74db5baf44a41b1000312c673544b3374e4198af5605c7f9080a402cec42cfa3" },
+]
+
+# gpui-kit-assets embeds Lucide icons, which are under the ISC licence.
+[gpui-kit-assets.clarify]
+license = "Apache-2.0 AND ISC"
+files = [{ path = "LICENSE-LUCIDE", license = "ISC", checksum = "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57" }]
+
+# Its LICENSE asks for the earlier authors' notices too, which are in the hidden .licenses folder.
+[granit-parser.clarify]
+license = "MIT OR Apache-2.0"
+files = [
+    { path = "LICENSE", license = "MIT", checksum = "1af262e6647807eecaec988ecf2b783fb8fdbdecba396d582c1aab90615f6845" },
+    { path = ".licenses/ChenYuheng-MIT", license = "MIT", checksum = "70480dc70c2fe1d9bbb64dab9a0abce266332905ffef9cabeae26dd027716ecb" },
+    { path = ".licenses/Ethiraric-MIT", license = "MIT", checksum = "90f4ea53f408858ba4886f57b8e3ceac876eefbb59c20f0844f0abbfa59e2749" },
+]
+
+# src/simd.rs is MIT; the file holds both licences.
+[sha1_smol.clarify]
+license = "BSD-3-Clause AND MIT"
+files = [{ path = "LICENSE", license = "BSD-3-Clause AND MIT", checksum = "282a21b0710441c364025461a447362daf18f5798a7b72ae2f801a2aa536da51" }]
+
+[exr.clarify]
+license = "BSD-3-Clause"
+files = [{ path = "LICENSE.md", license = "BSD-3-Clause", checksum = "97e4d3aa7a9e8ac31979c16ca8bb2b628a9cb72c3362185ad2bf4ad77f43551f" }]
+
+# One file with libm's MIT licence and the notices of the code it was ported from.
+[libm.clarify]
+license = "MIT"
+files = [{ path = "LICENSE.txt", license = "MIT", checksum = "3823dda7cf046602f4b4e77ec8e227863dc4736037cc85bb33d9f19febe16bb7" }]
+
+[dpi.clarify]
+license = "Apache-2.0 AND MIT"
+files = [
+    { path = "LICENSE", license = "Apache-2.0", checksum = "6dc0e068dcf3a5bc8e054205b85b7720e1d49265bbc64bf515d2cf79197df69a" },
+    { path = "LICENSE-LIBM-MIT", license = "MIT", checksum = "9eff396a99bafd208e7126602420d6864f6066c08b84485a5b032320a9c01997" },
+]
+
+# The windows-rs crates ship a lower-case `license-mit`, which cargo-about doesn't scan.
+[windows.clarify]
+license = "MIT OR Apache-2.0"
+files = [{ path = "license-mit", license = "MIT", checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383" }]
+
+[windows-sys.clarify]
+license = "MIT OR Apache-2.0"
+files = [{ path = "license-mit", license = "MIT", checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383" }]
+
+[windows-core.clarify]
+license = "MIT OR Apache-2.0"
+files = [{ path = "license-mit", license = "MIT", checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383" }]
+
+[windows-targets.clarify]
+license = "MIT OR Apache-2.0"
+files = [{ path = "license-mit", license = "MIT", checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383" }]
+
+[windows_x86_64_msvc.clarify]
+license = "MIT OR Apache-2.0"
+files = [{ path = "license-mit", license = "MIT", checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383" }]
+
+[windows-implement.clarify]
+license = "MIT OR Apache-2.0"
+files = [{ path = "license-mit", license = "MIT", checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383" }]
+
+[windows-interface.clarify]
+license = "MIT OR Apache-2.0"
+files = [{ path = "license-mit", license = "MIT", checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383" }]
+
+[windows-link.clarify]
+license = "MIT OR Apache-2.0"
+files = [{ path = "license-mit", license = "MIT", checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383" }]
+
+[windows-result.clarify]
+license = "MIT OR Apache-2.0"
+files = [{ path = "license-mit", license = "MIT", checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383" }]
+
+[windows-strings.clarify]
+license = "MIT OR Apache-2.0"
+files = [{ path = "license-mit", license = "MIT", checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383" }]
+
+[windows-collections.clarify]
+license = "MIT OR Apache-2.0"
+files = [{ path = "license-mit", license = "MIT", checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383" }]
+
+[windows-future.clarify]
+license = "MIT OR Apache-2.0"
+files = [{ path = "license-mit", license = "MIT", checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383" }]
+
+[windows-numerics.clarify]
+license = "MIT OR Apache-2.0"
+files = [{ path = "license-mit", license = "MIT", checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383" }]
+
+[windows-registry.clarify]
+license = "MIT OR Apache-2.0"
+files = [{ path = "license-mit", license = "MIT", checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383" }]
+
+[windows-threading.clarify]
+license = "MIT OR Apache-2.0"
+files = [{ path = "license-mit", license = "MIT", checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383" }]

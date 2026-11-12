@@ -55,6 +55,8 @@ Source: "..\target\release\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
 ; The fonts are compiled into the exe; their licences ship beside it.
 Source: "..\assets\fonts\*-OFL.txt"; DestDir: "{app}\licences\fonts"; Flags: ignoreversion
 Source: "..\assets\fonts\README.md"; DestDir: "{app}\licences\fonts"; Flags: ignoreversion
+; The licence notices of the crates compiled into the exe, written by build.ps1 with cargo-about.
+Source: "..\target\THIRD-PARTY-NOTICES.html"; DestDir: "{app}\licences"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
