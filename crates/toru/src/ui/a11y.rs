@@ -7,6 +7,13 @@ use gpui::{Role, prelude::*};
 
 /// Every heading in the app is a section of a window with no outline above it. AccessKit adds one
 /// for UI Automation, so this reads as level 2.
+///
+/// UI Automation gets a Text element with the `heading` ARIA role, `Level` 2 and `level=1` in its
+/// ARIA properties, but `HeadingLevel` stays `HeadingLevel_None`: accesskit_windows (0.34, which
+/// gpui-pre 0.3.11 uses, and 0.35) never sets it. Narrator finds headings by that property, so its
+/// heading navigation skips these until accesskit_windows maps `Role::Heading` and its level to it.
+/// Proposed upstream in https://github.com/AccessKit/accesskit/issues/840; once released, these
+/// report `HeadingLevel2` with no change here.
 const HEADING_LEVEL: usize = 1;
 
 /// `text` as it should be spoken: the visible separators read as a pause rather than a symbol.
