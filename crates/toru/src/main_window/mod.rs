@@ -119,6 +119,8 @@ pub struct MainWindow {
     capturing: bool,
     /// How many captures and store jobs are under way, which quitting waits for (`closing`).
     pending: Rc<Cell<usize>>,
+    /// Queued writes not started yet, oldest first, which Windows' shutdown writes itself.
+    unstarted: Vec<Rc<dyn closing::Unstarted>>,
     /// `Pictures\Screenshots`, where captures go unless the Save to setting says otherwise.
     default_save_folder: Option<PathBuf>,
     countdown: Option<delayed::RunningCountdown>,
@@ -312,6 +314,7 @@ impl MainWindow {
             queue: None,
             capturing: false,
             pending: closing::pending_counter(),
+            unstarted: Vec::new(),
             default_save_folder: platform::default_save_folder(),
             countdown: None,
             quitting: false,

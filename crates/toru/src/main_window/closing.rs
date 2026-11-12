@@ -10,11 +10,12 @@
 //! A capture under way or still being stored is waited for first, so a shot just taken is counted
 //! and, with Discard, is in the store before the delete rather than landing after it. When Windows
 //! shuts down or logs off there is nobody to ask, so Ask counts as Keep and only Discard acts, in
-//! the moment GPUI gives quit handlers. The queue doesn't run then, so an open editor's edits are
-//! written there and then, before the setting is applied, as a quit from Toru would order them.
+//! the moment GPUI gives quit handlers. The queue doesn't run then, so captures and Back writes
+//! still waiting on it, and then an open editor's edits, are written there and then, before the
+//! setting is applied, as a quit from Toru would order them.
 
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -22,7 +23,7 @@ use std::{
 use gpui::{BackgroundExecutor, Context, SHUTDOWN_TIMEOUT};
 use toru_core::{
     settings::OnClose,
-    store::{CaptureId, Result as StoreResult, Store},
+    store::{CaptureId, Result as StoreResult, SessionId, Store},
 };
 
 use super::{MainWindow, act};
@@ -42,6 +43,36 @@ const NO_TRAY: &str = "Couldn't add the tray icon. Closing the window quits Toru
 const NO_TRAY_TOAST_FOR: Duration = Duration::from_secs(8);
 /// What Windows shows for Toru if it ends the session while the editor's edits are being written.
 const WRITING_EDITS: &str = "Keeping your edits";
+/// The same, while captures and edits still waiting on the queue are being written.
+const WRITING_QUEUED: &str = "Keeping your captures";
+
+/// What a queued write needs, held where the quit handler can reach it until the job starts
+/// (`hold_until_started`): at Windows' shutdown GPUI exits without running the queue, and the
+/// handler writes on the main thread whatever no job has taken yet.
+pub(super) trait WriteAtShutdown {
+    fn write(self, store: &Store, session: SessionId);
+}
+
+/// A queued write's data, until its job or the quit handler takes it.
+pub(super) type Held<T> = Rc<RefCell<Option<T>>>;
+
+/// A `Held` write of any kind, as the quit handler sees it.
+pub(super) trait Unstarted {
+    fn is_unstarted(&self) -> bool;
+    fn write_now(&self, store: &Store, session: SessionId);
+}
+
+impl<T: WriteAtShutdown> Unstarted for RefCell<Option<T>> {
+    fn is_unstarted(&self) -> bool {
+        self.borrow().is_some()
+    }
+
+    fn write_now(&self, store: &Store, session: SessionId) {
+        if let Some(write) = self.take() {
+            write.write(store, session);
+        }
+    }
+}
 
 /// What quitting does with this session's unsaved captures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,20 +221,26 @@ impl MainWindow {
 
     /// Deletes the session's unsaved captures and quits. Done here and now rather than on the
     /// queue, since the app is leaving; the files are few. If the delete fails, the captures
-    /// stay in history, where the retention setting reaches them.
+    /// stay in history, where the retention setting reaches them. Captures the wait for the
+    /// queue gave up on are stored first, as the quit handler would after the delete, so the
+    /// delete reaches them; one auto-saved stays, as saved captures do.
     fn discard_and_quit(&mut self, cx: &mut Context<Self>) {
+        self.write_unstarted_now();
         self.store.discard_unsaved(self.session).ok();
         cx.quit();
     }
 
     /// Runs as the app quits, for whatever reason: its own Quit, or Windows shutting down or
-    /// logging off, when GPUI runs the quit handlers and exits without asking the window. An
-    /// open editor's edits are written first, before this returns, since GPUI's time limit only
-    /// holds the future. The setting is then applied as `discards_at_shutdown` says. After Toru's own Quit the delete has
-    /// been done already and finds nothing. The main thread's tasks don't run while GPUI waits
-    /// on this, so the wait only helps a store write already on a background thread; the first
-    /// delete makes sure the captures already there go even if the time runs out.
+    /// logging off, when GPUI runs the quit handlers and exits without asking the window.
+    /// Captures and Back writes still waiting on the queue, then an open editor's edits, are
+    /// written first, before this returns, since GPUI's time limit only holds the future; after
+    /// Toru's own Quit the queue has run and there is nothing left. The setting is then applied as
+    /// `discards_at_shutdown` says. After Toru's own Quit the delete has been done already and
+    /// finds nothing. The main thread's tasks don't run while GPUI waits on this, so the wait
+    /// only helps a store write already on a background thread; the first delete makes sure the
+    /// captures already there go even if the time runs out.
     pub fn on_app_quit(&mut self, cx: &mut Context<Self>) -> impl Future<Output = ()> + use<> {
+        self.write_unstarted_now();
         self.write_open_edits_now(cx);
         let discard = discards_at_shutdown(self.settings.on_close);
         let (store, session, pending) = (self.store.clone(), self.session, self.pending.clone());
@@ -218,6 +255,29 @@ impl MainWindow {
                 store.discard_unsaved(session).ok();
             }
         }
+    }
+
+    /// Keeps `write` where the quit handler can reach it until the job queued with the returned
+    /// handle takes it as it starts. A job that finds it gone returns: it was written already.
+    pub(super) fn hold_until_started<T: WriteAtShutdown + 'static>(&mut self, write: T) -> Held<T> {
+        let held = Rc::new(RefCell::new(Some(write)));
+        self.unstarted.retain(|held| held.is_unstarted());
+        self.unstarted.push(held.clone());
+        held
+    }
+
+    /// Writes, in queue order and before this returns, whatever queued job hasn't started. A job
+    /// already running on a background thread is left to finish if it can.
+    fn write_unstarted_now(&mut self) {
+        let unstarted = std::mem::take(&mut self.unstarted);
+        if !unstarted.iter().any(|held| held.is_unstarted()) {
+            return;
+        }
+        platform::while_holding_up_shutdown(WRITING_QUEUED, || {
+            for held in unstarted {
+                held.write_now(&self.store, self.session);
+            }
+        });
     }
 
     /// The open editor's edits not yet given to the card, written before this returns: at
@@ -362,6 +422,39 @@ mod tests {
 
     fn fs_len(path: &std::path::Path) -> u64 {
         std::fs::metadata(path).unwrap().len()
+    }
+
+    /// Counts how often it is written.
+    struct Counted(Rc<Cell<usize>>);
+
+    impl WriteAtShutdown for Counted {
+        fn write(self, _store: &Store, _session: SessionId) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    #[test]
+    fn a_held_write_is_written_once_by_whichever_takes_it_first() {
+        let dir = TestDir::new("held-write");
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let written = Rc::new(Cell::new(0));
+
+        // Never started: the quit handler writes it, and a job starting later finds nothing.
+        let held = RefCell::new(Some(Counted(written.clone())));
+        assert!(held.is_unstarted());
+        held.write_now(&store, session);
+        assert_eq!(written.get(), 1);
+        assert!(!held.is_unstarted());
+        held.write_now(&store, session);
+        assert!(held.take().is_none());
+        assert_eq!(written.get(), 1);
+
+        // Started: the job has it, and the quit handler leaves it alone.
+        let held = RefCell::new(Some(Counted(written.clone())));
+        let _taken = held.take();
+        held.write_now(&store, session);
+        assert_eq!(written.get(), 1);
     }
 
     #[test]

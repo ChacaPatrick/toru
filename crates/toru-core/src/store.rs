@@ -268,7 +268,9 @@ impl Store {
     /// taken, kept for Reset edits; `None` says `edited` is that picture again, so an unsaved
     /// capture needs nothing kept. A saved capture keeps it, as its file may still differ.
     /// `redacted`: whether `edited` hides some of the capture, so a Save deletes the original.
-    /// Returns the size of the picture written.
+    /// Returns the size of the picture written. Once that is written the capture is `edited`,
+    /// even if its thumbnail can't follow: that one is deleted, so the card can't show what the
+    /// picture hides, and made again when the gallery next loads it (`remake_narrow_thumbnail`).
     pub fn store_edit(
         &self,
         id: CaptureId,
@@ -285,7 +287,12 @@ impl Store {
         self.set_redacted(id, redacted)?;
         let png = encode_png(edited)?;
         self.publish(&self.image_path(id), &png)?;
-        self.replace_thumbnail(id, edited, max_thumbnail_width)?;
+        if self
+            .replace_thumbnail(id, edited, max_thumbnail_width)
+            .is_err()
+        {
+            let _ = fs::remove_file(self.thumbnail_path(id));
+        }
         Ok(png.len() as u64)
     }
 
@@ -365,22 +372,35 @@ impl Store {
         edited: &RgbaImage,
         max_thumbnail_width: u32,
     ) -> Result<()> {
-        let png = thumbnail_png(edited, max_thumbnail_width)?;
         let _writing = self.lock_thumbnails();
+        self.write_thumbnail(id, edited, max_thumbnail_width)
+    }
+
+    /// `replace_thumbnail` with the thumbnails already locked.
+    fn write_thumbnail(&self, id: CaptureId, pixels: &RgbaImage, max_width: u32) -> Result<()> {
+        let png = thumbnail_png(pixels, max_width)?;
         self.publish(&self.thumbnail_path(id), &png)?;
         self.db().execute(
             "UPDATE captures SET width = ?1, height = ?2 WHERE id = ?3",
-            params![edited.width(), edited.height(), id.0],
+            params![pixels.width(), pixels.height(), id.0],
         )?;
         Ok(())
     }
 
     /// Remakes the thumbnail from the full picture if it is narrower than `max_width` allows,
-    /// as thumbnails stored before the cards could grow are. Returns whether it did. A saved file
-    /// whose size no longer matches the record is left alone: it was changed outside Toru.
+    /// as thumbnails stored before the cards could grow are, or missing, as one that couldn't
+    /// follow an edit is (`store_edit`). Returns whether it did. A saved file whose size no
+    /// longer matches the record is left alone: it was changed outside Toru. A missing thumbnail
+    /// is made from the picture whatever its size, which the record then takes, since it can
+    /// only be missing after an edit, which may have failed to record a crop's new size.
     pub fn remake_narrow_thumbnail(&self, id: CaptureId, max_width: u32) -> Result<bool> {
         let _writing = self.lock_thumbnails();
         let capture = self.capture(id)?;
+        if !self.thumbnail_path(id).exists() {
+            let pixels = image::open(self.full_image_path(id)?)?.to_rgba8();
+            self.write_thumbnail(id, &pixels, max_width)?;
+            return Ok(true);
+        }
         let (width, _) = image::image_dimensions(self.thumbnail_path(id))?;
         if width >= capture.width.min(max_width) {
             return Ok(false);

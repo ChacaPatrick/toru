@@ -9,14 +9,14 @@ use rfd::AsyncFileDialog;
 use toru_core::{
     export::{SaveEditedError, SavedFile, save_copy, save_edited},
     settings::SaveFormat,
-    store::{CaptureId, Result as StoreResult, StoreError},
+    store::{CaptureId, Result as StoreResult, SessionId, Store, StoreError},
 };
 
 use super::{
     MainWindow,
     actions::{SAVE_FAILED, saved_message},
     captures::{check_chosen_folder, copy_image},
-    closing::store_flattened,
+    closing::{WriteAtShutdown, store_flattened},
 };
 use crate::editor::{
     Editor, EditorEvent,
@@ -299,7 +299,8 @@ impl MainWindow {
     }
 
     /// Back: the card takes the edited picture, leaving any file the user saved as it is.
-    /// `None` for the original tells the store the edits were all taken off again.
+    /// `None` for the original tells the store the edits were all taken off again. Until the
+    /// write starts, Windows' shutdown can write it instead (`closing`).
     fn keep_edits(&mut self, capture: CaptureId, flattened: Flattened, cx: &mut Context<Self>) {
         let store = self.store.clone();
         let thumbnail_width = self
@@ -308,14 +309,18 @@ impl MainWindow {
             .thumbnail_width((flattened.picture.width(), flattened.picture.height()));
         let window = self.window;
         let blanks = flattened.edits.has_blanks();
+        let size = (flattened.picture.width(), flattened.picture.height());
+        let edits = flattened.edits.clone();
+        let held = self.hold_until_started(KeptEdits {
+            capture,
+            flattened,
+            thumbnail_width,
+        });
         self.enqueue(cx, async move |this, cx| {
-            let size = (flattened.picture.width(), flattened.picture.height());
-            let edits = flattened.edits.clone();
-            let stored = cx
-                .background_spawn(async move {
-                    store_flattened(&store, capture, &flattened, thumbnail_width)
-                })
-                .await;
+            let Some(kept) = held.take() else {
+                return;
+            };
+            let stored = cx.background_spawn(async move { kept.store(&store) }).await;
             cx.update_window(window, |_, window, cx| {
                 this.update(cx, |this, cx| match stored {
                     Ok(bytes) => {
@@ -341,6 +346,26 @@ impl MainWindow {
             })
             .ok();
         });
+    }
+}
+
+/// Back's write, held for the quit handler until the queue starts it.
+struct KeptEdits {
+    capture: CaptureId,
+    flattened: Flattened,
+    thumbnail_width: u32,
+}
+
+impl KeptEdits {
+    fn store(&self, store: &Store) -> StoreResult<u64> {
+        store_flattened(store, self.capture, &self.flattened, self.thumbnail_width)
+    }
+}
+
+impl WriteAtShutdown for KeptEdits {
+    /// A failure goes unreported, as there is no window left to say so in.
+    fn write(self, store: &Store, _session: SessionId) {
+        self.store(store).ok();
     }
 }
 

@@ -55,36 +55,35 @@ const EDITOR_KEPT_COPIED: &str =
 pub(super) type CopyResult = Result<(), Box<dyn Error + Send + Sync>>;
 
 impl MainWindow {
-    /// Where every capture enters the app, whichever way it was taken.
+    /// Where every capture enters the app, whichever way it was taken. Until it is stored,
+    /// Windows' shutdown can store it instead (`closing`), without the clipboard.
     pub fn add_capture(&mut self, image: RgbaImage, mode: CaptureMode, cx: &mut Context<Self>) {
         let taken_at = platform::local_now();
         // A capture just after midnight mustn't wait for the next check to land in the new day.
         self.check_day(taken_at, cx);
-        let pattern = self.settings.name_pattern.clone();
         let copy = self.settings.copy_on_capture;
         let open_editor = self.settings.open_editor_after_capture;
-        let auto_save = self.auto_save_target();
         let store = self.store.clone();
-        let thumbnail_width = self.gallery.read(cx).thumbnail_width(image.dimensions());
+        let held = self.hold_until_started(NewCapture {
+            shot: Shot {
+                mode,
+                taken_at,
+                thumbnail_width: self.gallery.read(cx).thumbnail_width(image.dimensions()),
+            },
+            pattern: self.settings.name_pattern.clone(),
+            auto_save: self.auto_save_target(),
+            image,
+        });
         self.enqueue(cx, async move |this, cx| {
+            let Some(capture) = held.take() else {
+                return;
+            };
             // Asked here, as a change of session queued ahead of this has only now finished.
             let Ok(session) = this.read_with(cx, |this, _| this.session) else {
                 return;
             };
             let (stored, auto_saved, image) = cx
-                .background_spawn(async move {
-                    let shot = Shot {
-                        mode,
-                        taken_at,
-                        thumbnail_width,
-                    };
-                    let mut stored = store_capture(&store, session, &image, shot, &pattern);
-                    let auto_saved = match (&mut stored, auto_save) {
-                        (Ok(card), Some(target)) => auto_save_card(&store, card, target),
-                        _ => Ok(()),
-                    };
-                    (stored, auto_saved, image)
-                })
+                .background_spawn(async move { capture.store(&store, session) })
                 .await;
             let kept = stored.is_ok();
             let auto_saved = auto_saved.is_ok();
@@ -409,6 +408,37 @@ fn missed_failures_message(missed: &[SharedString]) -> Option<SharedString> {
     }
 }
 
+/// A capture on its way into the store, held for the quit handler until the queue starts it.
+struct NewCapture {
+    image: RgbaImage,
+    shot: Shot,
+    pattern: String,
+    auto_save: Option<AutoSave>,
+}
+
+impl NewCapture {
+    /// Names, stores and, if the setting says so, auto-saves the capture, handing the image back.
+    fn store(
+        self,
+        store: &Store,
+        session: SessionId,
+    ) -> (StoreResult<NewCard>, StoreResult<()>, RgbaImage) {
+        let mut stored = store_capture(store, session, &self.image, self.shot, &self.pattern);
+        let auto_saved = match (&mut stored, self.auto_save) {
+            (Ok(card), Some(target)) => auto_save_card(store, card, target),
+            _ => Ok(()),
+        };
+        (stored, auto_saved, self.image)
+    }
+}
+
+impl closing::WriteAtShutdown for NewCapture {
+    /// A failure goes unreported, as there is no window left to say so in.
+    fn write(self, store: &Store, session: SessionId) {
+        let _ = self.store(store, session);
+    }
+}
+
 struct Shot {
     mode: CaptureMode,
     taken_at: LocalDateTime,
@@ -458,8 +488,8 @@ fn refusal(error: &StoreError) -> Option<String> {
     }
 }
 
-/// Names the capture and stores it. Must only run from the queue, so that the name it picks can't
-/// be taken before the capture is in the store.
+/// Names the capture and stores it. Must only run from the queue, or once it has stopped at
+/// Windows' shutdown, so that the name it picks can't be taken before the capture is in the store.
 fn store_capture(
     store: &Store,
     session: SessionId,
@@ -661,6 +691,35 @@ pub(super) mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, card.files.id);
         assert_eq!(listed[0].capture, card.capture);
+    }
+
+    #[test]
+    fn a_capture_still_queued_at_shutdown_is_stored_in_the_session() {
+        use super::closing::Unstarted;
+        use std::cell::RefCell;
+
+        let dir = TestDir::new("queued-at-shutdown");
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let held = RefCell::new(Some(NewCapture {
+            image: frame(),
+            shot: shot(),
+            pattern: DEFAULT_PATTERN.to_string(),
+            auto_save: None,
+        }));
+
+        held.write_now(&store, session);
+
+        let listed = store.session_captures(session).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].capture.name, BASE);
+        assert_eq!(
+            image::open(store.image_path(listed[0].id))
+                .unwrap()
+                .to_rgba8(),
+            frame()
+        );
+        assert!(!held.is_unstarted(), "the queued job finds it gone");
     }
 
     #[test]

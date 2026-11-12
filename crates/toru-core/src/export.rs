@@ -82,8 +82,15 @@ pub fn save_edited(
     };
     let saved = write_edited(store, id, edited, original, redacted, folder, format)
         .map_err(|error| SaveEditedError { error, stored })?;
-    // The file is what was asked for; a thumbnail that couldn't follow is only out of date.
-    let _ = store.replace_thumbnail(id, edited, max_thumbnail_width);
+    // The file is what was asked for; a thumbnail that couldn't follow is only out of date,
+    // unless it shows what the redactions hide: then it goes, and the gallery remakes it.
+    if store
+        .replace_thumbnail(id, edited, max_thumbnail_width)
+        .is_err()
+        && redacted
+    {
+        let _ = fs::remove_file(store.thumbnail_path(id));
+    }
     Ok(saved)
 }
 
@@ -462,6 +469,65 @@ mod tests {
         let redaction = store.redaction(id).unwrap();
         assert!(redaction.redacted && !redaction.original_removed);
         assert_eq!(png_at(&store.original_path(id)), frame());
+    }
+
+    /// Puts a folder with something in it where `id`'s thumbnail goes, so it can't be written.
+    fn block_thumbnail(store: &Store, id: CaptureId) {
+        let thumbnail = store.thumbnail_path(id);
+        fs::remove_file(&thumbnail).unwrap();
+        fs::create_dir(&thumbnail).unwrap();
+        fs::write(thumbnail.join("in the way"), b"").unwrap();
+    }
+
+    #[test]
+    fn an_edit_whose_thumbnail_fails_is_stored_and_its_thumbnail_remade_later() {
+        let dir = TestDir::new();
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot");
+        block_thumbnail(&store, id);
+
+        // Back: the picture is the capture now, so the card is told so.
+        let bytes = store
+            .store_edit(id, &edited(), Some(&frame()), true, 8)
+            .unwrap();
+        assert_eq!(bytes, fs::metadata(store.image_path(id)).unwrap().len());
+        assert_eq!(png_at(&store.image_path(id)), edited());
+        assert!(store.redaction(id).unwrap().redacted);
+
+        // Once the way is clear, the gallery's next load makes it from the picture, at the
+        // picture's size, which the record takes.
+        fs::remove_dir_all(store.thumbnail_path(id)).unwrap();
+        assert!(store.remake_narrow_thumbnail(id, 8).unwrap());
+        assert_eq!(png_at(&store.thumbnail_path(id)).dimensions(), (8, 8));
+        let capture = store.capture(id).unwrap();
+        assert_eq!((capture.width, capture.height), (10, 10));
+    }
+
+    #[test]
+    fn a_redacted_save_whose_thumbnail_fails_is_still_saved() {
+        let dir = TestDir::new();
+        let store = dir.store();
+        let session = store.new_session().unwrap();
+        let id = add(&store, session, "shot");
+        block_thumbnail(&store, id);
+
+        let file = save_edited(
+            &store,
+            id,
+            &edited(),
+            Some(&frame()),
+            true,
+            &dir.folder(),
+            SaveFormat::Png,
+            8,
+        )
+        .unwrap();
+
+        assert_eq!(png_at(&file.path), edited());
+        assert_eq!(store.capture(id).unwrap().saved_path, Some(file.path));
+        assert!(store.redaction(id).unwrap().original_removed);
+        assert!(!store.original_path(id).exists());
     }
 
     #[test]
