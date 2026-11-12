@@ -75,8 +75,22 @@ pub fn theme(palette: usize) -> Theme {
         _ => return theme,
     };
     follow_linen(&mut theme, line);
+    if palette == 2 {
+        mockup_tag(&mut theme.colors);
+    }
     follow_palette(&mut theme.colors);
     theme
+}
+
+/// The Palettes mockup draws Charcoal & clay's tag as Linen & walnut's light label, which stands
+/// 9:1 off this palette's dark thumbnail where its own surface would be 1.2:1. The label is kept
+/// as drawn. Its text is four levels darker than the mockup's `--tag-text` (#6b665c), which is
+/// 4.4:1 on the label over this thumbnail; #676258 holds 4.5:1 over any picture (DESIGN.md §7).
+///
+/// The mockup's toast is not kept: see `follow_linen`.
+fn mockup_tag(c: &mut Colors) {
+    c.tag_bg = hex_alpha(0xfaf7f1, 0.9);
+    c.tag_text = hex(0x676258);
 }
 
 /// How far Linen & walnut's greys sit from its window towards its text: a selected card
@@ -109,6 +123,12 @@ fn step(c: &Colors, amount: f32) -> Hsla {
 /// primary button's edge are the accent, the toast and the bulk bar are the text colour under
 /// the surface colour, and the hairline draws the cards, menus and day rules. Linen's other
 /// greys are the same steps from the window to the text.
+///
+/// The Palettes mockup draws Charcoal & clay's toast in Linen's ink (#2b2a26) all the same. With
+/// no border and a shadow that doesn't show on a dark window, that toast is 1.2:1 against the
+/// window and 1.0:1 against a card, so its edge can't be seen; Linen's own stands 11.9:1 off its
+/// window. Charcoal & clay's toast and bulk bar keep this rule, which gives 13.4:1. Its tag
+/// follows the mockup instead: see `mockup_tag`.
 ///
 /// The soft shadows and the thumbnail's shade are faint translucent darks, which suit any
 /// palette; the annotation colour, the sticker and the capture overlay are drawn on the
@@ -373,6 +393,7 @@ fn base() -> Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theme::contrast::{RING, TEXT, over, ratio};
     use crate::theme::test_support::{Entry, assert_token, css_hex};
 
     fn entry() -> Entry {
@@ -588,17 +609,25 @@ mod tests {
             .collect();
         for index in 1..3 {
             let theme = theme(index);
+            // Charcoal & clay's tag is Linen's on purpose: `charcoal_keeps_the_mockups_tag`.
+            let mockup_tag = |name: &str| index == 2 && name == "tag_bg";
             for (name, color) in followed(&theme) {
-                assert!(!linen.contains(&css_hex(color)), "{index}: {name}");
+                assert!(
+                    mockup_tag(name) || !linen.contains(&css_hex(color)),
+                    "{index}: {name}"
+                );
             }
             let (c, b) = (&theme.colors, &theme.borders);
             assert_eq!(css_hex(c.toggle_knob), css_hex(c.accent));
             assert_eq!(css_hex(b.accent.color), css_hex(c.accent));
             assert_eq!(css_hex(c.toast_bg), css_hex(c.text));
+            assert_eq!(css_hex(c.toast_text), css_hex(c.surface));
             assert_eq!(css_hex(c.bulk_bg), css_hex(c.text));
             assert_eq!(css_hex(c.bulk_text), css_hex(c.surface));
-            assert_eq!(css_hex(c.tag_bg), css_hex(c.surface));
-            assert_eq!(css_hex(c.tag_text), css_hex(c.muted));
+            if index == 1 {
+                assert_eq!(css_hex(c.tag_bg), css_hex(c.surface));
+                assert_eq!(css_hex(c.tag_text), css_hex(c.muted));
+            }
             for hairline in [b.hair, b.card, b.pop, b.earlier_rule, b.title_divider] {
                 assert_eq!(css_hex(hairline.color), css_hex(c.hair));
             }
@@ -637,6 +666,60 @@ mod tests {
         assert_token(&tokens, "--surface-sel", "#ece4d6");
         assert!(!palette_section(2).contains("--surface-sel"));
         assert_eq!(css_hex(theme(2).colors.surface_sel), "#35322b");
+    }
+
+    /// tokens.json gives Charcoal & clay no tag, toast or bulk bar of its own, so the Palettes
+    /// mockup draws its tag and toast with Linen & walnut's tokens.
+    fn linen_tokens_charcoal_leaves_unset() -> Colors {
+        let section = palette_section(2);
+        for token in ["--tag-", "--toast-", "--bulk-", "--pop-"] {
+            assert!(!section.contains(token), "{token}");
+        }
+        let tokens = tokens();
+        assert_token(&tokens, "--tag-bg", "rgba(250,247,241,.9)");
+        assert_token(&tokens, "--tag-text", "#6b665c");
+        assert_token(&tokens, "--toast-bg", "#2b2a26");
+        assert_token(&tokens, "--toast-border", "0");
+        assert_token(&tokens, "--bulk-bg", "#2b2a26");
+        theme(0).colors
+    }
+
+    /// The mockup's light tag is kept on Charcoal & clay, where it stands off the dark thumbnail
+    /// as a control's edge must. Its text is the mockup's grey taken just far enough to read over
+    /// any picture, which the mockup's own does not on this palette's thumbnail.
+    #[test]
+    fn charcoal_keeps_the_mockups_tag() {
+        let (linen, clay) = (linen_tokens_charcoal_leaves_unset(), theme(2).colors);
+        assert_eq!(clay.tag_bg, linen.tag_bg);
+        assert_eq!(css_hex(linen.tag_text), "#6b665c");
+        assert_eq!(css_hex(clay.tag_text), "#676258");
+        let Fill::Gradient { from, to, .. } = clay.thumb else {
+            panic!("thumb is a gradient");
+        };
+        for thumb in [from, to] {
+            let tag = over(clay.tag_bg, thumb);
+            assert!(ratio(tag, thumb) >= RING);
+            assert!(ratio(over(clay.surface.opacity(0.9), thumb), thumb) < RING);
+            assert!(ratio(linen.tag_text, tag) < TEXT);
+        }
+        for picture in [from, to, gpui::black(), gpui::white()] {
+            assert!(ratio(clay.tag_text, over(clay.tag_bg, picture)) >= TEXT);
+        }
+    }
+
+    /// The mockup's toast is not kept: Linen's ink has no edge on Charcoal & clay's window or its
+    /// cards, where the toast, the return pill and the bulk bar float. The palette's own text
+    /// colour stands off both as far as Linen's ink does off Linen's.
+    #[test]
+    fn charcoal_does_not_keep_the_mockups_toast() {
+        let (linen, clay) = (linen_tokens_charcoal_leaves_unset(), theme(2).colors);
+        assert_eq!(theme(2).borders.toast.width, px(0.));
+        for under in [clay.bg, clay.surface, clay.surface_sel] {
+            assert!(ratio(linen.toast_bg, under) < 1.2);
+            assert!(ratio(clay.toast_bg, under) >= 10.);
+            assert!(ratio(clay.bulk_bg, under) >= 10.);
+        }
+        assert!(ratio(linen.toast_bg, linen.bg) >= 10.);
     }
 
     /// Each slice stops at the next section, so a value copied from the wrong palette is caught.
