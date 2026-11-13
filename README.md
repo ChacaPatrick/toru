@@ -6,9 +6,12 @@ A screenshot app for Windows, built with [GPUI](https://www.gpui.rs/). Captures 
 
 ## Install
 
-Run `Toru-<version>-setup.exe` (build it with [`installer/build.ps1`](installer/README.md)). It installs for your user
-only, with no admin prompt. The installer isn't signed yet, so Windows SmartScreen warns "Windows protected your PC" the
-first time: choose **More info**, then **Run anyway**.
+Download the latest `Toru-<version>-setup.exe` from the [Releases page](https://github.com/ChacaPatrick/toru/releases/latest)
+and run it. It installs for your user only, with no admin prompt. The installer isn't signed yet, so Windows SmartScreen
+warns "Windows protected your PC" the first time: choose **More info**, then **Run anyway**.
+
+You only do this once: Toru updates itself after that. To build the installer yourself, see
+[`installer/README.md`](installer/README.md).
 
 ## Development
 

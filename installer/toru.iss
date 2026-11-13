@@ -15,6 +15,8 @@
 #define ApprovedKey "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
 ; The app writes and reads the same value under both (crates/toru/src/platform.rs, RUN_VALUE).
 #define RunValue "Toru"
+; Toru holds this mutex while it runs (crates/toru/src/platform.rs, mark_running).
+#define AppMutexName "Toru.Running"
 
 [Setup]
 AppId={{C2230C4F-84D6-4519-A025-3B91F6D339AF}
@@ -30,7 +32,8 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ; Toru holds this mutex while it runs (platform::mark_running), so Setup and the uninstaller ask
 ; for it to be quit first; quitting from the tray applies the On close setting.
-AppMutex=Toru.Running
+; An update (/UPDATE=1) waits for it first instead (InitializeSetup below).
+AppMutex={#AppMutexName}
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
 OutputDir=output
@@ -72,8 +75,40 @@ Root: HKCU; Subkey: "{#ApprovedKey}"; ValueType: none; ValueName: "{#RunValue}";
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; An in-app update runs Setup silently with /UPDATE=1 as Toru exits; start the new version.
+Filename: "{app}\{#AppExe}"; Flags: nowait skipifnotsilent; Check: IsUpdate
 
 [Code]
+// Toru starts `Toru-<version>-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /UPDATE=1`
+// right as it exits.
+function IsUpdate(): Boolean;
+begin
+  Result := ExpandConstant('{param:UPDATE|0}') = '1';
+end;
+
+// Setup checks AppMutex once, straight after InitializeSetup, and a silent Setup answers the
+// "Toru is running" prompt with Cancel. So an update gives the exiting Toru up to 30 seconds to
+// let go of the mutex first, and gives up quietly, installing nothing, if it doesn't.
+function InitializeSetup(): Boolean;
+var
+  Waited: Integer;
+begin
+  Result := True;
+  if not IsUpdate() then
+    Exit;
+  Waited := 0;
+  while CheckForMutexes('{#AppMutexName}') and (Waited < 30000) do
+  begin
+    Sleep(250);
+    Waited := Waited + 250;
+  end;
+  if CheckForMutexes('{#AppMutexName}') then
+  begin
+    Log('Toru is still running after 30 seconds; not updating.');
+    Result := False;
+  end;
+end;
+
 // The store's own files in %LOCALAPPDATA%\Toru (toru-core's Store). Only these go, so anything
 // else in the folder, such as a save folder the user pointed there, stays.
 procedure DeleteToruData();
