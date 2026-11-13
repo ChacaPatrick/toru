@@ -6,7 +6,8 @@
 //! `captures`, the gallery's buttons act on them in `actions` and `delete`, and the gallery pages through
 //! earlier days itself (`history`). Each choice that is a setting reads and writes `Settings`,
 //! every write going through `change_settings` to the store. Old unsaved captures are deleted by
-//! the retention setting (`retention`) at launch, at midnight and when the setting changes.
+//! the retention setting (`retention`) at launch, at midnight and when the setting changes. A
+//! newer release is downloaded and offered in a notice under the toolbar (`updates`).
 
 mod actions;
 mod backdrop;
@@ -28,6 +29,7 @@ mod settings;
 mod shortcuts_dialog;
 mod title_bar;
 mod toolbar;
+mod updates;
 
 use std::{cell::Cell, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
@@ -169,6 +171,8 @@ pub struct MainWindow {
     editor_awaits_history: Option<EditorStart>,
     /// The next editor to open gets the mockup's sample marks.
     demo_marks: bool,
+    /// Checking for a newer version, and the one waiting to be installed (`updates`).
+    updates: updates::Updates,
 }
 
 /// How the `editor` start-up argument opens the editor.
@@ -236,6 +240,7 @@ impl MainWindow {
                 // comes back from Settings through here.
                 cx.set_reduce_motion(platform::reduce_motion());
                 this.show_missed_failures(cx);
+                this.show_updated(cx);
             } else {
                 // A key pressed in another app is that app's, not a new shortcut.
                 this.stop_recording(cx);
@@ -362,9 +367,11 @@ impl MainWindow {
             shortcuts_dialog: None,
             editor_awaits_history: None,
             demo_marks: false,
+            updates: updates::Updates::new(),
         };
         this.refresh_hotkeys(cx);
         this.announce_shortcut_problems(cx);
+        this.start_updates(cx);
         this
     }
 
@@ -515,6 +522,7 @@ impl MainWindow {
             || self.quit_prompt.is_some()
             || self.delete_prompt.is_some()
             || self.clear_prompt
+            || self.updates.whats_new_open()
     }
 
     /// Whether the editor is open with annotations that closing it would lose.
@@ -695,6 +703,7 @@ impl Render for MainWindow {
                 frame
                     .on_key_down(cx.listener(|this, event, _, cx| this.key_down(event, cx)))
                     .child(toolbar::toolbar(self, window, cx))
+                    .children(updates::notice(self, cx))
                     .child(
                         div()
                             .flex_1()
@@ -734,6 +743,7 @@ impl Render for MainWindow {
                 .map(|prompt| self.delete_dialog(prompt, cx).into_any_element()),
             self.clear_prompt
                 .then(|| self.clear_dialog(cx).into_any_element()),
+            self.whats_new_dialog(cx).map(IntoElement::into_any_element),
         ]
         .into_iter()
         .enumerate()

@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use crate::capture::CaptureMode;
 use crate::naming::{DEFAULT_PATTERN, validate_pattern};
 use crate::store::{Result, mode_from_text, mode_text, path_text};
+use crate::update::Version;
 
 pub const RETENTION_PRESET_DAYS: [u32; 4] = [7, 14, 30, 90];
 pub const DELAY_SECONDS: [u32; 3] = [3, 5, 10];
@@ -263,6 +264,10 @@ pub struct Settings {
     pub pixel_art: LookAppearance,
     pub neo_brutalism: LookAppearance,
     pub settings_collapsed: bool,
+    pub check_for_updates: bool,
+    /// The version that ran last, so the first start of a newer one can say it was updated.
+    /// `None` until a version that knows about updates has run.
+    pub last_version: Option<Version>,
 }
 
 impl Default for Settings {
@@ -290,6 +295,8 @@ impl Default for Settings {
             pixel_art: LookAppearance::default(),
             neo_brutalism: LookAppearance::default(),
             settings_collapsed: false,
+            check_for_updates: true,
+            last_version: None,
         }
     }
 }
@@ -352,6 +359,13 @@ impl Settings {
             ("delay_mode", mode_text(self.delay_mode).to_string()),
             ("look", self.look.as_stored().to_string()),
             ("settings_collapsed", self.settings_collapsed.to_string()),
+            ("check_for_updates", self.check_for_updates.to_string()),
+            (
+                "last_version",
+                self.last_version
+                    .map(|version| version.to_string())
+                    .unwrap_or_default(),
+            ),
         ];
         for look in Look::ALL {
             let [palette, colours, background] = look.appearance_keys();
@@ -399,6 +413,8 @@ impl Settings {
             "delay_mode" => set(&mut self.delay_mode, mode_from_text(value)),
             "look" => set(&mut self.look, Look::from_stored(value)),
             "settings_collapsed" => set(&mut self.settings_collapsed, value.parse().ok()),
+            "check_for_updates" => set(&mut self.check_for_updates, value.parse().ok()),
+            "last_version" => self.last_version = Version::parse(value),
             _ => self.apply_stored_appearance(key, value),
         }
     }
@@ -482,6 +498,8 @@ pub(crate) mod tests {
                 custom_background: Some(PathBuf::from(r"E:\neo.webp")),
             },
             settings_collapsed: true,
+            check_for_updates: false,
+            last_version: Some(Version([1, 2, 3])),
         }
     }
 
@@ -531,6 +549,8 @@ pub(crate) mod tests {
                 pixel_art: appearance.clone(),
                 neo_brutalism: appearance,
                 settings_collapsed: false,
+                check_for_updates: true,
+                last_version: None,
             }
         );
     }
@@ -736,6 +756,9 @@ pub(crate) mod tests {
             ("pixel_art_palette", "-1"),
             ("neo_brutalism_palette", "Custom"),
             ("settings_collapsed", "no"),
+            ("check_for_updates", "on"),
+            ("last_version", "newest"),
+            ("last_version", ""),
         ] {
             assert_eq!(
                 with_stored(key, value),

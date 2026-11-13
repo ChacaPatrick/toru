@@ -13,9 +13,18 @@ warns "Windows protected your PC" the first time: choose **More info**, then **R
 You only do this once: Toru updates itself after that. To build the installer yourself, see
 [`installer/README.md`](installer/README.md).
 
+## Updates
+
+Toru looks for a new release when it starts and every few hours after, downloads it in the background, and then offers
+it in its window with the patch notes: **Update** installs it and starts Toru again. **Check for updates** in the
+settings column turns the checks off, and **Check now** looks straight away.
+
 ## Development
 
 The design lives in [`design/`](design/) and the build plan in [`docs/PLAN.md`](docs/PLAN.md).
+
+Only release builds look for updates. Set `TORU_UPDATE_URL` to the URL of another `toru-update.txt`, which may be a
+`file://` one, to try the update flow in any build; `TORU_DATA_DIR` keeps such a run's data out of your own.
 
 ## Licence
 
