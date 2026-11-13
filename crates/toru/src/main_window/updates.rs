@@ -488,11 +488,12 @@ fn notes(theme: &Theme, lines: &[NoteLine], scroll: &ScrollHandle) -> impl IntoE
         let scroll = scroll.clone();
         move |bounds, (), window, _| {
             let rule = size(bounds.size.width, hair.width);
-            let offset = scroll.offset().y;
-            if offset < px(0.) {
+            // Less than a pixel is the rounding of lines that fit, not notes out of view.
+            let (offset, hidden) = (scroll.offset().y, px(1.));
+            if offset < -hidden {
                 window.paint_quad(fill(Bounds::new(bounds.origin, rule), hair.color));
             }
-            if offset > -scroll.max_offset().y {
+            if offset > hidden - scroll.max_offset().y {
                 let origin = point(bounds.left(), bounds.bottom() - hair.width);
                 window.paint_quad(fill(Bounds::new(origin, rule), hair.color));
             }
