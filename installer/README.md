@@ -26,7 +26,8 @@ half-right notices file. Either way: read the new licence, then add it to the li
   shortcut.
 - Ships `toru.exe`, Toru's own MIT licence in `licences\LICENSE.txt`, the bundled fonts' licences (SIL Open Font
   License 1.1, plus `assets/fonts/README.md`, which says how the subsets were made) in `licences\fonts\`, and the
-  licence notices of the Rust crates compiled into the exe in `licences\THIRD-PARTY-NOTICES.html`. The fonts and everything else the app uses are compiled into the exe.
+  licence notices of the Rust crates compiled into the exe in `licences\THIRD-PARTY-NOTICES.html`. The fonts and
+  everything else the app uses are compiled into the exe.
 - Optional "Start Toru when Windows starts": writes the `Toru` value under
   `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, the same value the app's **Start with Windows** setting uses.
   Toru then starts hidden in the tray (`toru.exe --tray`). Ticking it also clears a "disabled" mark from Windows'
