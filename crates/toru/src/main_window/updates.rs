@@ -35,7 +35,7 @@ use gpui_kit::component::scroll::ScrollableElement;
 use toru_core::update::{Manifest, NoteLine, Version, note_lines};
 
 use super::{
-    HINT_LEADING, MainWindow, act,
+    HINT_LEADING, MainWindow, TOAST_FOR, act,
     settings::{group, hint, row, toggle},
 };
 use crate::platform;
@@ -55,6 +55,9 @@ const FIRST_CHECK_AFTER: Duration = Duration::from_secs(10);
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 /// Longer than other toasts: it shows as the new version's window opens.
 const UPDATED_TOAST_FOR: Duration = Duration::from_secs(6);
+/// How long after start-up it shows, so that start-up's own toasts, which are put up as the
+/// window opens, are there to be waited for.
+const UPDATED_AFTER: Duration = Duration::from_secs(1);
 
 const CHECK_HINT: &str = "New versions download quietly. You choose when to install.";
 const NOTICE_HINT: &str = "Updating restarts Toru.";
@@ -255,7 +258,7 @@ impl MainWindow {
         if last != Some(current) {
             self.change_settings(cx, |settings| settings.last_version = Some(current));
             self.updates.updated_to = last.filter(|last| current > *last).map(|_| current);
-            self.show_updated(cx);
+            self.show_updated_after(UPDATED_AFTER, cx);
         }
         if self.updates.source.is_none() {
             return;
@@ -278,11 +281,16 @@ impl MainWindow {
         .detach();
     }
 
-    /// "Toru updated to 0.2.0", once, when the window is there to show it in. There is one
-    /// toast at a time, so while another is up, as a shortcut that isn't working is at start-up,
-    /// this one waits for the window to come forward again rather than replace it.
+    /// "Toru updated to 0.2.0", once, when the window is there to show it in: a window that
+    /// isn't active comes back here when it is. There is one toast at a time, so while another
+    /// is up, as start-up's own may be (a shortcut that isn't working, no tray icon), this one
+    /// tries again when that one has had its time rather than replace it.
     pub(super) fn show_updated(&mut self, cx: &mut Context<Self>) {
-        if !self.window_active || self.toast.get().is_some() {
+        if self.updates.updated_to.is_none() || !self.window_active {
+            return;
+        }
+        if self.toast.get().is_some() {
+            self.show_updated_after(TOAST_FOR, cx);
             return;
         }
         if let Some(version) = self.updates.updated_to.take() {
@@ -290,6 +298,14 @@ impl MainWindow {
             self.toast
                 .show(toast, UPDATED_TOAST_FOR, cx, |this| &mut this.toast);
         }
+    }
+
+    fn show_updated_after(&self, wait: Duration, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(wait).await;
+            this.update(cx, |this, cx| this.show_updated(cx)).ok();
+        })
+        .detach();
     }
 
     /// Looks for a newer version and downloads it. `asked` is Check now, which gets a toast
