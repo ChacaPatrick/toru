@@ -250,15 +250,19 @@ impl Updates {
 }
 
 impl MainWindow {
-    /// At start-up: notes the version now running, and starts the checks where this build makes
-    /// them. The setting is read at each check, so turning it off or on needs no restart.
+    /// At start-up: notes the version now running, or has an update say so first, and starts the
+    /// checks where this build makes them. The setting is read at each check, so turning it off or on needs no restart.
     pub(super) fn start_updates(&mut self, cx: &mut Context<Self>) {
         let current = current_version();
-        let last = self.settings.last_version;
-        if last != Some(current) {
-            self.change_settings(cx, |settings| settings.last_version = Some(current));
-            self.updates.updated_to = last.filter(|last| current > *last).map(|_| current);
-            self.show_updated_after(UPDATED_AFTER, cx);
+        match self.settings.last_version {
+            Some(last) if last == current => {}
+            // An update. The version is noted when its toast shows, so a start nobody looked
+            // at, in the tray from sign-in to shutdown, doesn't use the toast up.
+            Some(last) if last < current => {
+                self.updates.updated_to = Some(current);
+                self.show_updated_after(UPDATED_AFTER, cx);
+            }
+            _ => self.change_settings(cx, |settings| settings.last_version = Some(current)),
         }
         if self.updates.source.is_none() {
             return;
@@ -297,6 +301,7 @@ impl MainWindow {
             let toast = Toast::new(format!("Toru updated to {version}"));
             self.toast
                 .show(toast, UPDATED_TOAST_FOR, cx, |this| &mut this.toast);
+            self.change_settings(cx, |settings| settings.last_version = Some(version));
         }
     }
 
