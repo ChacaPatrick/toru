@@ -73,6 +73,11 @@ Drawn with `tiny-skia`, so the screen matches the saved file exactly.
 - [x] 10.4 Layout and looks fixes from the Nov 9 review: columns that follow the window, empty state, select bar, bottom bar [Fable]
 - [x] 10.5 Bug fixes from KNOWN_ISSUES.md, one PR per group (10.5.1–10.5.16) [Opus]
 
+## Phase 11: Open source and updates
+- [x] 11.1 MIT licence; the repo is public at `ChacaPatrick/toru` (the private original is `toru-archive`)
+- [ ] 11.2 Release workflow: GitHub Actions builds the installer and publishes a release with patch notes, on demand
+- [ ] 11.3 In-app updates: check, download, "Update" and "What's new", silent install and restart [Fable]
+
 ## Approved libraries
 | Job | Library |
 |---|---|

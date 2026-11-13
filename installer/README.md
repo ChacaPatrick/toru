@@ -24,9 +24,9 @@ half-right notices file. Either way: read the new licence, then add it to the li
 
 - Installs to `%LOCALAPPDATA%\Programs\Toru` without admin rights, with a Start menu shortcut and an optional desktop
   shortcut.
-- Ships `toru.exe` and the bundled fonts' licences (SIL Open Font License 1.1, plus `assets/fonts/README.md`, which says
-  how the subsets were made) in `licences\fonts\`, and the licence notices of the Rust crates compiled into the exe in
-  `licences\THIRD-PARTY-NOTICES.html`. The fonts and everything else the app uses are compiled into the exe.
+- Ships `toru.exe`, Toru's own MIT licence in `licences\LICENSE.txt`, the bundled fonts' licences (SIL Open Font
+  License 1.1, plus `assets/fonts/README.md`, which says how the subsets were made) in `licences\fonts\`, and the
+  licence notices of the Rust crates compiled into the exe in `licences\THIRD-PARTY-NOTICES.html`. The fonts and everything else the app uses are compiled into the exe.
 - Optional "Start Toru when Windows starts": writes the `Toru` value under
   `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, the same value the app's **Start with Windows** setting uses.
   Toru then starts hidden in the tray (`toru.exe --tray`). Ticking it also clears a "disabled" mark from Windows'
@@ -53,7 +53,8 @@ Run in Windows Sandbox or a fresh VM, so the real install and Run key aren't tou
    Switch the Look to PixelArt (Press Start 2P / VT323) and NeoBrutalism (Archivo Black / Space Grotesk) and check
    those fonts too.
 4. `%LOCALAPPDATA%\Programs\Toru\licences\fonts\` holds the six `*-OFL.txt` files and `README.md`;
-   `licences\THIRD-PARTY-NOTICES.html` opens in a browser and lists the crates' licences.
+   `licences\THIRD-PARTY-NOTICES.html` opens in a browser and lists the crates' licences; `licences\LICENSE.txt` is
+   Toru's MIT licence.
 5. Take a capture, save it, take a second and leave it unsaved.
 6. In settings, **Start with Windows** is on. Sign out and back in (or restart): Toru is in the tray and its window is
    hidden. Clicking the tray icon opens the window at its normal size, centred.
