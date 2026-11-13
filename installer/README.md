@@ -34,9 +34,25 @@ half-right notices file. Either way: read the new licence, then add it to the li
   Startup apps page. The box starts unticked on every install, upgrades included, so an upgrade never turns start-up
   back on; leaving it unticked keeps whatever the app's setting is.
 - Setup and the uninstaller ask you to quit Toru first if it is running.
+- `/UPDATE=1` is for Toru's in-app updater (see below).
 - Uninstalling removes the app, its shortcuts, the Run value and Windows' Startup apps mark for it. It then asks whether to delete Toru's history and
   unsaved captures in `%LOCALAPPDATA%\Toru`, defaulting to **No**; only Toru's own files there are deleted. Screenshots
   you saved are never touched. A silent uninstall keeps the data.
+
+## Updates
+
+Toru updates itself from the [GitHub releases](../docs/RELEASING.md). It downloads the new setup and, right as it
+exits, starts it with
+
+```
+Toru-<version>-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /UPDATE=1
+```
+
+With `/UPDATE=1`, Setup first waits up to 30 seconds for the exiting Toru to let go of its `Toru.Running` mutex (Setup
+checks `AppMutex` once, right after `InitializeSetup`, and a silent Setup would answer its "Toru is running" prompt with
+Cancel). If Toru is still running after that, Setup exits without installing anything. After a successful install it
+starts `toru.exe` again. Otherwise it is an ordinary silent upgrade: the desktop shortcut and start-up setting stay as
+they are. A silent run without `/UPDATE=1` doesn't start Toru.
 
 ## SmartScreen
 

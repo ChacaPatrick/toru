@@ -75,7 +75,7 @@ Drawn with `tiny-skia`, so the screen matches the saved file exactly.
 
 ## Phase 11: Open source and updates
 - [x] 11.1 MIT licence; the repo is public at `ChacaPatrick/toru` (the private original is `toru-archive`)
-- [ ] 11.2 Release workflow: GitHub Actions builds the installer and publishes a release with patch notes, on demand
+- [x] 11.2 Release workflow: GitHub Actions builds the installer and publishes a release with patch notes, on demand
 - [ ] 11.3 In-app updates: check, download, "Update" and "What's new", silent install and restart [Fable]
 
 ## Approved libraries

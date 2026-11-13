@@ -1,0 +1,155 @@
+# Builds the installer and publishes a GitHub release, on demand (docs/RELEASING.md).
+# The in-app updater reads toru-update.txt from the latest release, so the asset names and that
+# file's format are a contract with the app (crates/toru): keep them as they are.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version part to bump
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: Exact version instead of a bump (e.g. 0.1.0)
+        type: string
+        required: false
+      summary:
+        description: Text placed above the generated patch notes
+        type: string
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Only from main
+        if: github.ref != 'refs/heads/main'
+        run: throw "Run the release workflow on main, not $env:GITHUB_REF."
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Work out the version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          $current = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' |
+              Select-Object -First 1).Matches[0].Groups[1].Value
+          if ($env:VERSION) {
+              $new = $env:VERSION.Trim().TrimStart('v')
+          } else {
+              $v = [version]$current
+              $new = switch ($env:BUMP) {
+                  'major' { "$($v.Major + 1).0.0" }
+                  'minor' { "$($v.Major).$($v.Minor + 1).0" }
+                  default { "$($v.Major).$($v.Minor).$($v.Build + 1)" }
+              }
+          }
+          if ($new -notmatch '^\d+\.\d+\.\d+$') { throw "Not a version: '$new'" }
+          if (git tag -l "v$new") { throw "Tag v$new already exists." }
+          Write-Host "Current $current, releasing $new"
+          "current=$current" >> $env:GITHUB_OUTPUT
+          "new=$new" >> $env:GITHUB_OUTPUT
+
+      # The toolchain in rust-toolchain.toml, before rust-cache keys its cache on it.
+      - name: Install the Rust toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Bump Cargo.toml and Cargo.lock
+        if: steps.version.outputs.new != steps.version.outputs.current
+        env:
+          NEW: ${{ steps.version.outputs.new }}
+        run: |
+          # Only the first `version = "..."`, which is [workspace.package]'s (build.ps1 reads the same one).
+          $toml = Get-Content Cargo.toml -Raw
+          $toml = ([regex]'(?m)^version\s*=\s*"[^"]+"').Replace($toml, "version = `"$env:NEW`"", 1)
+          Set-Content Cargo.toml $toml -NoNewline
+          cargo update --workspace
+          if ($LASTEXITCODE -ne 0) { throw 'cargo update failed' }
+          git diff --stat
+
+      - name: Install build tools
+        run: |
+          if (-not (Get-Command cargo-about -ErrorAction SilentlyContinue)) {
+              cargo install cargo-about --version 0.9.3 --locked --features cli
+              if ($LASTEXITCODE -ne 0) { throw 'cargo install cargo-about failed' }
+          }
+          # The runner image ships Inno Setup 6; install it if a future image doesn't.
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+              choco install innosetup --version 6.7.1 -y --no-progress
+              if ($LASTEXITCODE -ne 0) { throw 'choco install innosetup failed' }
+          }
+
+      - name: Build the installer
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File installer\build.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'build.ps1 failed' }
+
+      - name: Write the patch notes and toru-update.txt
+        env:
+          NEW: ${{ steps.version.outputs.new }}
+          SUMMARY: ${{ inputs.summary }}
+          REPO: ${{ github.repository }}
+        run: |
+          $lines = @()
+          if ($env:SUMMARY) { $lines += ($env:SUMMARY.Trim() -replace "`r", ''), '' }
+          # The newest release tag before this one, if any.
+          $prev = git tag -l 'v*' --merged HEAD --sort=-v:refname | Select-Object -First 1
+          if ($prev) {
+              # One bullet per squash-merged PR title, without its "(#N)".
+              $titles = git log --format=%s "$prev..HEAD" |
+                  Where-Object { $_ -notmatch '^Release \d+\.\d+\.\d+$' } |
+                  ForEach-Object { $_ -replace '\s*\(#\d+\)$', '' }
+              $lines += "## What's new in $env:NEW"
+              if ($titles) { $lines += $titles | ForEach-Object { "- $_" } } else { $lines += '- Maintenance release.' }
+          } else {
+              $lines += 'First public release.'
+          }
+          $notes = ($lines -join "`n").Trim() + "`n"
+          $installer = "https://github.com/$env:REPO/releases/download/v$env:NEW/Toru-$env:NEW-setup.exe"
+          $update = "version: $env:NEW`ninstaller: $installer`n`n$notes"
+          $utf8 = New-Object System.Text.UTF8Encoding $false
+          [IO.File]::WriteAllText("$env:RUNNER_TEMP\notes.md", $notes, $utf8)
+          [IO.File]::WriteAllText("$env:RUNNER_TEMP\toru-update.txt", $update, $utf8)
+          Get-Content "$env:RUNNER_TEMP\toru-update.txt"
+
+      - name: Commit, tag and push
+        env:
+          NEW: ${{ steps.version.outputs.new }}
+          CHANGED: ${{ steps.version.outputs.new != steps.version.outputs.current }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if ($env:CHANGED -eq 'true') {
+              git commit -m "Release $env:NEW" -- Cargo.toml Cargo.lock
+              if ($LASTEXITCODE -ne 0) { throw 'git commit failed' }
+          }
+          git tag "v$env:NEW"
+          git push --atomic origin HEAD:refs/heads/main "refs/tags/v$env:NEW"
+          if ($LASTEXITCODE -ne 0) { throw 'git push failed (did main move? run the workflow again)' }
+
+      - name: Publish the release
+        env:
+          NEW: ${{ steps.version.outputs.new }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$env:NEW" --title "Toru $env:NEW" --notes-file "$env:RUNNER_TEMP\notes.md" --latest `
+              "installer\output\Toru-$env:NEW-setup.exe" "$env:RUNNER_TEMP\toru-update.txt"
+          if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }
