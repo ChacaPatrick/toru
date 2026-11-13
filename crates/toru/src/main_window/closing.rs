@@ -5,7 +5,8 @@
 //! under the retention setting, Discard deletes them, and Ask shows a dialog, unless there is
 //! nothing unsaved. Saved captures always stay in history, whatever the setting. Edits in an
 //! open editor first go to the card, as Back would put them, so the setting treats that capture
-//! like any other: nothing the user did is lost without being asked about.
+//! like any other: nothing the user did is lost without being asked about. A quit that Update
+//! asked for (`updates`) goes the same way, and the installer starts only once the app is going.
 //!
 //! A capture under way or still being stored is waited for first, so a shot just taken is counted
 //! and, with Discard, is in the store before the delete rather than landing after it. When Windows
@@ -224,12 +225,13 @@ impl MainWindow {
     fn finish_quit(&mut self, cx: &mut Context<Self>) {
         let unsaved = self.gallery.read(cx).unsaved_in_session();
         match decide(self.settings.on_close, unsaved) {
-            Exit::Quit => cx.quit(),
+            Exit::Quit => self.leave(cx),
             Exit::DiscardThenQuit => self.discard_and_quit(cx),
             Exit::Ask => {
                 // One dialog at a time: the question about quitting replaces this one.
                 self.delete_prompt = None;
                 self.clear_prompt = false;
+                self.updates.close_whats_new();
                 self.quit_prompt = Some(unsaved);
                 self.show_window(cx);
                 self.focus_dialog(cx);
@@ -288,6 +290,13 @@ impl MainWindow {
     fn discard_and_quit(&mut self, cx: &mut Context<Self>) {
         self.write_unstarted_now();
         self.store.discard_unsaved(self.session).ok();
+        self.leave(cx);
+    }
+
+    /// Quits, the On close setting having had its say. Windows' shutdown doesn't come through
+    /// here, so an update waiting on the quit dialog's answer isn't installed by it.
+    fn leave(&mut self, cx: &mut Context<Self>) {
+        self.updates.leaving();
         cx.quit();
     }
 
@@ -299,10 +308,12 @@ impl MainWindow {
     /// `discards_at_shutdown` says. After Toru's own Quit the delete has been done already and
     /// finds nothing. The main thread's tasks don't run while GPUI waits on this, so the wait
     /// only helps a store write already on a background thread; the first delete makes sure the
-    /// captures already there go even if the time runs out.
+    /// captures already there go even if the time runs out. An update's installer is started
+    /// once the writes are done, and waits for this process to end, so the delete comes first.
     pub fn on_app_quit(&mut self, cx: &mut Context<Self>) -> impl Future<Output = ()> + use<> {
         self.write_unstarted_now();
         self.write_open_edits_now(cx);
+        self.updates.install_on_exit();
         let discard = discards_at_shutdown(self.settings.on_close);
         let (store, session, pending) = (self.store.clone(), self.session, self.pending.clone());
         let executor = cx.background_executor().clone();
@@ -365,8 +376,10 @@ impl MainWindow {
         .ok();
     }
 
+    /// Cancel: the app stays, and so an update that asked for the quit isn't installed.
     fn dismiss_quit_prompt(&mut self, cx: &mut Context<Self>) {
         self.quit_prompt = None;
+        self.updates.quit_cancelled();
         cx.notify();
     }
 
@@ -384,7 +397,7 @@ impl MainWindow {
             "Keep in history",
             act(cx, |this, cx| {
                 this.quit_prompt = None;
-                cx.quit();
+                this.leave(cx);
             }),
         )
         .action("Discard", act(cx, |this, cx| this.discard_and_quit(cx)))

@@ -7,9 +7,9 @@
 //! to the foreground, telling which windows a user can
 //! pick, hiding the main window in the tray and showing it again, telling a running Toru
 //! that a second one was launched, saying why Windows' shutdown waits, starting Toru when the
-//! user signs in, whether the user has animations turned off, and handing back memory while
-//! hidden. Windows is done here; the other platforms get the fallbacks at the bottom until they
-//! are.
+//! user signs in, whether the user has animations turned off, handing back memory while
+//! hidden, and, for updates, fetching a URL and starting the installer. Windows is done here;
+//! the other platforms get the fallbacks at the bottom until they are.
 
 use std::{path::PathBuf, time::Duration};
 
@@ -31,7 +31,7 @@ mod windows {
             process::CommandExt,
         },
         path::{Path, PathBuf},
-        process::Command,
+        process::{Command, Stdio},
         thread,
     };
 
@@ -1011,6 +1011,71 @@ mod windows {
         unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
     }
 
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    /// Windows' own curl, part of every Windows 10 and 11, set to follow redirects over HTTPS
+    /// only, fail on an HTTP error, and say nothing. Toru has no console, so curl gets none.
+    fn curl(seconds: u32) -> Command {
+        let windows = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+        let mut curl = Command::new(PathBuf::from(windows).join("System32").join("curl.exe"));
+        curl.args([
+            "-fsSL",
+            "--proto-redir",
+            "=https",
+            "--connect-timeout",
+            "15",
+        ])
+        .args(["--max-time", &seconds.to_string()])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null());
+        curl
+    }
+
+    fn curl_failed(code: Option<i32>) -> io::Error {
+        io::Error::other(format!("curl ended with {code:?}"))
+    }
+
+    /// The text at `url`, which is small: an update's manifest. Blocks, so not for the main thread.
+    pub fn fetch_text(url: &str) -> io::Result<String> {
+        let output = curl(30).arg(url).output()?;
+        if !output.status.success() {
+            return Err(curl_failed(output.status.code()));
+        }
+        String::from_utf8(output.stdout).map_err(io::Error::other)
+    }
+
+    /// Downloads `url` to the file `to`, replacing it. Blocks for as long as the download takes.
+    pub fn download(url: &str, to: &Path) -> io::Result<()> {
+        let status = curl(900)
+            .arg("-o")
+            .arg(to)
+            .arg(url)
+            .stdout(Stdio::null())
+            .status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(curl_failed(status.code()))
+        }
+    }
+
+    /// Starts an update's `setup` on its own, so it outlives this process: it waits for Toru to
+    /// exit, installs over it without showing anything, and starts the new Toru
+    /// (`super::INSTALLER_ARGS`).
+    pub fn start_installer(setup: &Path) -> io::Result<()> {
+        Command::new(setup)
+            .args(super::INSTALLER_ARGS)
+            .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(drop)
+    }
+
     /// Whether Windows starts the Toru that `run_key` names at sign-in: the value is there and
     /// the Startup apps page hasn't turned it off under `approved_key`.
     pub(super) fn starts_at_sign_in(run_key: &str, approved_key: &str) -> bool {
@@ -1178,14 +1243,25 @@ pub const LINE_BREAK: &str = if cfg!(windows) { "\r\n" } else { "\n" };
 /// will notice.
 pub const EXCLUDE_SETTLE: Duration = Duration::from_millis(50);
 
+/// What an update's installer is started with, as the release workflow's installer expects
+/// (`docs/PLAN.md` 11.2): install without a word, and `/UPDATE=1` to wait for Toru to exit first
+/// and start it again after.
+pub const INSTALLER_ARGS: [&str; 4] = [
+    "/VERYSILENT",
+    "/SUPPRESSMSGBOXES",
+    "/NORESTART",
+    "/UPDATE=1",
+];
+
 #[cfg(windows)]
 pub use windows::{
-    bring_overlay_to_foreground, default_save_folder, exclude_windows_from_capture, fallback_fonts,
-    held_modifiers, hide_main_window, is_window_pickable, local_now, main_window_hidden, map_file,
-    mark_running, pressed_key, recycle_file, reduce_motion, repoint_start_with_windows,
-    request_close, restore_window, reveal_file, set_starts_with_windows, show_main_window,
-    show_startup_error, signal_running_instance, starts_with_windows, trim_working_set,
-    user_languages, watch_for_show, while_holding_up_shutdown,
+    bring_overlay_to_foreground, default_save_folder, download, exclude_windows_from_capture,
+    fallback_fonts, fetch_text, held_modifiers, hide_main_window, is_window_pickable, local_now,
+    main_window_hidden, map_file, mark_running, pressed_key, recycle_file, reduce_motion,
+    repoint_start_with_windows, request_close, restore_window, reveal_file,
+    set_starts_with_windows, show_main_window, show_startup_error, signal_running_instance,
+    start_installer, starts_with_windows, trim_working_set, user_languages, watch_for_show,
+    while_holding_up_shutdown,
 };
 
 /// The modifiers held along with a key (`held_modifiers`).
@@ -1287,6 +1363,22 @@ pub fn set_starts_with_windows(_on: bool) -> std::io::Result<()> {
 #[cfg(not(windows))]
 pub fn trim_working_set() {}
 
+/// Updates aren't written for this platform yet.
+#[cfg(not(windows))]
+pub fn fetch_text(_url: &str) -> std::io::Result<String> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
+#[cfg(not(windows))]
+pub fn download(_url: &str, _to: &std::path::Path) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
+#[cfg(not(windows))]
+pub fn start_installer(_setup: &std::path::Path) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
 #[cfg(not(windows))]
 pub fn hide_main_window() {}
 
@@ -1374,6 +1466,14 @@ mod tests {
 
     fn unique_dir(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("toru-platform-{}-{name}", std::process::id()))
+    }
+
+    #[test]
+    fn the_installer_is_started_as_the_release_workflow_expects() {
+        assert_eq!(
+            INSTALLER_ARGS.join(" "),
+            "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /UPDATE=1"
+        );
     }
 
     #[test]

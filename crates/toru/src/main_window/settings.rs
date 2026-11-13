@@ -3,7 +3,8 @@
 //! Save to, Name pattern, Format and On close, each group a label over its controls, as the
 //! mockups' `.settings` lays them out, then Delete unsaved after (`retention`), which has no
 //! mockup and follows On close since both are about unsaved captures, then Look and Palette
-//! (§8), which have no mockup and follow the Palettes boards. Every control shows what is in `Settings` and every change
+//! (§8), which have no mockup and follow the Palettes boards, and last Updates (`updates`), which
+//! has no mockup either. Every control shows what is in `Settings` and every change
 //! goes through `MainWindow::change_settings`. The column scrolls on its own when the window is
 //! short, and follows keyboard focus so a focused control always shows with its ring. Its hide
 //! button, at the right of the first label, collapses it; the toolbar's gear brings it back.
@@ -22,7 +23,7 @@ use toru_core::{
 };
 
 use super::{
-    HINT_LEADING, MainWindow, act, custom_palette::look_name, retention, shortcuts_dialog,
+    HINT_LEADING, MainWindow, act, custom_palette::look_name, retention, shortcuts_dialog, updates,
 };
 use crate::platform;
 use crate::shortcuts::{Binding, Planned, Problem};
@@ -283,7 +284,8 @@ pub fn settings_column(
                             }),
                     ),
                 ),
-        );
+        )
+        .child(updates::settings_group(this, cx));
 
     div()
         .relative()
@@ -440,7 +442,7 @@ fn label_row(theme: &Theme, label: &'static str) -> Div {
 
 /// `.row`: a setting's name with its switch at the right. Pressing the name toggles too, as a
 /// `<label for>` does, and the name is a target as tall as the switch's box (DESIGN.md §7).
-fn toggle(
+pub(super) fn toggle(
     cx: &Context<MainWindow>,
     id: &'static str,
     label: &'static str,
@@ -517,7 +519,7 @@ fn shortcut(theme: &Theme, planned: Option<&Planned>, action: &'static str) -> S
         .child(hint(theme, action).flex_none())
 }
 
-fn row(theme: &Theme) -> Div {
+pub(super) fn row(theme: &Theme) -> Div {
     div()
         .flex()
         .items_center()
