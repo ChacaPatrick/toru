@@ -52,6 +52,8 @@ Name: "startup"; Description: "Start Toru when Windows starts"; GroupDescription
 
 [Files]
 Source: "..\target\release\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
+; Toru's own licence (MIT).
+Source: "..\LICENSE"; DestDir: "{app}\licences"; DestName: "LICENSE.txt"; Flags: ignoreversion
 ; The fonts are compiled into the exe; their licences ship beside it.
 Source: "..\assets\fonts\*-OFL.txt"; DestDir: "{app}\licences\fonts"; Flags: ignoreversion
 Source: "..\assets\fonts\README.md"; DestDir: "{app}\licences\fonts"; Flags: ignoreversion

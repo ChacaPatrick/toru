@@ -14,4 +14,9 @@ first time: choose **More info**, then **Run anyway**.
 
 The design lives in [`design/`](design/) and the build plan in [`docs/PLAN.md`](docs/PLAN.md).
 
+## Licence
+
+Toru is under the [MIT licence](LICENSE). The bundled fonts are under the SIL Open Font License 1.1
+([`assets/fonts/`](assets/fonts/)).
+
 Created in [T3 Code](https://t3.codes).
