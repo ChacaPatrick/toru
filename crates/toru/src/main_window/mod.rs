@@ -239,8 +239,8 @@ impl MainWindow {
                 // Windows tells no one when its Animation effects setting changes, and the user
                 // comes back from Settings through here.
                 cx.set_reduce_motion(platform::reduce_motion());
-                this.show_updated(cx);
                 this.show_missed_failures(cx);
+                this.show_updated(cx);
             } else {
                 // A key pressed in another app is that app's, not a new shortcut.
                 this.stop_recording(cx);

@@ -278,9 +278,11 @@ impl MainWindow {
         .detach();
     }
 
-    /// "Toru updated to 0.2.0", once, when the window is there to show it in.
+    /// "Toru updated to 0.2.0", once, when the window is there to show it in. There is one
+    /// toast at a time, so while another is up, as a shortcut that isn't working is at start-up,
+    /// this one waits for the window to come forward again rather than replace it.
     pub(super) fn show_updated(&mut self, cx: &mut Context<Self>) {
-        if !self.window_active {
+        if !self.window_active || self.toast.get().is_some() {
             return;
         }
         if let Some(version) = self.updates.updated_to.take() {
