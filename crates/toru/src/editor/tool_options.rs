@@ -1,7 +1,7 @@
 use gpui::Context;
 
 use super::annotation::{Annotation, Kind, Shape, Style};
-use super::document::skia_color;
+use super::skia::skia_color;
 use super::tools::{Group, StrokeOptions, TextSize, Tool};
 use super::{Editor, tools};
 use crate::theme::{ActiveTheme, Family, Theme};

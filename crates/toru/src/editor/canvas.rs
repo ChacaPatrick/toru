@@ -10,7 +10,7 @@ use tiny_skia::{IntRect, Pixmap};
 use super::annotation::Annotation;
 use super::tools::Tool;
 use super::typing::TypingFrame;
-use super::{Drag, Editor, document, text_input};
+use super::{Drag, Editor, skia, text_input};
 use crate::theme::ActiveTheme;
 use crate::ui::fill;
 
@@ -62,7 +62,7 @@ impl Editor {
         let (index, preview) = self.preview()?;
         let region = preview.paint_rect()?.intersect(&self.shown())?;
         let (region, pixmap) = self.document.render_region(region, index, Some(preview))?;
-        Some((region, document::render_image(&pixmap)))
+        Some((region, skia::render_image(&pixmap)))
     }
 
     /// The mark whose handles the canvas shows: the selected one, as it is under a drag, or the

@@ -18,10 +18,7 @@ use super::{
     captures::{check_chosen_folder, copy_image},
     closing::{WriteAtShutdown, store_flattened},
 };
-use crate::editor::{
-    Editor, EditorEvent,
-    document::{Flattened, to_rgba},
-};
+use crate::editor::{Editor, EditorEvent, document::Flattened, skia::to_rgba};
 use crate::{theme::ActiveTheme, ui::Toast};
 
 const SAVE_AS_FAILED: &str = "Couldn't save a copy there. Check the folder and its free space.";

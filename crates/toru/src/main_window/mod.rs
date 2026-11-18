@@ -47,15 +47,12 @@ use toru_core::{
     time::{LocalDate, LocalDateTime},
 };
 
-use crate::editor::{
-    Editor, EditorEvent,
-    document::{self, Document},
-};
-use crate::overlay;
-use crate::platform;
+use crate::editor::skia;
+use crate::editor::{Editor, EditorEvent, document::Document};
 use crate::shortcuts::{Hotkeys, Planned};
 use crate::theme::{ActiveTheme, ThemedText};
 use crate::ui::{Flash, FocusInView, Readable, Toast};
+use crate::{overlay, platform};
 use backdrop::Backdrop;
 use custom_palette::{BackgroundPicker, CustomEditor};
 use gallery::{Gallery, GalleryEvent};
@@ -437,11 +434,11 @@ impl MainWindow {
         self.enqueue(cx, async move |this, cx| {
             let picture = cx
                 .background_spawn(async move {
-                    let base = document::load_picture(&store.full_image_path(stored).ok()?)?;
+                    let base = skia::load_picture(&store.full_image_path(stored).ok()?)?;
                     let redaction = store.redaction(stored).unwrap_or_default();
                     // One whose delete failed waits for the next start, unused.
                     let original = (!redaction.original_removed)
-                        .then(|| document::load_picture(&store.original_path(stored)))
+                        .then(|| skia::load_picture(&store.original_path(stored)))
                         .flatten();
                     let in_file = !store.image_path(stored).is_file();
                     Some((base, original, in_file, redaction))

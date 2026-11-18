@@ -7,7 +7,7 @@ use super::annotation::{Annotation, Kind, Shape};
 use super::sticker::Sticker;
 use super::tool_options::style_of;
 use super::tools::StrokeOptions;
-use super::{Editor, document, sticker};
+use super::{Editor, skia, sticker};
 use crate::theme::Theme;
 
 /// A sticker in the panel's tray, in logical pixels.
@@ -62,7 +62,7 @@ fn tray_image(sticker: Sticker, theme: &Theme, scale: f32) -> Option<Arc<RenderI
         style_of(options, theme, Kind::Sticker),
     );
     mark.draw_at(&mut pixmap, point(0, 0));
-    Some(document::render_image(&pixmap))
+    Some(skia::render_image(&pixmap))
 }
 
 #[cfg(test)]

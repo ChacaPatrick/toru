@@ -15,10 +15,12 @@ mod canvas;
 pub mod chrome;
 mod crop;
 pub mod document;
+mod history;
 mod keyboard;
 mod panel;
 mod pointer;
 mod saving;
+pub mod skia;
 pub mod sticker;
 mod sticker_tray;
 pub mod text;
@@ -390,7 +392,7 @@ impl Render for Editor {
         }
         self.refresh_tray(cx.theme(), window.scale_factor());
         if self.image.is_none() {
-            self.image = Some(document::render_image(&self.render_document()));
+            self.image = Some(skia::render_image(&self.render_document()));
         }
         if self.overlay.is_none() {
             self.overlay = self.render_overlay();
