@@ -12,14 +12,14 @@
 //! installer. Windows is done in `windows/`; the other platforms get the stand-ins in
 //! `unported.rs` until they are.
 
-use std::{path::PathBuf, time::Duration};
-
-use gpui::PlatformDisplay;
-
 #[cfg(not(windows))]
 mod unported;
 #[cfg(windows)]
 mod windows;
+
+use std::{path::PathBuf, time::Duration};
+
+use gpui::PlatformDisplay;
 
 #[cfg(not(windows))]
 pub use unported::*;

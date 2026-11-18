@@ -7,14 +7,6 @@
 //! the tests. Points are in the pixels of the whole picture, so a crop, which only changes what
 //! is shown, leaves every mark where it was.
 
-use gpui::{Bounds, Point, point, size};
-use tiny_skia::Color;
-
-use super::block::BlockKind;
-use super::sticker::{self, Sticker};
-use super::text::{self, Font};
-use super::tools::{Head, LineStyle, Width};
-
 mod dragging;
 mod draw;
 mod hit;
@@ -22,6 +14,14 @@ mod outline;
 mod sketch;
 #[cfg(test)]
 mod test_support;
+
+use gpui::{Bounds, Point, point, size};
+use tiny_skia::Color;
+
+use super::block::BlockKind;
+use super::sticker::{self, Sticker};
+use super::text::{self, Font};
+use super::tools::{Head, LineStyle, Width};
 
 pub use dragging::in_picture;
 pub use draw::paint_pixels;
