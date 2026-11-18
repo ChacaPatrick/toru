@@ -37,7 +37,7 @@ Results go in `docs/spikes.md`.
 - [x] 4.5 Select mode and bulk bar
 
 ## Phase 5: Real capture
-The local date and time come from `GetLocalTime` in `crates/toru/src/platform.rs`, so no date library is needed.
+The local date and time come from `GetLocalTime` in `crates/toru/src/platform/windows/local_time.rs`, so no date library is needed.
 - [x] 5.1 Full screen capture, copy on capture, real cards in the gallery
 - [x] 5.2 Region overlay with size readout and magnifier **[Fable for visuals]**
 - [x] 5.3 Window capture, with the overlay highlighting the window under the cursor **[Fable for visuals]**

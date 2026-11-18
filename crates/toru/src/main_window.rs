@@ -3,7 +3,7 @@
 //! bulk bar (§4) floats over the gallery's foot, centred on the gallery, in the bottom bar's
 //! place. Opening a card in the
 //! editor (§5) replaces everything under the title bar with it. Captures come in through
-//! `captures`, the gallery's buttons act on them in `actions` and `delete`, and the gallery pages through
+//! `captures`, the gallery's buttons act on them in `save`, `copy_files`, `clear_unsaved` and `delete`, and the gallery pages through
 //! earlier days itself (`history`). Each choice that is a setting reads and writes `Settings`,
 //! every write going through `change_settings` to the store. Old unsaved captures are deleted by
 //! the retention setting (`retention`) at launch, at midnight and when the setting changes. A
@@ -132,7 +132,7 @@ pub struct MainWindow {
     quit_prompt: Option<usize>,
     /// The delete dialog is up, asking about these cards (`delete`).
     delete_prompt: Option<delete::DeletePrompt>,
-    /// The Clear unsaved dialog is up (`actions`).
+    /// The Clear unsaved dialog is up (`clear_unsaved`).
     clear_prompt: bool,
     /// The open dialog's first action, focused when the dialog opens.
     dialog_focus: FocusHandle,
