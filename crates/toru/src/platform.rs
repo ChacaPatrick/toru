@@ -8,8 +8,9 @@
 //! pick, hiding the main window in the tray and showing it again, telling a running Toru
 //! that a second one was launched, saying why Windows' shutdown waits, starting Toru when the
 //! user signs in, whether the user has animations turned off, handing back memory while
-//! hidden, and, for updates, fetching a URL and starting the installer. Windows is done in
-//! `windows/`; the other platforms get the stand-ins in `unported.rs` until they are.
+//! hidden, the tray's icon out of the exe, and, for updates, fetching a URL and starting the
+//! installer. Windows is done in `windows/`; the other platforms get the stand-ins in
+//! `unported.rs` until they are.
 
 use std::{path::PathBuf, time::Duration};
 
@@ -38,6 +39,7 @@ pub use windows::{
     shutdown::while_holding_up_shutdown,
     start_at_sign_in::{repoint_start_with_windows, set_starts_with_windows, starts_with_windows},
     startup_error::show_startup_error,
+    tray_icon::tray_icon,
     update::{download, fetch_text, start_installer},
 };
 

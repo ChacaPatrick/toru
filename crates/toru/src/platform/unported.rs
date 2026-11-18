@@ -90,6 +90,12 @@ pub fn start_installer(_setup: &std::path::Path) -> std::io::Result<()> {
     Err(std::io::ErrorKind::Unsupported.into())
 }
 
+pub fn tray_icon() -> Result<tray_icon::Icon, tray_icon::BadIcon> {
+    Err(tray_icon::BadIcon::OsError(
+        std::io::ErrorKind::Unsupported.into(),
+    ))
+}
+
 pub fn hide_main_window() {}
 
 pub fn show_main_window() {}

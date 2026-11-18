@@ -12,6 +12,7 @@ pub mod running_instance;
 pub mod shutdown;
 pub mod start_at_sign_in;
 pub mod startup_error;
+pub mod tray_icon;
 pub mod update;
 mod utf16;
 
