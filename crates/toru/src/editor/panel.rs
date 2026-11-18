@@ -8,7 +8,7 @@ use gpui::{
 };
 use gpui_kit::component::scroll::ScrollableElement;
 
-use super::{Editor, TRAY_ICON, act, chrome, on, sticker::Sticker, tools::*};
+use super::{Editor, act, chrome, on, sticker::Sticker, sticker_tray::TRAY_ICON, tools::*};
 use crate::theme::{ActiveTheme, Family, Theme, ThemedText};
 use crate::ui::{Button, Choices, MIN_TARGET, Pressable, Readable, Slider};
 

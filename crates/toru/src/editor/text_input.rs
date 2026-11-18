@@ -10,7 +10,7 @@ use gpui::{
     UTF16Selection, Window, point, px, size,
 };
 
-use super::{CARET, Editor};
+use super::{Editor, canvas::CARET};
 
 /// While text is typed, the canvas takes the platform's text input for whatever has focus in
 /// the editor, except its name field, which takes its own. Called as the canvas paints.
