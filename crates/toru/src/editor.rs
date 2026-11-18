@@ -39,13 +39,13 @@ use gpui_kit::component::input::InputState;
 use tiny_skia::IntRect;
 use toru_core::{settings::SaveFormat, store::CaptureId};
 
+use crate::theme::ActiveTheme;
+use crate::ui::{Flash, FocusInView};
 use annotation::Annotation;
 use document::{Document, Flattened};
 use pointer::Drag;
 use sticker::Sticker;
 use sticker_tray::TrayKey;
-use crate::theme::ActiveTheme;
-use crate::ui::{Flash, FocusInView};
 pub use tools::Tool;
 use tools::{StrokeOptions, TextSize};
 use typing::Typing;
