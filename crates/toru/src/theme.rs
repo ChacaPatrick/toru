@@ -9,8 +9,8 @@ pub mod contrast;
 pub mod css;
 pub mod custom;
 mod fonts;
+mod gpui_kit_theme;
 mod japandi;
-mod kit;
 mod neo_brutalism;
 mod pixel_art;
 mod shape;
@@ -127,7 +127,7 @@ pub fn custom_palette(look: Look, appearance: &LookAppearance) -> CustomPalette 
 
 /// Makes `theme` the active one and redraws every window with it.
 pub fn set_theme(theme: Theme, cx: &mut App) {
-    kit::sync_kit_theme(&theme, cx);
+    gpui_kit_theme::sync_kit_theme(&theme, cx);
     cx.set_global(theme);
     cx.refresh_windows();
 }

@@ -14,9 +14,9 @@ use toru_core::{
 
 use super::{
     MainWindow,
-    actions::{SAVE_FAILED, saved_message},
     captures::{check_chosen_folder, copy_image},
     closing::{WriteAtShutdown, store_flattened},
+    save::{SAVE_FAILED, saved_message},
 };
 use crate::editor::{Editor, EditorEvent, document::Flattened, skia::to_rgba};
 use crate::{theme::ActiveTheme, ui::Toast};

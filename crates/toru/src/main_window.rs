@@ -9,13 +9,14 @@
 //! the retention setting (`retention`) at launch, at midnight and when the setting changes. A
 //! newer release is downloaded and offered in a notice under the toolbar (`updates`).
 
-mod actions;
 mod backdrop;
 mod bottom_bar;
 mod bulk_bar;
 mod captures;
 mod card;
+mod clear_unsaved;
 mod closing;
+mod copy_files;
 mod custom_palette;
 mod delayed;
 mod delete;
@@ -25,6 +26,7 @@ mod gallery;
 mod history;
 mod open_editor;
 mod retention;
+mod save;
 mod selection;
 mod session;
 mod settings;
