@@ -23,10 +23,13 @@ mod edit_actions;
 mod empty;
 mod gallery;
 mod history;
+mod open_editor;
 mod retention;
 mod selection;
+mod session;
 mod settings;
 mod shortcuts_dialog;
+mod start_capture;
 mod title_bar;
 mod toolbar;
 mod updates;
@@ -40,22 +43,21 @@ use gpui::{
 };
 use gpui_kit::component::input::{InputEvent, InputState};
 use toru_core::{
-    capture::CaptureMode,
     naming::{NameError, validate_pattern},
     settings::Settings,
-    store::{CaptureId, SessionId, Store},
-    time::{LocalDate, LocalDateTime},
+    store::{SessionId, Store},
+    time::LocalDate,
 };
 
-use crate::editor::skia;
-use crate::editor::{Editor, EditorEvent, document::Document};
+use crate::editor::Editor;
+use crate::platform;
 use crate::shortcuts::{Hotkeys, Planned};
 use crate::theme::{ActiveTheme, ThemedText};
 use crate::ui::{Flash, FocusInView, Readable, Toast};
-use crate::{overlay, platform};
 use backdrop::Backdrop;
 use custom_palette::{BackgroundPicker, CustomEditor};
 use gallery::{Gallery, GalleryEvent};
+pub use open_editor::EditorStart;
 use shortcuts_dialog::ShortcutsDialog;
 
 /// The window's title in the taskbar. The title bar Toru draws has its own (`MainWindow::title`).
@@ -67,16 +69,6 @@ const HINT_LEADING: f32 = 1.45;
 /// How often the date is looked at. A timer set for midnight would be wrong after a sleep or a
 /// changed clock, so the date itself is checked often, whatever the window is doing.
 const DAY_CHECK_EVERY: Duration = Duration::from_secs(10);
-
-/// A display Full screen can capture, as the picker shows it.
-struct Display {
-    id: DisplayId,
-    /// What a per-display shortcut is stored under (`platform::display_key`): the monitor's own
-    /// identity, which survives restarts and unplugging, where `id` doesn't.
-    key: String,
-    /// "Display 1 · 2560×1440": its number and its size in physical pixels, which a capture has.
-    label: SharedString,
-}
 
 pub struct MainWindow {
     store: Arc<Store>,
@@ -170,14 +162,6 @@ pub struct MainWindow {
     demo_marks: bool,
     /// Checking for a newer version, and the one waiting to be installed (`updates`).
     updates: updates::Updates,
-}
-
-/// How the `editor` start-up argument opens the editor.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum EditorStart {
-    Plain,
-    /// With the sample marks of the Editor mockup placed on the picture.
-    Demo,
 }
 
 impl MainWindow {
@@ -372,145 +356,6 @@ impl MainWindow {
         this
     }
 
-    /// Ends the session and starts another if the date is no longer the session's. It goes on the
-    /// queue so that captures already on their way land in the session they were taken in.
-    fn check_day(&mut self, now: LocalDateTime, cx: &mut Context<Self>) {
-        if now.date == self.day {
-            return;
-        }
-        let previous = std::mem::replace(&mut self.day, now.date);
-        let store = self.store.clone();
-        self.enqueue(cx, async move |this, cx| {
-            let session = cx
-                .background_spawn(async move { store.new_session() })
-                .await;
-            this.update(cx, |this, cx| match session {
-                Ok(session) => this.start_session(session, now, cx),
-                // The next check tries again.
-                Err(_) => this.day = previous,
-            })
-            .ok();
-        });
-    }
-
-    fn start_session(&mut self, session: SessionId, now: LocalDateTime, cx: &mut Context<Self>) {
-        self.session = session;
-        self.session_started = now.clock().into();
-        let gallery = self.gallery.clone();
-        self.window
-            .update(cx, |_, window, cx| {
-                gallery.update(cx, |gallery, cx| {
-                    gallery.end_session(session, now.date, window, cx)
-                })
-            })
-            .ok();
-        // A new day may put more captures past the retention period.
-        self.clean_up_history(cx);
-        cx.notify();
-    }
-
-    /// Opens the card with `id` in the editor. Its picture is read back from where the store
-    /// keeps it, on the capture queue, since a Save queued ahead moves it; if it can't be read
-    /// the editor doesn't open and a toast says so, as Copy does. "Open editor after capture"
-    /// calls this with the new card's id.
-    pub fn open_editor(&mut self, id: usize, cx: &mut Context<Self>) {
-        let Some((name, stored)) = self
-            .gallery
-            .read(cx)
-            .card(id)
-            .map(|card| (card.name.clone(), card.files.id))
-        else {
-            return;
-        };
-        // A capture opened by "Open editor after capture" would be counted, and cleared, by the
-        // Clear unsaved question, which the editor leaves no way back to anyway. Closed now, not
-        // when the editor appears, so a Clear can't be queued while the picture loads.
-        if self.clear_prompt {
-            self.clear_prompt = false;
-            cx.notify();
-        }
-        let store = self.store.clone();
-        let window = self.window;
-        self.enqueue(cx, async move |this, cx| {
-            let picture = cx
-                .background_spawn(async move {
-                    let base = skia::load_picture(&store.full_image_path(stored).ok()?)?;
-                    let redaction = store.redaction(stored).unwrap_or_default();
-                    // One whose delete failed waits for the next start, unused.
-                    let original = (!redaction.original_removed)
-                        .then(|| skia::load_picture(&store.original_path(stored)))
-                        .flatten();
-                    let in_file = !store.image_path(stored).is_file();
-                    Some((base, original, in_file, redaction))
-                })
-                .await;
-            cx.update_window(window, |_, window, cx| {
-                this.update(cx, |this, cx| match picture {
-                    Some((base, original, in_file, redaction)) => {
-                        let document =
-                            Document::opened(base, original, in_file).with_redaction(redaction);
-                        this.show_editor(stored, name, document, window, cx)
-                    }
-                    None => this.report_failure(captures::FILE_GONE, cx),
-                })
-            })
-            .ok();
-        });
-    }
-
-    fn show_editor(
-        &mut self,
-        stored: CaptureId,
-        name: Entity<InputState>,
-        document: Document,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.close_editor(window, cx);
-        // And again here, for a question asked while the editor's picture was loading.
-        self.clear_prompt = false;
-        let demo = std::mem::take(&mut self.demo_marks);
-        let editor = cx.new(|cx| {
-            let mut editor = Editor::new(stored, name, document, cx);
-            if demo {
-                editor.add_demo_marks(cx);
-            }
-            editor
-        });
-        cx.subscribe_in(
-            &editor,
-            window,
-            |this, editor, event: &EditorEvent, window, cx| {
-                this.editor_event(editor, event, window, cx)
-            },
-        )
-        .detach();
-        // A dialog open over the window keeps the keyboard, so Esc and Tab still reach it; the
-        // editor gets focus when the dialog closes, through `on_focus_lost`.
-        if !self.dialog_open() {
-            editor.focus_handle(cx).focus(window, cx);
-        }
-        self.editor = Some(editor);
-        cx.notify();
-    }
-
-    /// The `editor` start-up argument: straight into the editor on the newest card. History
-    /// loads after the window opens, so with no card yet the first to arrive is opened.
-    pub fn open_newest_in_editor(&mut self, start: EditorStart, cx: &mut Context<Self>) {
-        let newest = self
-            .gallery
-            .read(cx)
-            .groups()
-            .flat_map(|group| group.cards.first())
-            .next()
-            .map(|card| card.id);
-        self.editor_awaits_history = newest.is_none().then_some(start);
-        if let Some(id) = newest {
-            self.demo_marks = start == EditorStart::Demo;
-            self.open_editor(id, cx);
-        }
-    }
-
     /// Whether a dialog, or the custom palette panel, is open over the window.
     fn dialog_open(&self) -> bool {
         self.retention.asking()
@@ -520,76 +365,6 @@ impl MainWindow {
             || self.delete_prompt.is_some()
             || self.clear_prompt
             || self.updates.whats_new_open()
-    }
-
-    /// Whether the editor is open with annotations that closing it would lose.
-    fn editor_has_edits(&self, cx: &App) -> bool {
-        self.editor
-            .as_ref()
-            .is_some_and(|editor| editor.read(cx).is_edited())
-    }
-
-    /// Back to session. Focus returns to the card that was in the editor, so the arrow keys
-    /// carry on from it, and the picture leaves the GPU. If that card is no longer listed,
-    /// `on_focus_lost` finds focus a place. A dialog open over the window keeps the focus.
-    pub(super) fn close_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(editor) = self.editor.take() {
-            let stored = editor.update(cx, |editor, _| {
-                editor.release_images(window);
-                editor.stored()
-            });
-            if !self.dialog_open() {
-                self.gallery
-                    .update(cx, |gallery, cx| gallery.focus_capture(stored, window, cx));
-            }
-        }
-        cx.notify();
-    }
-
-    /// The displays as they are right now, since monitors come and go while Toru runs, and the
-    /// index of the chosen one among them.
-    fn displays(&self, cx: &App) -> (Vec<Display>, usize) {
-        let displays: Vec<Display> = cx
-            .displays()
-            .iter()
-            .enumerate()
-            .map(|(index, display)| {
-                let (width, height) = platform::display_pixels(display.as_ref());
-                Display {
-                    id: display.id(),
-                    key: platform::display_key(display.as_ref()),
-                    label: format!("Display {} · {width}×{height}", index + 1).into(),
-                }
-            })
-            .collect();
-        let position = |id: Option<DisplayId>| displays.iter().position(|d| Some(d.id) == id);
-        let chosen = position(self.display)
-            .or_else(|| position(cx.primary_display().map(|d| d.id())))
-            .unwrap_or(0);
-        (displays, chosen)
-    }
-
-    /// Takes a capture now, whichever way it was asked for, in place of any countdown.
-    fn capture(&mut self, mode: CaptureMode, cx: &mut Context<Self>) {
-        self.cancel_countdown(cx);
-        match mode {
-            CaptureMode::Region | CaptureMode::Window => self.capture_with_overlay(mode, cx),
-            CaptureMode::FullScreen => self.capture_full_screen(None, cx),
-        }
-    }
-
-    /// Opens the Region or Window overlay (DESIGN.md §6); its image arrives in `add_capture`.
-    fn capture_with_overlay(&mut self, mode: CaptureMode, cx: &mut Context<Self>) {
-        let this = cx.entity();
-        let failed = this.clone();
-        overlay::start(
-            mode,
-            cx,
-            move |image, mode, cx| {
-                this.update(cx, |this, cx| this.add_capture(image, mode, cx));
-            },
-            move |cx| failed.update(cx, |this, cx| this.report_region_failed(cx)),
-        );
     }
 
     /// Runs `f` on the window. Deferred, because the window can't be reached from inside one of
