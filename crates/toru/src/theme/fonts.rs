@@ -1,17 +1,12 @@
-//! The bundled fonts, one set per look. Most are static instances subset to the scripts the app
-//! sets in them (see `assets/fonts/README.md`). GPUI sets the interface in them, and the editor
-//! draws text annotations from their outlines, so the picture shows the same letters saved as
-//! on screen.
+//! Mostly static instances subset to the scripts the app sets in them (`assets/fonts/README.md`).
 
 use std::borrow::Cow;
 
 use gpui::{App, FontWeight};
 
-/// Japandi's name fields use the system monospace face, as the mockups' `ui-monospace` does. On
-/// Windows that is Consolas; other platforms pick their own when they arrive.
+/// The mockups' `ui-monospace` for Japandi's name fields, which on Windows is Consolas.
 pub const MONO: &str = "Consolas";
 
-/// A bundled face: its family as GPUI knows it, its weight, and the file.
 pub struct BundledFont {
     pub family: &'static str,
     pub weight: FontWeight,
@@ -79,7 +74,7 @@ pub const FONTS: [BundledFont; 10] = [
     ),
 ];
 
-/// Registers the bundled fonts with GPUI. Call once, before the first window opens.
+/// Call once, before the first window opens.
 pub fn install_fonts(cx: &App) {
     let fonts = FONTS.iter().map(|font| Cow::Borrowed(font.data)).collect();
     cx.text_system()
@@ -87,8 +82,8 @@ pub fn install_fonts(cx: &App) {
         .expect("the bundled fonts are valid TrueType files");
 }
 
-/// The bundled file of `family` nearest to `weight`, as GPUI itself falls back to the nearest
-/// weight it has. `None` for a family that isn't bundled, such as the system monospace.
+/// The nearest weight, as GPUI itself falls back to. `None` for a family that isn't bundled,
+/// such as the system monospace.
 pub fn bundled_font(family: &str, weight: FontWeight) -> Option<&'static BundledFont> {
     FONTS
         .iter()

@@ -4,7 +4,7 @@ use gpui::{
 
 use super::Editor;
 use super::annotation::{Annotation, Badge, HandleIndex, Kind, Shape, Text, in_picture};
-use super::canvas::HANDLE;
+use super::canvas::HANDLE_SIZE;
 use super::text::Font;
 use super::tool_options::style_of;
 use super::tools::{StrokeOptions, Tool};
@@ -13,45 +13,45 @@ use crate::theme::{ActiveTheme, Theme};
 /// How far from a mark's stroke a click still selects it, in logical pixels on the canvas.
 const HIT_TOLERANCE: f32 = 6.;
 
-const HANDLE_HIT: f32 = HANDLE / 2. + 4.;
+const HANDLE_HIT: f32 = HANDLE_SIZE / 2. + 4.;
 
-/// A badge is this many times its digits' size across, and a sticker is placed this many times
-/// the look's text size wide: the mockup's 28px badge on 14px digits and 64px sticker on 16px.
-const BADGE_SIZES: f32 = 2.;
+/// The mockup's 28px badge on 14px digits, and its 64px sticker beside 16px text.
+const BADGE_TO_DIGITS_RATIO: f32 = 2.;
 
-const STICKER_SIZES: f32 = 4.;
+const STICKER_TO_TEXT_RATIO: f32 = 4.;
 
-/// What holds the selected mark while it is dragged.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(super) enum Grip {
-    /// The mark itself: the pointer's start, in picture pixels.
+    /// The pointer's start, in picture pixels.
     Body(Point<f32>),
     Handle(HandleIndex),
 }
 
-/// What a press on the canvas began, followed until the button comes up.
 pub(super) enum Drag {
-    /// The Pan tool: the pointer's last position.
+    /// The pointer's last position.
     Pan(Point<Pixels>),
-    /// A drawing tool: the mark so far.
     Draw(Annotation),
-    /// Select on a mark: the mark as it was, and as it is under the pointer.
     Edit {
         index: usize,
         grip: Grip,
         original: Annotation,
         current: Annotation,
     },
-    /// The Crop tool on its rectangle, as it was; `Editor::crop_draft` has it under the pointer.
-    Crop { grip: Grip, original: Annotation },
-    /// The Eraser: whether a mark has gone yet, so the next folds into the same undo step, and
-    /// the pointer's last position in picture pixels, so a fast sweep misses nothing between.
-    Erase { removed: bool, last: Point<f32> },
+    /// `Editor::crop_draft` has the rectangle as it is under the pointer.
+    Crop {
+        grip: Grip,
+        original: Annotation,
+    },
+    /// Whether a mark has gone yet, so the next folds into the same undo step, and the pointer's
+    /// last position in picture pixels, so a fast sweep misses nothing between.
+    Erase {
+        removed: bool,
+        last: Point<f32>,
+    },
 }
 
 impl Editor {
-    /// Drops a drag without committing it: the half-drawn mark goes, a mark being moved returns
-    /// to where it was, and the crop rectangle too. What the eraser took stays taken.
+    /// What the eraser took stays taken.
     pub(super) fn cancel_drag(&mut self, cx: &mut Context<Self>) {
         match self.drag.take() {
             Some(Drag::Edit { .. }) => self.document_changed(cx),
@@ -64,7 +64,6 @@ impl Editor {
         }
     }
 
-    /// A new text, badge or sticker as the tool's options and the look have it, placed at `at`.
     pub(super) fn placed(&self, tool: Tool, at: Point<f32>, theme: &Theme) -> Option<Annotation> {
         let options = self.options_for(tool);
         let scale = &theme.type_scale;
@@ -88,14 +87,14 @@ impl Editor {
             Tool::Number => (
                 Shape::Number(Badge {
                     number: next_number(self.document.annotations()),
-                    diameter: f32::from(scale.anno_number.size) * BADGE_SIZES,
+                    diameter: f32::from(scale.anno_number.size) * BADGE_TO_DIGITS_RATIO,
                     font: font(scale.anno_number),
                 }),
                 0.,
             ),
             Tool::Stickers => (
                 Shape::Sticker(options.sticker),
-                f32::from(scale.anno_text.size) * STICKER_SIZES,
+                f32::from(scale.anno_text.size) * STICKER_TO_TEXT_RATIO,
             ),
             _ => return None,
         };
@@ -103,9 +102,8 @@ impl Editor {
         Some(Annotation::placed(shape, at, side, style))
     }
 
-    /// The topmost mark under `at`, a pixel of the whole picture, if `at` is on the shown
-    /// picture: a mark hidden by the crop, or the part of one past it, can't be picked from
-    /// the margin.
+    /// Only on the shown picture: a mark hidden by the crop, or the part of one past it, can't be
+    /// picked from the margin.
     fn mark_at(&self, at: Point<f32>) -> Option<usize> {
         self.shown_bounds()
             .contains(&at)
@@ -113,10 +111,7 @@ impl Editor {
             .flatten()
     }
 
-    /// Takes off every mark the eraser passes between `from` and `to`, in picture pixels: the
-    /// first as an undo step and the rest of the drag within it. The way is sampled a
-    /// tolerance apart, so a quick sweep across a thin line still takes it, and only where it
-    /// crosses the shown picture, so marks hidden by the crop stay.
+    /// Sampled a tolerance apart, so a quick sweep across a thin line still takes it.
     fn erase(&mut self, from: Point<f32>, to: Point<f32>, cx: &mut Context<Self>) {
         let tolerance = self.hit_tolerance();
         let (dx, dy) = (to.x - from.x, to.y - from.y);
@@ -139,18 +134,16 @@ impl Editor {
         }
     }
 
-    /// `HIT_TOLERANCE` in picture pixels at the current zoom.
+    /// In picture pixels.
     fn hit_tolerance(&self) -> f32 {
         HIT_TOLERANCE / self.viewport.zoom * self.scale
     }
 
-    /// The selected mark's handle under `position`, if any.
     fn handle_at(&self, position: Point<Pixels>) -> Option<(usize, HandleIndex, &Annotation)> {
         let (index, annotation) = self.selection()?;
         Some((index, self.handle_on(annotation, position)?, annotation))
     }
 
-    /// `mark`'s handle under `position`, if any.
     fn handle_on(&self, mark: &Annotation, position: Point<Pixels>) -> Option<HandleIndex> {
         let on_canvas = (position - self.canvas.origin).map(f32::from);
         mark.handles().into_iter().position(|handle| {
@@ -159,19 +152,13 @@ impl Editor {
         })
     }
 
-    /// A left press on the canvas starts a drag that lasts until the button is released,
-    /// wherever the pointer goes: the Pan tool moves the picture, a drawing tool begins a mark,
-    /// Select takes a handle of the selected mark, or picks the mark under the pointer and
-    /// starts moving it, or clears the selection, Crop takes a handle of its rectangle, or moves
-    /// it, or begins a new one, and the Eraser begins taking marks off. Returns whether a drag
-    /// began, so the canvas keeps the pointer for its length.
+    /// Returns whether a drag began, so the canvas keeps the pointer for its length.
     pub(super) fn mouse_down(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) -> bool {
         if event.button != MouseButton::Left {
             return false;
         }
         let at = self.image_point(event.position);
-        // A press away from the text being typed finishes it, and does nothing more: the press
-        // was to finish, not to place or pick. A press on the text itself keeps typing.
+        // A press away from the text being typed only finishes it.
         if let Some(typing) = &self.typing {
             if !typing.text.hit(at, self.hit_tolerance()) {
                 self.finish_typing(cx);
@@ -187,7 +174,6 @@ impl Editor {
             let at = in_picture(self.shown_bounds(), at);
             Drag::Draw(Annotation::new(shape, at, style))
         } else if self.tool == Tool::Text {
-            // On a text already there, the click edits it; anywhere else it begins a new one.
             let on_text = self
                 .mark_at(at)
                 .filter(|index| self.document.annotations()[*index].text().is_some());
@@ -224,7 +210,7 @@ impl Editor {
                     original,
                 },
                 _ => {
-                    // A fresh rectangle: its far corner follows the pointer from the press.
+                    // Handle 3 is the far corner, which follows the pointer.
                     let at = in_picture(self.shown_bounds(), at);
                     let style = style_of(options, cx.theme(), Kind::Rectangle);
                     let fresh = Annotation::new(Shape::Rectangle, at, style);
@@ -253,7 +239,6 @@ impl Editor {
             } else if let Some(index) = self.mark_at(at) {
                 self.select(Some(index), cx);
                 let annotation = self.document.annotations()[index].clone();
-                // A double-click on text edits it in place.
                 if event.click_count == 2 && annotation.text().is_some() {
                     self.edit_text(index, cx);
                     return false;
@@ -338,10 +323,6 @@ impl Editor {
         }
     }
 
-    /// The left button, which began the drag, is released and the drag ends: a mark drawn to any
-    /// size goes on the document, and a moved or resized mark replaces its old self, each as one
-    /// undo step. A mark that would show nothing is dropped, and so is a crop rectangle of no
-    /// size. Another button's release is not the drag's end.
     pub(super) fn mouse_up(&mut self, cx: &mut Context<Self>) {
         match self.drag.take() {
             Some(Drag::Draw(annotation)) => {
@@ -369,8 +350,6 @@ impl Editor {
         }
     }
 
-    /// The pointer over the canvas: a crosshair for the tools that draw or place, drag something
-    /// out or sweep over it, an I-beam for Text, a hand for Pan.
     pub(super) fn cursor(&self) -> Option<CursorStyle> {
         match self.tool {
             Tool::Pan => Some(if matches!(self.drag, Some(Drag::Pan(_))) {
@@ -385,8 +364,7 @@ impl Editor {
     }
 }
 
-/// The number the next badge gets: one past the highest on the picture, so numbers count up
-/// and a badge deleted or undone frees nothing below the rest.
+/// One past the highest on the picture, so a badge deleted or undone frees nothing below the rest.
 fn next_number(annotations: &[Annotation]) -> u32 {
     annotations
         .iter()

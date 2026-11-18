@@ -1,12 +1,9 @@
-//! Plain local date and time values.
-
 const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-/// A date in local time. `month` is 1 to 12 and `day` is 1 to 31. Dates order from earliest to
-/// latest.
+/// `month` is 1 to 12 and `day` is 1 to 31. The field order makes dates sort earliest first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LocalDate {
     pub year: u16,
@@ -15,15 +12,13 @@ pub struct LocalDate {
 }
 
 impl LocalDate {
-    /// After every date the store can hold.
     pub const LATEST: LocalDate = LocalDate {
         year: u16::MAX,
         month: 12,
         day: 31,
     };
 
-    /// "Nov", or "???" for a month outside 1 to 12, which a date read back from a damaged
-    /// database may have.
+    /// "???" for a month outside 1 to 12, which a damaged database may hold.
     pub fn month_short(self) -> &'static str {
         usize::from(self.month)
             .checked_sub(1)
@@ -31,7 +26,7 @@ impl LocalDate {
             .unwrap_or(&"???")
     }
 
-    /// "Tue", by Sakamoto's method, or "???" for a month outside 1 to 12.
+    /// Sakamoto's method. "???" for a month outside 1 to 12.
     pub fn weekday_short(self) -> &'static str {
         const OFFSETS: [i64; 12] = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
         let Some(offset) = usize::from(self.month)
@@ -49,7 +44,7 @@ impl LocalDate {
         WEEKDAYS[days.rem_euclid(7) as usize]
     }
 
-    /// The date `days` days earlier, or January 1 of year 0 if that would come before it.
+    /// Stops at January 1 of year 0.
     pub fn minus_days(self, days: u32) -> LocalDate {
         let LocalDate {
             mut year,
@@ -57,7 +52,6 @@ impl LocalDate {
             mut day,
         } = self;
         let mut days = days;
-        // Walks back a month at a time, stepping onto the last day of the month before.
         while days >= u32::from(day) {
             days -= u32::from(day);
             if month <= 1 {
@@ -84,7 +78,7 @@ impl LocalDate {
     }
 }
 
-/// A date and time in local time. `hour` is 0 to 23 and `minute` is 0 to 59.
+/// `hour` is 0 to 23.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LocalDateTime {
     pub date: LocalDate,

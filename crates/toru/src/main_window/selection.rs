@@ -1,23 +1,18 @@
-//! Select mode's bookkeeping (DESIGN.md §4), kept apart from the gallery so it can be tested on
-//! its own: which cards are selected, by id, and the anchor a Shift-click ranges from. The
-//! gallery hands in the listed cards in reading order; a range is everything listed between the
-//! anchor and the pressed card, so it never picks up a card folded away by Collapse or dropped
-//! by a search.
+//! Select mode's bookkeeping (DESIGN.md §4), apart from the gallery so it can be tested on its
+//! own.
 
 use std::collections::HashSet;
 use std::path::Path;
 
 use gpui::Modifiers;
 
-/// Whether a key press of `a` with these modifiers is select mode's Ctrl+A. AltGr reaches the
-/// window as Ctrl+Alt, and AltGr+A types a letter on many layouts, so Alt rules it out; so does
-/// Shift, which Ctrl+Shift+A is not.
+/// AltGr reaches the window as Ctrl+Alt, and AltGr+A types a letter on many layouts, so Alt
+/// rules it out; so does Shift, as Ctrl+Shift+A is not Ctrl+A.
 pub fn selects_all(modifiers: &Modifiers) -> bool {
     modifiers.control && !modifiers.alt && !modifiers.shift
 }
 
-/// Whether a press on a card outside select mode enters it: Ctrl held, without Alt, for the
-/// same reason as `selects_all`.
+/// Without Alt, for the same reason as `selects_all`.
 pub fn enters_select_mode(modifiers: &Modifiers) -> bool {
     modifiers.control && !modifiers.alt
 }
@@ -42,7 +37,6 @@ impl Selection {
         self.ids.len()
     }
 
-    /// A plain press: the card flips, and becomes the anchor.
     pub fn toggle(&mut self, id: usize) {
         if !self.ids.remove(&id) {
             self.ids.insert(id);
@@ -50,9 +44,9 @@ impl Selection {
         self.anchor = Some(id);
     }
 
-    /// A Shift-press: selects every card listed from the anchor to `id`, in `listed` order. With
-    /// no anchor listed it is a plain press. The anchor stays, so a second Shift-press ranges
-    /// from the same place.
+    /// Only listed cards are picked up, never one collapsed or filtered out. With no anchor
+    /// listed it is a plain press. The anchor stays, so a second Shift-press ranges from the same
+    /// place.
     pub fn extend_to(&mut self, id: usize, listed: &[usize]) {
         let anchor = self
             .anchor
@@ -67,7 +61,6 @@ impl Selection {
         }
     }
 
-    /// Select all: every listed card.
     pub fn set_all(&mut self, listed: &[usize]) {
         self.ids.extend(listed);
     }
@@ -77,17 +70,13 @@ impl Selection {
         self.anchor = None;
     }
 
-    /// Drops any card no longer listed: one a search filtered out, one in a group that was
-    /// collapsed, or one in an earlier group hidden by Show previous. What the bulk bar counts is
-    /// then always what the checkboxes show.
     pub fn retain_listed(&mut self, listed: &[usize]) {
         self.ids.retain(|id| listed.contains(id));
         self.anchor = self.anchor.filter(|id| listed.contains(id));
     }
 }
 
-/// The path hint under a saved card's chip: the file in its folder, with the rest of the path
-/// elided, as the mockups show ("…\Screenshots\login-bug-repro.png").
+/// As the mockups show it: "…\Screenshots\login-bug-repro.png".
 pub fn path_hint(path: &Path) -> String {
     let file = path.file_name().map(|f| f.to_string_lossy());
     let folder = path
@@ -101,7 +90,6 @@ pub fn path_hint(path: &Path) -> String {
     }
 }
 
-/// "3 selected" and "2 saved · 1 unsaved" for the bulk bar.
 pub struct Counts {
     pub selected: usize,
     pub saved: usize,
@@ -181,7 +169,6 @@ mod tests {
         s.toggle(22);
         s.retain_listed(&[10, 12, 21]);
         assert_eq!(selected(&s), [10, 12, 21]);
-        // The anchor went with its card.
         assert_eq!(s.anchor, None);
     }
 

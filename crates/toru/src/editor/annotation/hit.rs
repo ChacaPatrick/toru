@@ -8,10 +8,7 @@ use super::{Annotation, Shape};
 const ELLIPSE_HIT_ERROR: f32 = 0.5;
 
 impl Annotation {
-    /// Whether `at` is on the mark's stroke, within `tolerance` pixels of it: on any of the
-    /// segments the mark is drawn from, so an arrow's head counts as well as its shaft. The
-    /// ellipse is tested against a polygon fine enough to pass for the curve. A block is a
-    /// filled box, so anywhere inside it counts.
+    /// Any segment the mark is drawn from counts, so an arrow's head is hit as well as its shaft.
     pub fn hit(&self, at: Point<f32>, tolerance: f32) -> bool {
         if let Shape::Number(badge) = &self.shape {
             let c = self.points[0];
@@ -19,7 +16,6 @@ impl Annotation {
                 <= badge.diameter / 2. + tolerance;
         }
         if self.shape.is_placed() || self.shape.is_block() {
-            // Text, stickers and blocks are solid: anywhere in their box picks them.
             let b = self.bounds();
             return at.x >= b.left() - tolerance
                 && at.x <= b.right() + tolerance
@@ -46,7 +42,7 @@ impl Annotation {
     }
 }
 
-/// How far `p` is from the polyline, closed or open; a lone point counts as a dot.
+/// A lone point counts as a dot.
 fn polyline_distance(p: Point<f32>, points: &[Point<f32>], closed: bool) -> f32 {
     let (Some(first), Some(last)) = (points.first(), points.last()) else {
         return f32::INFINITY;
@@ -60,7 +56,6 @@ fn polyline_distance(p: Point<f32>, points: &[Point<f32>], closed: bool) -> f32 
         .fold(f32::INFINITY, f32::min)
 }
 
-/// How far `p` is from the segment `a`–`b`.
 pub fn segment_distance(p: Point<f32>, a: Point<f32>, b: Point<f32>) -> f32 {
     let (abx, aby) = (b.x - a.x, b.y - a.y);
     let length2 = abx * abx + aby * aby;

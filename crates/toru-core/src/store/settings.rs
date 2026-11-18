@@ -4,7 +4,6 @@ use super::{Result, Store};
 use crate::settings::Settings;
 
 impl Store {
-    /// The saved settings. Anything missing or unreadable keeps its default.
     pub fn load_settings(&self) -> Result<Settings> {
         let db = self.db();
         let mut statement = db.prepare("SELECT key, value FROM settings")?;
@@ -19,7 +18,7 @@ impl Store {
         Ok(settings)
     }
 
-    /// Writes every setting, all or nothing.
+    /// All or nothing.
     pub fn save_settings(&self, settings: &Settings) -> Result<()> {
         let values = settings.stored_values()?;
         let mut db = self.db();

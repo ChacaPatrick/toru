@@ -8,10 +8,9 @@ pub(super) const SKETCH_AMPLITUDE: f32 = 1.2;
 
 pub(super) const SKETCH_PASSES: u32 = 2;
 
-/// The polyline cut into short pieces, each joint nudged by a hash of where it is relative to
-/// `origin`, the mark's own corner, so a mark wobbles the same way wherever it is moved to.
-/// `pass` picks a different wobble per pass, and the ends stay put so the mark still meets what
-/// it points at.
+/// Each joint is nudged by a hash of where it is relative to `origin`, the mark's own corner, so
+/// a mark wobbles the same way wherever it is moved to. The ends stay put so the mark still
+/// meets what it points at.
 pub(super) fn wobble(
     points: &[Point<f32>],
     closed: bool,
@@ -55,7 +54,7 @@ fn nudge(p: Point<f32>, origin: Point<f32>, amplitude: f32, pass: u32) -> Point<
     point(p.x + dx, p.y + dy)
 }
 
-/// A value in −1..=1 from the point's whole-pixel position and `salt`, with no state anywhere.
+/// In −1..=1, from the point's whole-pixel position.
 fn noise(p: Point<f32>, salt: u32) -> f32 {
     let mut h = (p.x.round() as i32 as u32).wrapping_mul(0x9E37_79B9);
     h ^= (p.y.round() as i32 as u32).wrapping_mul(0x85EB_CA6B);
@@ -92,8 +91,7 @@ mod tests {
         assert_eq!(a.data(), b.data());
         assert!((0..120).all(|x| is_white(&a, x, 2) && is_white(&a, x, 27)));
         assert!((20..100).any(|x| is_red(&a, x, 15) || is_red(&a, x, 14) || is_red(&a, x, 16)));
-        // Moved, the mark wobbles the same way relative to itself: every pixel is where it was,
-        // shifted by the move.
+        // Moved, the mark wobbles the same way relative to itself.
         let moved = {
             let mut picture = white(130, 40);
             let mut line = mark(Shape::Line, (10., 15.), (110., 15.)).moved(

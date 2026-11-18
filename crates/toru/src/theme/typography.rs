@@ -2,7 +2,6 @@ use gpui::{App, Font, FontWeight, Hsla, Pixels, SharedString, Styled, TextRun, W
 
 use super::Theme;
 
-/// Family names as GPUI's text system knows them.
 pub struct Fonts {
     pub display: SharedString,
     pub body: SharedString,
@@ -26,7 +25,6 @@ pub enum Family {
     Mono,
 }
 
-/// How one text role is set. Each look picks all four per role.
 #[derive(Clone, Copy)]
 pub struct TypeStyle {
     pub family: Family,
@@ -52,8 +50,7 @@ impl TypeStyle {
         }
     }
 
-    /// The height of one line at CSS `line-height: normal`: the font's ascent plus descent, for a
-    /// control whose height comes from its text, as the mockups' chips do.
+    /// CSS `line-height: normal`, as the mockups' chips take their height from.
     pub fn natural_line_height(&self, theme: &Theme, cx: &App) -> Pixels {
         let text_system = cx.text_system();
         let font_id = text_system.resolve_font(&self.font(theme));
@@ -61,8 +58,7 @@ impl TypeStyle {
         text_system.ascent(font_id, self.size) + text_system.descent(font_id, self.size).abs()
     }
 
-    /// The width of `text` set in this style, with its case applied, for a layout that has to be
-    /// known before the text is laid out. Rounded up, as GPUI's text element rounds its width.
+    /// Rounded up, as GPUI's text element rounds its width.
     pub fn text_width(&self, text: &str, theme: &Theme, window: &Window) -> Pixels {
         let text = self.case.apply(text);
         let run = TextRun {
@@ -81,8 +77,7 @@ impl TypeStyle {
     }
 }
 
-/// `.type_style(theme, style)` sets the family, size and weight in one go. Apply `style.case`
-/// to the text itself.
+/// Doesn't apply `style.case`; apply it to the text itself.
 pub trait ThemedText: Styled + Sized {
     fn type_style(self, theme: &Theme, style: TypeStyle) -> Self {
         self.font_family(theme.fonts.family(style.family))
@@ -93,26 +88,23 @@ pub trait ThemedText: Styled + Sized {
 
 impl<T: Styled> ThemedText for T {}
 
-/// One `TypeStyle` per text role, since each look sets its own.
 pub struct TypeScale {
     pub body: TypeStyle,
     pub hint: TypeStyle,
     pub label: TypeStyle,
     pub section: TypeStyle,
     pub day: TypeStyle,
-    /// The count beside a day group's date.
     pub day_count: TypeStyle,
     pub button: TypeStyle,
     pub button_sm: TypeStyle,
     pub primary_button: TypeStyle,
-    /// A small primary button, such as a card's Save: the looks size it apart from `button_sm`.
+    /// Such as a card's Save; the looks size it apart from `button_sm`.
     pub primary_button_sm: TypeStyle,
     /// The secondary part of a button label, such as its shortcut.
     pub button_sub: TypeStyle,
     pub chip: TypeStyle,
     pub tag: TypeStyle,
     pub field: TypeStyle,
-    /// A segmented control's buttons.
     pub segment: TypeStyle,
     /// Setting rows: toggle labels and shortcut keys.
     pub setting: TypeStyle,
@@ -123,18 +115,16 @@ pub struct TypeScale {
     /// The return pill.
     pub jump: TypeStyle,
     pub load_more: TypeStyle,
-    /// Select mode's bulk bar: its buttons, the bold "3 selected", and the small counts.
     pub bulk_button: TypeStyle,
     pub bulk_selected: TypeStyle,
     pub bulk_count: TypeStyle,
-    /// Editor: the shortcut letter on a tool, the context panel's option buttons, the zoom and
-    /// undo corner buttons, and the text and numbered annotations drawn on the canvas.
+    /// Editor: `option` is the context panel's buttons, `corner` the zoom and undo buttons.
     pub tool_key: TypeStyle,
     pub option: TypeStyle,
     pub corner: TypeStyle,
     pub anno_text: TypeStyle,
     pub anno_number: TypeStyle,
-    /// The overlay's size readout, in the mono face so the digits hold still as they change.
+    /// In the mono face, so the digits hold still as they change.
     pub readout: TypeStyle,
 }
 

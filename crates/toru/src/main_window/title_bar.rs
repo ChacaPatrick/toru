@@ -1,9 +1,6 @@
-//! The title bar as the mockups draw it: the look's dot, the title, and the minimize, maximize
-//! and close controls. Windows does the work. The title is a `WindowControlArea::Drag`, so it
-//! moves the window and a double-click maximizes it; the controls are the `Min`, `Max` and `Close`
-//! areas, so they get the system's clicks and the snap layouts on hovering maximize. GPUI maps
-//! the areas to the caption hit-test codes when the window is opened with
-//! `TitlebarOptions::appears_transparent`.
+//! The title bar as the mockups draw it. Windows does the work through the `WindowControlArea`s,
+//! which GPUI maps to caption hit-test codes when the window has
+//! `TitlebarOptions::appears_transparent`; so maximize gets the snap layouts on hover.
 
 use gpui::{
     AccessibleAction, App, Role, SharedString, Window, WindowControlArea, div, prelude::*, px,
@@ -110,9 +107,8 @@ pub fn title_bar(title: SharedString, window: &Window, cx: &App) -> impl IntoEle
         )
 }
 
-/// One window control. The mouse reaches it through Windows, via its control area; `action` is
-/// for assistive technology, whose click is simulated inside GPUI and never reaches the caption.
-/// Hovered, it takes the bar's text colour, tinted behind it and on its glyph.
+/// The mouse reaches it through Windows, via its control area; `action` is for assistive
+/// technology, whose click is simulated inside GPUI and never reaches the caption.
 fn control(
     id: &'static str,
     label: &'static str,

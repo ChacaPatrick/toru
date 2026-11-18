@@ -9,11 +9,9 @@ pub enum StoreError {
     Image(image::ImageError),
     /// Another `Store`, usually another running instance of the app, has this folder open.
     AlreadyOpen,
-    /// No capture has that ID.
     NotFound,
     /// The pixels are empty or differ from the record's size, or the thumbnail width is zero.
     BadDimensions,
-    /// That name can't be a file name.
     InvalidName(NameError),
     /// Another capture from the same day already has that name.
     NameTaken,

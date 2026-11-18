@@ -10,39 +10,34 @@ use xcap::{
 use super::geometry::Rect;
 use crate::platform;
 
-/// One monitor's frame, captured off the main thread: the original for cropping and the
-/// magnifier, and a BGRA copy ready for GPUI to draw.
 pub(super) struct Captured {
     /// `xcap`'s monitor id, the low 32 bits of the `HMONITOR` GPUI uses as its `DisplayId`.
     pub(super) monitor_id: u32,
-    /// Where the monitor sits on the desktop, in physical pixels.
+    /// On the desktop, in physical pixels.
     pub(super) bounds: Rect,
     pub(super) frame: Arc<RgbaImage>,
     pub(super) image: Arc<RenderImage>,
 }
 
-/// One monitor's frozen frame and its place on the desktop, shared by every overlay so a window
-/// spanning monitors can be stitched from all of them.
 pub(super) struct MonitorFrame {
     pub(super) bounds: Rect,
     pub(super) frame: Arc<RgbaImage>,
 }
 
-/// A top-level window as it stood when the screens froze, in desktop pixels.
+/// In desktop pixels, as it stood when the screens froze.
 pub(super) struct TopWindow {
     pub(super) title: SharedString,
     pub(super) bounds: Rect,
 }
 
-/// What the background thread brings back: the monitors, and in Window mode the windows.
 pub(super) struct Frozen {
     pub(super) monitors: Vec<Captured>,
     pub(super) windows: Vec<TopWindow>,
 }
 
-/// Lists the windows, in Window mode, then captures every monitor into memory, so the list
-/// matches the frames. Slow, so it runs on a background thread; `xcap`'s handles are made and
-/// dropped there too, since they can't cross threads.
+/// The windows are listed first, so the list matches the frames. Slow, so it runs on a
+/// background thread; `xcap`'s handles are made and dropped there too, since they can't cross
+/// threads.
 pub(super) fn freeze(mode: CaptureMode) -> Frozen {
     let windows = match mode {
         CaptureMode::Window => list_windows(),
@@ -54,12 +49,10 @@ pub(super) fn freeze(mode: CaptureMode) -> Frozen {
     }
 }
 
-/// The visible top-level windows, topmost first, as `xcap` lists them: it already leaves out
-/// Toru's own windows, cloaked ones and untitled tool windows. Minimized windows are off screen,
-/// so they go too, and so do windows the user can't see or click (`platform::is_window_pickable`):
-/// a click-through overlay the size of the desktop would otherwise sit over every real window and
-/// be the only thing the picker finds. Bounds are `DWMWA_EXTENDED_FRAME_BOUNDS`, the frame
-/// without its shadow, in the same physical desktop pixels as the monitors.
+/// Topmost first. `xcap` already leaves out Toru's own windows, cloaked ones and untitled tool
+/// windows. Windows the user can't see or click go too: a click-through overlay the size of the
+/// desktop would otherwise be the only thing the picker finds. Bounds are
+/// `DWMWA_EXTENDED_FRAME_BOUNDS`, the frame without its shadow.
 fn list_windows() -> Vec<TopWindow> {
     xcap::Window::all()
         .unwrap_or_default()
@@ -119,7 +112,7 @@ fn capture_monitors() -> Vec<Captured> {
 mod tests {
     use super::*;
 
-    /// Lists the real windows in memory. Nothing is shown or printed.
+    /// Nothing is shown or printed.
     #[test]
     fn listed_windows_are_pickable_and_on_screen() {
         for window in list_windows() {

@@ -1,9 +1,4 @@
-//! The capture toolbar (DESIGN.md §2): Region, Window, Full screen with its display picker,
-//! Delayed with its seconds and mode, the shortcut hint, New session and the settings gear.
-//!
-//! The toolbar is one row at every window width. When the row has no room for everything, the
-//! shortcut hint goes first, since the settings column lists the shortcuts too, and then New
-//! session's label, leaving its plus with the name as a tooltip.
+//! The capture toolbar (DESIGN.md §2).
 
 use gpui::{AnyElement, Context, Div, Pixels, Window, div, prelude::*, px};
 use toru_core::{capture::CaptureMode, settings::DELAY_SECONDS};
@@ -25,8 +20,7 @@ const MODES: [CaptureMode; 3] = [
     CaptureMode::FullScreen,
 ];
 
-/// The Delayed menu or, while a countdown runs, the time left on a button that cancels it, and
-/// how wide either is.
+/// The Delayed menu or, while a countdown runs, a button that cancels it, and its width.
 fn delayed(
     this: &MainWindow,
     theme: &Theme,
@@ -72,8 +66,8 @@ fn delayed(
     (menu.into_any_element(), width)
 }
 
-/// What the row has room for beside the capture buttons and the gear: New session's label,
-/// and the hint with it. The label outranks the hint.
+/// The toolbar is one row at every width. New session's label outranks the shortcut hint, since
+/// the settings column lists the shortcuts too.
 #[derive(Debug, PartialEq, Eq)]
 struct Fit {
     label: bool,
@@ -165,7 +159,7 @@ pub fn toolbar(this: &MainWindow, window: &Window, cx: &Context<MainWindow>) -> 
         .border_color(hair.color)
         .child(
             region
-                .track_focus(&this.first)
+                .track_focus(&this.region_button)
                 .on_click(act(cx, |this, cx| this.capture(CaptureMode::Region, cx))),
         )
         .child(window_button.on_click(act(cx, |this, cx| this.capture(CaptureMode::Window, cx))))

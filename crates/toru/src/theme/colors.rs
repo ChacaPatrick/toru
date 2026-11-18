@@ -2,13 +2,10 @@ use gpui::Hsla;
 
 use super::{Fill, contrast, css};
 
-/// How strongly a hovered control's background is tinted with its text colour. A hovered control
-/// also shows its text at full strength (a muted glyph or a translucent sub goes to the plain text
-/// colour), so the hover reads as stronger, never weaker; `contrast`'s test checks the hovered
-/// pairs in every palette.
+/// A hovered control also shows its text at full strength, so the hover reads stronger, never
+/// weaker; `contrast`'s test checks the hovered pairs in every palette.
 pub const HOVER_TINT: f32 = 0.12;
 
-/// The translucent fill a control hovered with text colour `text` lays over its background.
 pub fn hover_tint(text: Hsla) -> Hsla {
     Hsla {
         a: HOVER_TINT,
@@ -16,10 +13,8 @@ pub fn hover_tint(text: Hsla) -> Hsla {
     }
 }
 
-/// How strongly the accent is laid over text selected in a field.
 pub const SELECTION_TINT: f32 = 0.3;
 
-/// The fill behind text selected in a field, in a palette whose accent is `accent`.
 pub fn selection_tint(accent: Hsla) -> Hsla {
     Hsla {
         a: SELECTION_TINT,
@@ -27,22 +22,17 @@ pub fn selection_tint(accent: Hsla) -> Hsla {
     }
 }
 
-/// How strongly a dialog's backdrop lays the text colour over the window behind it: enough to
-/// say the window is waiting, while what is behind stays readable.
+/// Enough to say the window is waiting, while what is behind stays readable.
 pub const SCRIM: f32 = 0.4;
 
-/// The backdrop behind a dialog, in a palette whose text colour is `text`.
 pub fn scrim(text: Hsla) -> Hsla {
     Hsla { a: SCRIM, ..text }
 }
 
-/// How much of the background colour is laid over a background photo. Under it the picture
-/// still moves the window's colour towards black or white, so text drawn straight on the window
-/// is checked over both (`contrast::pairs`) and muted text there takes the text colour
-/// (`Theme::window_muted`).
+/// Under this scrim a background photo still pulls the window towards black or white, so text
+/// straight on the window is checked over both (`contrast::pairs`).
 pub const BACKDROP_SCRIM: f32 = 0.8;
 
-/// The tint over a background photo, in a palette whose background is `bg`.
 pub fn backdrop_scrim(bg: Hsla) -> Hsla {
     Hsla {
         a: BACKDROP_SCRIM,
@@ -50,7 +40,6 @@ pub fn backdrop_scrim(bg: Hsla) -> Hsla {
     }
 }
 
-/// A built-in palette as the picker shows it: its name and four swatches.
 pub struct Palette {
     pub name: &'static str,
     pub swatches: [Hsla; 4],
@@ -76,7 +65,7 @@ pub struct Colors {
     pub thumb_alt: Vec<Fill>,
     /// Bottom of a gradient laid over each thumbnail, from transparent at the top.
     pub thumb_shade: Hsla,
-    /// Cards in a day group that has ended; `surface` unless the look dims them.
+    /// `surface` unless the look dims ended day groups.
     pub earlier_card_bg: Hsla,
     pub tag_bg: Hsla,
     pub tag_text: Hsla,
@@ -94,7 +83,6 @@ pub struct Colors {
     pub chip_saved_text: Hsla,
     pub title_bg: Hsla,
     pub title_text: Hsla,
-    /// The title bar dot and the window control glyphs.
     pub dot: Hsla,
     pub controls: Hsla,
     pub toast_bg: Hsla,
@@ -106,7 +94,6 @@ pub struct Colors {
     pub bulk_bg: Hsla,
     pub bulk_text: Hsla,
     pub bulk_sep: Hsla,
-    /// The bulk bar's main action; the accent unless the look pins it.
     pub bulk_main_bg: Hsla,
     pub bulk_main_text: Hsla,
     pub focus: Hsla,
@@ -116,38 +103,35 @@ pub struct Colors {
     pub sticker: Hsla,
     pub sticker_line: Hsla,
     pub anno: Hsla,
-    /// The border of a field whose text isn't valid, such as a hex colour that doesn't parse.
-    /// The mockups show none; each look takes a red that stands out on its fields.
+    /// The border of a field whose text isn't valid. The mockups show none; each look takes a
+    /// red that stands out on its fields.
     pub warning: Hsla,
     /// Outline around the chosen colour swatch in the editor panel.
     pub swatch_on: Hsla,
     pub load_bg: Hsla,
 }
 
-/// The least contrast a number badge's white digits keep before they give way to a dark ink:
-/// a light disc such as white or yellow is below it, the mockups' darker swatches above.
-const BADGE_WHITE: f32 = 3.;
+/// White and yellow discs fall below it, the mockups' darker swatches stay above.
+const WHITE_DIGITS_MIN_CONTRAST: f32 = 3.;
 
 impl Colors {
-    /// The editor's stroke swatches, in the panel's order: the look's ink, white, its annotation
-    /// colour, then the yellow and blue the mockups give every look.
+    /// In the panel's order. The mockups' CSS writes the yellow and blue out for every look
+    /// rather than naming tokens.
     pub fn stroke_swatches(&self) -> [Swatch; 5] {
         [
             Swatch::new(self.text),
             Swatch::new(gpui::white()),
             Swatch::new(self.anno),
-            // The mockups' CSS writes these two out rather than naming tokens.
             Swatch::new(css::hex(0xf1c40f)),
             Swatch::new(css::hex(0x2e86de)),
         ]
     }
 
-    /// The digits on a number badge of colour `disc`: the mockups write `#fff` out for every
-    /// look, which a light disc such as white or yellow swallows, so on a disc too light for
-    /// white the look's ink or page is used instead, whichever is darker against it.
+    /// The mockups write `#fff` digits for every look, which a light disc swallows, so there the
+    /// look's ink or page takes over, whichever contrasts more.
     pub fn badge_text(&self, disc: Hsla) -> Hsla {
         let white = gpui::white();
-        if contrast::ratio(white, disc) >= BADGE_WHITE {
+        if contrast::ratio(white, disc) >= WHITE_DIGITS_MIN_CONTRAST {
             white
         } else if contrast::ratio(self.text, disc) >= contrast::ratio(self.bg, disc) {
             self.text
@@ -156,8 +140,8 @@ impl Colors {
         }
     }
 
-    /// The on-states as the base CSS draws them: the accent fill with the accent text. A look
-    /// whose `extra_css` pins them to other colours sets those after this.
+    /// The on-states as the base CSS draws them. A look whose `extra_css` pins them to other
+    /// colours sets those after this.
     pub fn follow_accent(&mut self) {
         self.toggle_on = self.accent_bg;
         self.toggle_on_knob = self.accent_text;
@@ -171,8 +155,8 @@ impl Colors {
     }
 }
 
-/// A stroke colour the editor's panel offers, with the name assistive technology reads: what it
-/// looks like in this palette, which a custom palette decides.
+/// `name` is what assistive technology reads, so it describes the colour, which a custom palette
+/// can change.
 #[derive(Clone, Copy)]
 pub struct Swatch {
     pub name: &'static str,
@@ -188,8 +172,8 @@ impl Swatch {
     }
 }
 
-/// The everyday name of a colour. A dark colour keeps a name of its own (maroon, olive, navy)
-/// unless it is nearly black or has little colour in it.
+/// A dark colour keeps a name of its own (maroon, olive, navy) unless it is nearly black or has
+/// little colour in it.
 fn color_name(color: Hsla) -> &'static str {
     let (hue, saturation, lightness) = (color.h * 360., color.s, color.l);
     let dark = lightness < 0.3;
@@ -244,7 +228,6 @@ mod tests {
                     assert_ne!(digits, gpui::white());
                     assert!(contrast::ratio(digits, disc) >= contrast::TEXT);
                 }
-                // A dark disc keeps its white digits.
                 let blue = swatches[4].color;
                 assert_eq!(colors.badge_text(blue), gpui::white());
             }

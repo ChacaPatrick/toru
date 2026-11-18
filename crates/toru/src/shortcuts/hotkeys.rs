@@ -7,14 +7,14 @@ use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 
 use super::{Binding, Planned, Problem, Shortcut};
 
-/// The registry. Creating it opens the hidden window that receives the presses, on GPUI's main
-/// thread, whose message loop serves it (`docs/spikes.md` §1.1). Each press is sent through
-/// `sender` as the pressed shortcut's id, since the handler runs where GPUI can't be touched.
+/// Creating it opens the hidden window that receives the presses, on GPUI's main thread, whose
+/// message loop serves it (`docs/spikes.md` §1.1). Each press is sent through `sender` as the
+/// pressed shortcut's id, since the handler runs where GPUI can't be touched.
 pub struct Hotkeys {
     manager: Option<GlobalHotKeyManager>,
-    /// What is registered right now, by the id a press carries.
+    /// By the id a press carries.
     registered: HashMap<u32, (Shortcut, Binding)>,
-    /// Held only while a shortcut is being recorded (`listen`), by the same id.
+    /// Held only while a shortcut is being recorded (`listen`).
     listening: HashMap<u32, Shortcut>,
 }
 
@@ -42,8 +42,7 @@ impl Hotkeys {
         }
     }
 
-    /// Registers every planned shortcut that has no problem yet, in place of whatever was
-    /// registered before, and notes on each row what Windows refused.
+    /// Replaces whatever was registered before, and notes on each row what Windows refused.
     pub fn apply(&mut self, planned: &mut [Planned]) {
         self.suspend();
         let Some(manager) = &self.manager else {
@@ -107,7 +106,6 @@ impl Hotkeys {
         self.listening.clear();
     }
 
-    /// What the shortcut with `id` does, if it is one of Toru's.
     pub fn binding(&self, id: u32) -> Option<&Binding> {
         self.registered.get(&id).map(|(_, binding)| binding)
     }
@@ -139,9 +137,7 @@ mod tests {
     use crate::shortcuts::shortcut::tests::shortcut;
     use crate::shortcuts::{Binding, Problem, plan};
 
-    /// Registers a combination nobody uses, for the moment the test takes: Ctrl+Alt+Shift+Win+F24.
-    /// A second registry wanting the same keys is told another app has them, and once the
-    /// first lets go the second gets them.
+    /// Ctrl+Alt+Shift+Win+F24 is a combination nobody uses, held for the moment the test takes.
     #[test]
     #[cfg(windows)]
     fn a_combination_another_registry_holds_is_taken_by_another_app() {
@@ -171,9 +167,8 @@ mod tests {
         second.suspend();
     }
 
-    /// Listening holds keys for recording without making them a row's, skips a row's own, and
-    /// lets them go again. Unusual combinations stand in for PrtScn so the owner's key isn't
-    /// taken while the test runs.
+    /// Unusual combinations stand in for PrtScn so the owner's key isn't taken while the test
+    /// runs.
     #[test]
     #[cfg(windows)]
     fn listened_keys_are_recorded_not_acted_on_and_let_go_afterwards() {

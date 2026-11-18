@@ -1,9 +1,3 @@
-//! The tray icon and its menu (`docs/spikes.md` §1.1): created on GPUI's main thread, whose
-//! message loop also serves the icon's hidden window, and heard through a channel, since its
-//! handlers run inside a window procedure and must not touch GPUI. A left click on the icon and
-//! the menu's Open both ask for the window; Quit goes through the same On close path as closing
-//! the window with the setting off.
-
 use std::{error::Error, sync::mpsc::Sender};
 
 use tray_icon::{
@@ -16,8 +10,7 @@ use crate::platform;
 const OPEN_ITEM: &str = "open";
 const QUIT_ITEM: &str = "quit";
 
-/// What the tray asks of the app, and, on the same channel, a global shortcut's press
-/// (`shortcuts`), carrying the id the registry knows it by.
+/// Also carries a global shortcut's press (`shortcuts`), by the id the registry knows it by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Request {
     Show,
@@ -31,7 +24,9 @@ pub struct Tray {
 }
 
 impl Tray {
-    /// Puts the icon in the tray. The handlers hold `sender` for the life of the process.
+    /// Call on GPUI's main thread, whose message loop serves the icon's hidden window
+    /// (`docs/spikes.md` §1.1). The handlers run inside a window procedure and must not touch
+    /// GPUI, so they only send, holding `sender` for the life of the process.
     pub fn new(sender: Sender<Request>) -> Result<Tray, Box<dyn Error>> {
         let menu = Menu::new();
         for (id, text) in [(OPEN_ITEM, "Open Toru"), (QUIT_ITEM, "Quit")] {

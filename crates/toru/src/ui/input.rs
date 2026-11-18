@@ -1,8 +1,4 @@
-//! `.name` and `.field`: `gpui-kit`'s `Input` restyled to the theme. The kit's own focus border
-//! is off (it is a 1px edge; `docs/spikes.md` §1.3), and the §7 ring is drawn around it instead.
-//! A text field shows the ring whenever it has focus, as a browser does, and a click anywhere in
-//! it puts the caret in the text: the kit's frame is focusable on its own, so a click on the
-//! padding would otherwise focus the frame and leave the text deaf to typing.
+//! `.name` and `.field`: `gpui-kit`'s `Input` restyled to the theme.
 
 use gpui::{App, Entity, Focusable, SharedString, StyleRefinement, Window, div, prelude::*, px};
 use gpui_kit::component::input::{Input, InputState};
@@ -16,14 +12,11 @@ pub struct TextField {
     aria_label: SharedString,
     height: gpui::Pixels,
     tab_stop: bool,
-    /// The border takes the theme's warning colour, as for text that isn't valid.
     warning: bool,
-    /// Sizing for the field as a whole, such as a width or `flex_1`.
     style: StyleRefinement,
 }
 
 impl TextField {
-    /// `aria_label` is what the field is called, such as "Screenshot name".
     pub fn new(state: &Entity<InputState>, aria_label: impl Into<SharedString>) -> TextField {
         TextField {
             state: state.clone(),
@@ -41,14 +34,13 @@ impl TextField {
         self
     }
 
-    /// Whether Tab reaches the field; see `Button::tab_stop`.
     pub fn tab_stop(mut self, tab_stop: bool) -> TextField {
         self.tab_stop = tab_stop;
         self
     }
 
-    /// Whether the border warns that the text isn't valid. The field's own styles size its
-    /// wrapper, which has no border, so the colour is set here on the kit's frame.
+    /// The field's own styles size its wrapper, which has no border, so the warning colour is set
+    /// here on the kit's frame.
     pub fn warning(mut self, warning: bool) -> TextField {
         self.warning = warning;
         self
@@ -77,6 +69,8 @@ impl RenderOnce for TextField {
 
         let mut input = Input::new(&self.state)
             .aria_label(self.aria_label)
+            // The kit's focus border is a 1px edge (`docs/spikes.md` §1.3); the §7 ring is drawn
+            // around it instead, whenever the field has focus, as a browser does.
             .focus_bordered(false)
             .w_full()
             .px(px(10.))
@@ -98,9 +92,9 @@ impl RenderOnce for TextField {
             .id(("field", state.entity_id()))
             .relative()
             .flex_none()
-            // Runs after the frame has taken focus for itself, and hands it to the text. The press
-            // is the field's alone, so one that starts here is no press on the card beneath it,
-            // wherever it ends.
+            // The kit's frame takes focus for itself on a click in its padding, which leaves the
+            // text deaf to typing, so this hands it on. A press that starts here is no press on
+            // the card beneath, wherever it ends.
             .on_any_mouse_down(move |_, window, cx| {
                 cx.stop_propagation();
                 state.update(cx, |state, cx| state.focus(window, cx))

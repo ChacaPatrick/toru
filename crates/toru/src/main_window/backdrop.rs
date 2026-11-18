@@ -1,8 +1,4 @@
-//! The custom palette's background photo behind the main window: read and scaled on a
-//! background thread, drawn to cover the window under a scrim of the background colour, and
-//! let go of on the GPU when the theme stops asking for it. A photo that can't be read is noted
-//! and the window shows the plain background, with no dialog, so a moved file can't nag at
-//! every launch.
+//! The custom palette's background photo behind the main window.
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -17,22 +13,18 @@ use xcap::image::{
 use super::MainWindow;
 use crate::theme::{ActiveTheme, backdrop_scrim};
 
-/// The longest side a photo is kept at: enough to cover the window sharply, without putting a
-/// camera-sized picture in the GPU atlas.
+/// Enough to cover the window sharply without putting a camera-sized picture in the GPU atlas.
 const MAX_SIDE: u32 = 2560;
 
-/// What the window has for the theme's photo: the path it was asked for and, if it read, the
-/// picture. A `None` picture means the file couldn't be read, and isn't retried until the path
-/// changes.
+/// A `None` image means the file couldn't be read. It isn't retried until the path changes, and
+/// no dialog says so, so a moved file can't nag at every launch.
 pub struct Backdrop {
     path: PathBuf,
     image: Option<Arc<RenderImage>>,
 }
 
 impl MainWindow {
-    /// Called each frame: starts reading the theme's photo when it changes, and takes the old
-    /// one out of the GPU. The read runs on a background thread and the picture arrives in a
-    /// later frame.
+    /// Called each frame. The picture arrives in a later frame.
     pub(super) fn sync_backdrop(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for image in self.stale_backdrops.drain(..) {
             window.drop_image(image).ok();
@@ -74,8 +66,6 @@ impl MainWindow {
         .detach();
     }
 
-    /// The photo scaled to cover the window, with the scrim over it, as absolute children laid
-    /// under everything else in the frame. Nothing when there is no photo to show.
     pub(super) fn backdrop_layers(&self, cx: &Context<Self>) -> Vec<AnyElement> {
         let Some(image) = self
             .backdrop
@@ -101,9 +91,6 @@ impl MainWindow {
     }
 }
 
-/// Reads the photo at `path` as GPUI draws it: turned the way its EXIF orientation says the
-/// camera was held, and scaled down to `MAX_SIDE` if it is larger. `None` if the file is
-/// missing or isn't a picture.
 fn load(path: &std::path::Path) -> Option<Arc<RenderImage>> {
     let mut decoder = ImageReader::open(path)
         .ok()?
@@ -152,7 +139,7 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 
-    /// A JPEG whose EXIF says the camera was turned 90° shows upright: its sides swap.
+    /// Turned 90°, so its sides swap.
     #[test]
     fn exif_orientation_is_applied() {
         use xcap::image::{ImageEncoder, codecs::jpeg::JpegEncoder};

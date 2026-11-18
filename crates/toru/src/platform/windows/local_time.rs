@@ -1,6 +1,5 @@
 use toru_core::time::{LocalDate, LocalDateTime};
 
-/// `SYSTEMTIME`.
 #[repr(C)]
 #[derive(Default)]
 struct SystemTime {

@@ -20,7 +20,6 @@ const COPY_ALL_FAILED: &str = "Couldn't copy those files. Check for free space."
 const NO_PATHS: &str = "None of those are saved yet, so they have no paths";
 
 impl MainWindow {
-    /// Puts this session's captures on the clipboard as files.
     pub(super) fn copy_all(&mut self, cx: &mut Context<Self>) {
         let store = self.store.clone();
         let format = self.settings.format;
@@ -36,7 +35,6 @@ impl MainWindow {
         });
     }
 
-    /// The bulk bar's Copy as files.
     pub(super) fn copy_selected(&mut self, cx: &mut Context<Self>) {
         let captures = self.gallery.read(cx).selected_captures();
         let store = self.store.clone();
@@ -52,9 +50,8 @@ impl MainWindow {
         });
     }
 
-    /// The bulk bar's Copy paths: the saved ones, one per line. The captures are the ones selected
-    /// at the press; their paths are read on the queue, so a capture a Save ahead of it is still
-    /// writing has its path by now.
+    /// The paths are read on the queue, so a capture a Save ahead of it is still writing has its
+    /// path by now.
     pub(super) fn copy_selected_paths(&mut self, cx: &mut Context<Self>) {
         let captures = self.gallery.read(cx).selected_captures();
         let store = self.store.clone();
@@ -90,18 +87,16 @@ impl MainWindow {
     }
 }
 
-/// How a Copy all went, short of the failures that are told to the user.
 #[derive(Debug, PartialEq)]
 enum CopyAll {
     Nothing,
-    /// Every capture is saved and every one of their files has gone: how many.
+    /// Every capture is saved and all their files have gone.
     AllMissing(usize),
     Copied {
         missing: usize,
     },
 }
 
-/// How putting a file list on the clipboard went.
 #[derive(Clone, Copy, PartialEq)]
 enum FileCopy {
     /// The clipboard wasn't touched, so it still lists whatever it did.
@@ -126,9 +121,8 @@ fn copy_session(
     copy_captures(store, &captures, format, copy)
 }
 
-/// The error is what to tell the user. `copy` puts the list on the clipboard. Only a clipboard
-/// that wasn't touched loses the new folder: anything else may be listing it, and the set before
-/// is off the clipboard either way, so it goes instead.
+/// Only a clipboard that wasn't touched loses the new folder: anything else may be listing it,
+/// and the set before is off the clipboard either way, so it goes instead.
 fn copy_captures(
     store: &Store,
     captures: &[CaptureId],
@@ -184,7 +178,6 @@ fn copy_files(files: Vec<String>) -> FileCopy {
     }
 }
 
-/// The files these captures are saved to, in their order. One deleted meanwhile has none.
 fn saved_paths(store: &Store, captures: &[CaptureId]) -> Vec<PathBuf> {
     captures
         .iter()
@@ -192,21 +185,19 @@ fn saved_paths(store: &Store, captures: &[CaptureId]) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Copy paths' text: one path per line.
 fn paths_text(paths: &[PathBuf]) -> String {
     paths
         .iter()
         .map(|path| path.display().to_string())
         .collect::<Vec<_>>()
-        .join(platform::LINE_BREAK)
+        .join(platform::CLIPBOARD_LINE_BREAK)
 }
 
-/// `set` clears the clipboard first and fails if it can't, as `copy_files` needs.
+/// `set` clears the clipboard first and fails if it can't (see `copy_files`).
 fn copy_text(text: String) -> CopyResult {
     ClipboardContext::new()?.set(vec![ClipboardContent::Text(text)])
 }
 
-/// What a copy left out because saved files have gone.
 fn missing_files(count: usize) -> String {
     if count == 1 {
         "1 saved file has moved or been deleted.".to_string()
@@ -235,7 +226,7 @@ mod tests {
             paths_text(&paths),
             format!(
                 r"C:\Pictures\a shot.png{}C:\Pictures\b.png",
-                platform::LINE_BREAK
+                platform::CLIPBOARD_LINE_BREAK
             )
         );
         assert_eq!(paths_text(&paths[..1]), r"C:\Pictures\a shot.png");
@@ -293,7 +284,6 @@ mod tests {
             .collect()
     }
 
-    /// A store with one unsaved capture in a session.
     fn session_with_a_capture(dir: &TestDir) -> (Store, SessionId) {
         let store = dir.store();
         let session = store.new_session().unwrap();

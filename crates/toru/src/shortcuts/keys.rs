@@ -1,6 +1,5 @@
 use global_hotkey::hotkey::Code;
 
-/// Keys named by something other than their own letter or digit.
 const NAMED_KEYS: [(Code, &str); 12] = [
     (Code::PrintScreen, "PrtScn"),
     (Code::Space, "Space"),
@@ -164,8 +163,7 @@ pub(super) fn key_name(key: Code) -> String {
         .unwrap_or_else(|| format!("{key:?}"))
 }
 
-/// Whether the key can be a shortcut on its own, as PrtScn is by default: the function keys
-/// and PrtScn, which type nothing.
+/// As PrtScn is by default: the function keys and PrtScn, which type nothing.
 pub(super) fn stands_alone(key: Code) -> bool {
     key == Code::PrintScreen || FUNCTION_KEYS.contains(&key)
 }

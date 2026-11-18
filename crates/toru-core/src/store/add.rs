@@ -12,7 +12,6 @@ use super::{CaptureId, Result, SessionId, Store, StoreError, encode_png, mode_te
 use crate::capture::Capture;
 
 impl Store {
-    /// Writes the image and a thumbnail no wider than `max_thumbnail_width` and records the capture.
     pub fn add_capture(
         &self,
         session: SessionId,
@@ -157,8 +156,6 @@ mod tests {
         assert!(dir.temp_files().is_empty());
     }
 
-    /// Adds a capture with a folder in the way of `blocked`, which must make it fail with `Io`.
-    /// The folder is all that may be left in the temp folder afterwards, and no row.
     fn assert_blocked_add_leaves_nothing(blocked: &str) {
         let dir = TestDir::new();
         let store = dir.open();

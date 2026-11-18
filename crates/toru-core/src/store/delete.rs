@@ -4,18 +4,16 @@ use std::path::Path;
 use super::{CaptureId, Result, SessionId, Store, StoreError};
 
 impl Store {
-    /// Deletes the record and temp files. A file the user saved stays where it is.
+    /// A file the user saved stays where it is.
     pub fn delete(&self, id: CaptureId) -> Result<()> {
         self.delete_rows("DELETE FROM captures WHERE id = ?1 RETURNING id", id.0)
             .map(drop)
     }
 
-    /// `delete`, then the file the user saved the capture to, if any, by `remove`, which in the app
-    /// sends it to the Recycle Bin. The record goes first, so a failure can only leave a file
-    /// without a record. Returns whether the file is gone; `false` doesn't undo the delete. A
-    /// file already missing (`remove` says `NotFound`) counts as gone. A file another capture is
-    /// saved to stays, and counts as not gone: the path may have been reused since this capture
-    /// was saved, so the file there may be the other capture's.
+    /// In the app, `remove` sends the user's file to the Recycle Bin. The record goes first, so a
+    /// failure can only leave a file without a record. Returns whether the file is gone; `false`
+    /// doesn't undo the delete. A file already missing counts as gone. A file another capture is
+    /// saved to stays, and counts as not gone: the path may have been reused since.
     pub fn delete_with_file(
         &self,
         id: CaptureId,
@@ -41,7 +39,6 @@ impl Store {
         }))
     }
 
-    /// Deletes the session's unsaved captures and their files.
     pub fn discard_unsaved(&self, session: SessionId) -> Result<()> {
         self.delete_rows(
             "DELETE FROM captures WHERE session = ?1 AND saved_path IS NULL RETURNING id",
@@ -50,9 +47,8 @@ impl Store {
         .map(drop)
     }
 
-    // `sql` must be a single `DELETE ... RETURNING id`. Its rows are committed as gone before any
-    // file is touched.
-    /// Runs a `DELETE … RETURNING id` and removes the deleted captures' temp files.
+    /// `sql` must be a single `DELETE … RETURNING id`. Its rows are committed as gone before any
+    /// file is touched.
     pub(super) fn delete_rows(&self, sql: &'static str, param: i64) -> Result<Vec<CaptureId>> {
         let ids: Vec<CaptureId> = {
             let db = self.db();

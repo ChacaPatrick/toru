@@ -1,18 +1,3 @@
-//! A modal dialog: a backdrop over the whole window and a panel with a title, a line of
-//! explanation, any content the caller adds, and a row of actions. The mockups show none, so the
-//! panel borrows the menu's surface, border and shadow. While it is open the window behind takes
-//! no clicks and no keys, so its own shortcuts rest; Tab and Shift+Tab stay among the content's
-//! controls and the actions, Esc cancels, and Enter or Space presses the focused control. The
-//! caller owns the first action's focus
-//! handle, and the content's, and focuses one when the dialog opens, so a keyboard user lands in
-//! the dialog straight away (DESIGN.md §7). Focus stays in the dialog when the control holding it
-//! goes, as a Clear button does with what it cleared: the panel itself can take focus, so GPUI
-//! restores focus to it, and from there it moves to the first action. Any menu open when the
-//! dialog comes up is closed,
-//! since it would paint above the backdrop and take focus from the dialog; a dialog holds no
-//! menus of its own. A dialog may carry one tick box, between its content and its actions, which
-//! Tab reaches before the first action.
-
 use std::{rc::Rc, sync::Arc};
 
 use gpui::{
@@ -20,38 +5,36 @@ use gpui::{
     actions, div, prelude::*, px,
 };
 
-use super::{Button, Checkbox, Handler, Readable, close_menus, keyed_focus, menus_open};
+use super::{Button, Checkbox, PressHandler, Readable, close_menus, keyed_focus, menus_open};
 use crate::theme::{ActiveTheme, ThemedText, scrim};
 
 actions!(dialog, [NextAction, PreviousAction]);
 
-/// The key context of an open dialog's panel, which `ui::init` binds Tab in.
+/// `ui::init` binds Tab in it.
 pub const KEY_CONTEXT: &str = "Dialog";
 
 const WIDTH: f32 = 440.;
 const PADDING: f32 = 22.;
-/// Between the title, the body, the content and the actions.
 const GAP: f32 = 14.;
 const ACTION_GAP: f32 = 8.;
-/// `.hint`'s `line-height: 1.45`, so a two-line body reads easily.
+/// `.hint`'s `line-height: 1.45`.
 const BODY_LEADING: f32 = 1.45;
 
-/// Between the tick box's target and its label.
-const CHECK_GAP: f32 = 4.;
+const TICK_LABEL_GAP: f32 = 4.;
 
-/// A key press in the dialog, before Esc is looked at. `true` means it was handled.
+/// Runs before Esc is looked at; `true` means it was handled.
 type KeyHandler = Rc<dyn Fn(&KeyDownEvent, &mut Window, &mut App) -> bool>;
 
 struct Action {
     label: SharedString,
     primary: bool,
-    handler: Handler,
+    handler: PressHandler,
 }
 
 struct Tick {
     label: SharedString,
     on: bool,
-    handler: Handler,
+    handler: PressHandler,
 }
 
 #[derive(IntoElement)]
@@ -60,22 +43,19 @@ pub struct Dialog {
     title: SharedString,
     body: SharedString,
     width: Pixels,
-    /// Between the body and the actions.
     content: Option<AnyElement>,
-    /// The content's tab stops, in order, which Tab visits before the actions.
     content_focus: Vec<FocusHandle>,
-    /// The first action's focus, owned by the caller.
-    focus: FocusHandle,
+    first_action_focus: FocusHandle,
     actions: Vec<Action>,
     on_key: Option<KeyHandler>,
     tick: Option<Tick>,
-    /// What Esc does.
-    cancel: Handler,
+    cancel: PressHandler,
 }
 
 impl Dialog {
-    /// `focus` goes on the first action added, which is also the leftmost; focus it on opening.
-    /// `cancel` runs on Esc, and should close the dialog without doing anything else.
+    /// `focus` goes on the first action added, the leftmost; focus it on opening so a keyboard
+    /// user lands in the dialog (DESIGN.md §7). `cancel` runs on Esc, and should only close the
+    /// dialog.
     pub fn new(
         id: impl Into<ElementId>,
         title: impl Into<SharedString>,
@@ -90,7 +70,7 @@ impl Dialog {
             width: px(WIDTH),
             content: None,
             content_focus: Vec::new(),
-            focus: focus.clone(),
+            first_action_focus: focus.clone(),
             actions: Vec::new(),
             on_key: None,
             tick: None,
@@ -103,8 +83,8 @@ impl Dialog {
         self
     }
 
-    /// Content between the body and the actions. `focus` lists its controls' focus handles in
-    /// tab order; each control must `track_focus` its own.
+    /// `focus` lists its controls' focus handles in tab order; each control must `track_focus`
+    /// its own.
     pub fn content(mut self, content: impl IntoElement, focus: Vec<FocusHandle>) -> Dialog {
         self.content = Some(content.into_any_element());
         self.content_focus = focus;
@@ -121,7 +101,6 @@ impl Dialog {
         self
     }
 
-    /// The dialog's tick box, currently `on`. Pressing it or its label runs `handler`.
     pub fn tick(
         mut self,
         label: impl Into<SharedString>,
@@ -144,7 +123,6 @@ impl Dialog {
         self.push(label, false, handler)
     }
 
-    /// The action drawn as the primary button.
     pub fn primary_action(
         self,
         label: impl Into<SharedString>,
@@ -168,7 +146,6 @@ impl Dialog {
     }
 }
 
-/// Tab and Shift+Tab: moves focus `step` stops on from the focused one, wrapping at either end.
 fn step_focus(stops: &[FocusHandle], step: isize, window: &mut Window, cx: &mut App) {
     let count = stops.len() as isize;
     let current = stops
@@ -181,9 +158,9 @@ fn step_focus(stops: &[FocusHandle], step: isize, window: &mut Window, cx: &mut 
 
 impl RenderOnce for Dialog {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        // The menus drawn before the dialog in this frame have already read their open flags,
-        // and nothing invalidated during a draw is redrawn, so they are closed as the next frame
-        // begins, which then draws the dialog without them. Once closed, nothing is scheduled.
+        // An open menu would paint above the backdrop and take focus from the dialog. The menus
+        // drawn before the dialog in this frame have already read their open flags, and nothing
+        // invalidated during a draw is redrawn, so they are closed as the next frame begins.
         if menus_open(cx) {
             window.on_next_frame(|_, cx| close_menus(cx));
         }
@@ -191,7 +168,7 @@ impl RenderOnce for Dialog {
         let child_id = |name: &str| ElementId::NamedChild(id.clone(), name.to_string().into());
         let action_focus: Vec<FocusHandle> = (0..self.actions.len())
             .map(|index| match index {
-                0 => self.focus.clone(),
+                0 => self.first_action_focus.clone(),
                 _ => keyed_focus(window, cx, &child_id(&format!("action {index}"))),
             })
             .collect();
@@ -202,8 +179,8 @@ impl RenderOnce for Dialog {
         let mut stops = self.content_focus;
         stops.extend(tick_focus.iter().cloned());
         stops.extend(action_focus.iter().cloned());
-        // Not a tab stop: it only holds focus for the moment between a control going and the
-        // first action taking over.
+        // Not a tab stop. When the focused control goes, as a Clear button does, GPUI restores
+        // focus to the panel, and from there it moves to the first action.
         let panel_focus = window
             .use_keyed_state(child_id("panel focus"), cx, |_, cx| cx.focus_handle())
             .read(cx)
@@ -215,6 +192,7 @@ impl RenderOnce for Dialog {
 
         let theme = cx.theme();
         let c = &theme.colors;
+        // The mockups show no dialog, so the panel borrows the menu's surface, border and shadow.
         let pop = theme.borders.pop;
         let body_font = theme.type_scale.body;
 
@@ -250,7 +228,7 @@ impl RenderOnce for Dialog {
             div()
                 .flex()
                 .items_center()
-                .gap(px(CHECK_GAP))
+                .gap(px(TICK_LABEL_GAP))
                 .child(
                     Checkbox::new(child_id("tick"), tick.label.clone(), tick.on)
                         .track_focus(&focus)
@@ -318,8 +296,8 @@ impl RenderOnce for Dialog {
                     .children(actions),
             );
 
-        // Laid over the whole window, last among its children so it paints above them, and
-        // occluding them so they take no clicks.
+        // Must be the window's last child, so it paints above the rest; it occludes them so they
+        // take no clicks.
         div()
             .id(child_id("scrim"))
             .absolute()

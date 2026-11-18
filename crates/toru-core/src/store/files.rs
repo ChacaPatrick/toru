@@ -7,12 +7,10 @@ use image::{ImageFormat, RgbaImage};
 
 use super::{CaptureId, Result, Store};
 
-/// Ends the name of a file that `add_capture` hasn't finished with yet.
 pub(super) const PARTIAL_SUFFIX: &str = ".partial";
 
 impl Store {
-    /// The full image in the temp folder. It exists until the capture is saved, after which the
-    /// image is the file at `saved_path`, unless edits are waiting for another Save.
+    /// Exists until the capture is saved, then only while edits wait for another Save.
     pub fn image_path(&self, id: CaptureId) -> PathBuf {
         self.temp_dir.join(format!("{}.png", id.0))
     }
@@ -21,13 +19,13 @@ impl Store {
         self.temp_dir.join(format!("{}.thumb.png", id.0))
     }
 
-    /// The capture as it was taken, kept here once it has been edited, for Reset edits.
+    /// The capture as it was taken, kept once it has been edited, for Reset edits.
     pub fn original_path(&self, id: CaptureId) -> PathBuf {
         self.temp_dir.join(format!("{}.original.png", id.0))
     }
 
-    /// Where the capture's full image is now: its temp copy while there is one, which on a saved
-    /// capture holds edits not yet saved, or else the file it was saved to.
+    /// The temp copy while there is one (on a saved capture it holds edits not yet saved), or
+    /// else the file it was saved to.
     pub fn full_image_path(&self, id: CaptureId) -> Result<PathBuf> {
         let temp = self.image_path(id);
         Ok(match self.capture(id)?.saved_path {

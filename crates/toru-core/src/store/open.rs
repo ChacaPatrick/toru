@@ -33,8 +33,8 @@ const SCHEMA: &str = "
 ";
 
 impl Store {
-    /// Opens or creates the store inside `app_data`, and deletes files a crash left without a row.
-    /// Fails with `StoreError::AlreadyOpen` while another `Store` has the folder open.
+    /// Deletes files a crash left without a row. Fails with `StoreError::AlreadyOpen` while another
+    /// `Store` has the folder open.
     pub fn open(app_data: &Path) -> Result<Store> {
         let temp_dir = app_data.join("temp");
         fs::create_dir_all(&temp_dir)?;

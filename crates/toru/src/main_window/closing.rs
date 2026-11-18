@@ -1,19 +1,4 @@
-//! Closing the window and quitting (DESIGN.md §2 and §3 with CLAUDE.md's overrides). With "Keep
-//! running in the tray" on, closing the window hides it and the app lives on in the tray; off, or
-//! with no tray icon to come back from, it quits. Quitting, from there or from the tray's Quit,
-//! puts the On close setting to this session's unsaved captures: Keep leaves them in history
-//! under the retention setting, Discard deletes them, and Ask shows a dialog, unless there is
-//! nothing unsaved. Saved captures always stay in history, whatever the setting. Edits in an
-//! open editor first go to the card, as Back would put them, so the setting treats that capture
-//! like any other: nothing the user did is lost without being asked about. A quit that Update
-//! asked for (`updates`) goes the same way, and the installer starts only once the app is going.
-//!
-//! A capture under way or still being stored is waited for first, so a shot just taken is counted
-//! and, with Discard, is in the store before the delete rather than landing after it. When Windows
-//! shuts down or logs off there is nobody to ask, so Ask counts as Keep and only Discard acts, in
-//! the moment GPUI gives quit handlers. The queue doesn't run then, so captures and Back writes
-//! still waiting on it, and then an open editor's edits, are written there and then, before the
-//! setting is applied, as a quit from Toru would order them.
+//! Closing the window and quitting (DESIGN.md §2 and §3 with CLAUDE.md's overrides).
 
 use std::{
     cell::{Cell, RefCell},
@@ -33,35 +18,29 @@ use crate::editor::skia::to_rgba;
 use crate::platform;
 use crate::ui::{Dialog, Toast};
 
-/// How long quitting waits for a capture under way and the queue. A full-screen shot is stored
-/// well within this; past it the app quits anyway.
+/// A full-screen shot is stored well within this; past it the app quits anyway.
 const SETTLE_LIMIT: Duration = Duration::from_secs(3);
-/// How often the wait looks again.
 const SETTLE_POLL: Duration = Duration::from_millis(20);
-/// How long the shutdown handler waits: under GPUI's limit, with time left for the delete.
+/// Under GPUI's limit, with time left for the delete.
 const SHUTDOWN_SETTLE_LIMIT: Duration =
     Duration::from_millis(SHUTDOWN_TIMEOUT.as_millis() as u64 * 3 / 4);
-/// How long after hiding in the tray the app hands its unused memory back: once the hide and
-/// the last frame are done with.
+/// Once the hide and the last frame are done with.
 const TRIM_AFTER: Duration = Duration::from_secs(2);
 const NO_TRAY: &str = "Couldn't add the tray icon. Closing the window quits Toru.";
 const NO_TRAY_TOAST_FOR: Duration = Duration::from_secs(8);
-/// What Windows shows for Toru if it ends the session while the editor's edits are being written.
+/// What Windows shows for Toru while it holds up the end of the session.
 const WRITING_EDITS: &str = "Keeping your edits";
-/// The same, while captures and edits still waiting on the queue are being written.
 const WRITING_QUEUED: &str = "Keeping your captures";
 
-/// What a queued write needs, held where the quit handler can reach it until the job starts
-/// (`hold_until_started`): at Windows' shutdown GPUI exits without running the queue, and the
-/// handler writes on the main thread whatever no job has taken yet.
+/// At Windows' shutdown GPUI exits without running the queue, so the quit handler writes on the
+/// main thread whatever no job has taken yet (`hold_until_started`).
 pub(super) trait WriteAtShutdown {
     fn write(self, store: &Store, session: SessionId);
 }
 
-/// A queued write's data, until its job or the quit handler takes it.
+/// Until its job or the quit handler takes it.
 pub(super) type Held<T> = Rc<RefCell<Option<T>>>;
 
-/// A `Held` write of any kind, as the quit handler sees it.
 pub(super) trait Unstarted {
     fn is_unstarted(&self) -> bool;
     fn write_now(&self, store: &Store, session: SessionId);
@@ -79,7 +58,6 @@ impl<T: WriteAtShutdown> Unstarted for RefCell<Option<T>> {
     }
 }
 
-/// What quitting does with this session's unsaved captures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Exit {
     Quit,
@@ -87,8 +65,6 @@ pub enum Exit {
     Ask,
 }
 
-/// The On close setting applied to `unsaved` captures. With none there is nothing to ask about
-/// or to delete, so the app just quits.
 pub fn decide(on_close: OnClose, unsaved: usize) -> Exit {
     match on_close {
         _ if unsaved == 0 => Exit::Quit,
@@ -98,13 +74,11 @@ pub fn decide(on_close: OnClose, unsaved: usize) -> Exit {
     }
 }
 
-/// Whether the setting deletes unsaved captures when Windows ends the session: only Discard
-/// does, since Ask can't be answered then and so counts as Keep.
+/// Ask can't be answered when Windows ends the session, so it counts as Keep.
 pub fn discards_at_shutdown(on_close: OnClose) -> bool {
     on_close == OnClose::Discard
 }
 
-/// The dialog's explanation, for `unsaved` captures.
 pub fn quit_prompt(unsaved: usize) -> String {
     if unsaved == 1 {
         "1 capture from this session isn't saved to your folder. Keep it in history, or delete \
@@ -118,8 +92,7 @@ pub fn quit_prompt(unsaved: usize) -> String {
     }
 }
 
-/// Writes the edited picture to its capture, for Back and for quitting, on this thread. `None`
-/// for the original tells the store the edits were all taken off again.
+/// On this thread. No original tells the store the edits were all taken off again.
 pub(super) fn store_flattened(
     store: &Store,
     capture: CaptureId,
@@ -145,9 +118,8 @@ async fn settle(pending: &Cell<usize>, limit: Duration, executor: &BackgroundExe
 }
 
 impl MainWindow {
-    /// The window's close request, from the caption's X, Alt+F4 or the title bar's Close. The
-    /// window is never closed by GPUI itself: it is hidden, or the app quits. Without a tray icon
-    /// there would be no way back from hidden, so then it quits whatever the setting.
+    /// Without a tray icon there would be no way back from hidden, so then it quits whatever the
+    /// setting.
     pub(super) fn on_close_requested(&mut self, cx: &mut Context<Self>) -> bool {
         if self.settings.keep_in_tray && self.has_tray {
             // A hidden window records nothing: the next key press is some other app's.
@@ -155,7 +127,6 @@ impl MainWindow {
             platform::hide_main_window();
             cx.spawn(async move |_, cx| {
                 cx.background_executor().timer(TRIM_AFTER).await;
-                // Not if the window is back already.
                 if platform::main_window_hidden() {
                     platform::trim_working_set();
                 }
@@ -167,9 +138,8 @@ impl MainWindow {
         false
     }
 
-    /// Shows the window from the tray, restored if minimized, and brings it forward. A window
-    /// opened hidden (`--tray`) has never been placed, so the first time GPUI places it where
-    /// it would have opened, and the foreground follows once it has.
+    /// A window opened hidden (`--tray`) has never been placed, so the first time GPUI places it
+    /// where it would have opened, and the foreground follows once it has.
     pub fn show_window(&mut self, cx: &mut Context<Self>) {
         if self.started_hidden
             && self
@@ -185,8 +155,6 @@ impl MainWindow {
         platform::show_main_window();
     }
 
-    /// The tray icon couldn't be added, so closing quits (`on_close_requested`), and the user is
-    /// told so rather than left to find out.
     pub fn tray_unavailable(&mut self, cx: &mut Context<Self>) {
         self.has_tray = false;
         // Started in the tray, the window would have nothing to come back from.
@@ -197,9 +165,8 @@ impl MainWindow {
             });
     }
 
-    /// Quits by the On close setting, once a capture under way and the queue have had their
-    /// chance to finish. A second request while that wait or the dialog is up changes nothing,
-    /// beyond bringing the window back for the dialog.
+    /// Waits for a capture under way and the queue first, so a shot just taken is counted and,
+    /// with Discard, is in the store before the delete rather than landing after it.
     pub fn request_quit(&mut self, cx: &mut Context<Self>) {
         if self.quit_prompt.is_some() {
             self.show_window(cx);
@@ -209,6 +176,8 @@ impl MainWindow {
             return;
         }
         self.quitting = true;
+        // The open editor's edits go to the card first, so the setting treats that capture like
+        // any other.
         self.keep_open_edits(cx);
         let pending = self.pending.clone();
         cx.spawn(async move |this, cx| {
@@ -222,7 +191,6 @@ impl MainWindow {
         .detach();
     }
 
-    /// Ask brings the window back from the tray if need be, since the question is asked in it.
     fn finish_quit(&mut self, cx: &mut Context<Self>) {
         let unsaved = self.gallery.read(cx).unsaved_in_session();
         match decide(self.settings.on_close, unsaved) {
@@ -241,16 +209,13 @@ impl MainWindow {
         }
     }
 
-    /// Focuses a dialog that has just opened, on its first action. Deferred, because a close
-    /// request or a press arrives inside the window's own update, which the window can't be
-    /// updated again from.
     pub(super) fn focus_dialog(&self, cx: &mut Context<Self>) {
         self.focus_in_dialog(self.dialog_focus.clone(), cx);
     }
 
-    /// Focuses `focus`, a control of a dialog that has just opened, and notes what had focus
-    /// until then, the control the dialog was opened from, so focus can go back there when the
-    /// dialog closes (`return_focus`). A dialog opened over another keeps the first one's note.
+    /// Deferred, because a close request or a press arrives inside the window's own update,
+    /// which the window can't be updated again from. Notes what had focus, to go back to when
+    /// the dialog closes; a dialog opened over another keeps the first one's note.
     pub(super) fn focus_in_dialog(&self, focus: FocusHandle, cx: &mut Context<Self>) {
         let window = self.window;
         let this = cx.weak_entity();
@@ -265,16 +230,14 @@ impl MainWindow {
         });
     }
 
-    /// Keeps `focused` as what to go back to when the dialogs close, unless one is noted.
     pub(super) fn note_opener(&mut self, focused: Option<FocusHandle>) {
         if self.opener.is_none() {
             self.opener = focused;
         }
     }
 
-    /// Once no dialog is open, gives focus back to the control the dialog was opened from. If
-    /// that control is gone, as a deleted card's menu is, the frame drawn next finds nothing
-    /// focused and `on_focus_lost` picks a place instead. Called as the window renders.
+    /// Called as the window renders. If the opener is gone, as a deleted card's menu is, the
+    /// next frame finds nothing focused and `on_focus_lost` picks a place instead.
     pub(super) fn return_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.dialog_open()
             && let Some(opener) = self.opener.take()
@@ -283,34 +246,29 @@ impl MainWindow {
         }
     }
 
-    /// Deletes the session's unsaved captures and quits. Done here and now rather than on the
-    /// queue, since the app is leaving; the files are few. If the delete fails, the captures
-    /// stay in history, where the retention setting reaches them. Captures the wait for the
-    /// queue gave up on are stored first, as the quit handler would after the delete, so the
-    /// delete reaches them; one auto-saved stays, as saved captures do.
+    /// Here and now rather than on the queue, since the app is leaving. If the delete fails, the
+    /// captures stay in history, where retention reaches them. Captures the wait for the queue
+    /// gave up on are stored first, so the delete reaches them.
     fn discard_and_quit(&mut self, cx: &mut Context<Self>) {
         self.write_unstarted_now();
         self.store.discard_unsaved(self.session).ok();
         self.leave(cx);
     }
 
-    /// Quits, the On close setting having had its say. Windows' shutdown doesn't come through
-    /// here, so an update waiting on the quit dialog's answer isn't installed by it.
+    /// Windows' shutdown doesn't come through here, so an update waiting on the quit dialog's
+    /// answer isn't installed by it.
     fn leave(&mut self, cx: &mut Context<Self>) {
         self.updates.leaving();
         cx.quit();
     }
 
-    /// Runs as the app quits, for whatever reason: its own Quit, or Windows shutting down or
-    /// logging off, when GPUI runs the quit handlers and exits without asking the window.
-    /// Captures and Back writes still waiting on the queue, then an open editor's edits, are
-    /// written first, before this returns, since GPUI's time limit only holds the future; after
-    /// Toru's own Quit the queue has run and there is nothing left. The setting is then applied as
-    /// `discards_at_shutdown` says. After Toru's own Quit the delete has been done already and
-    /// finds nothing. The main thread's tasks don't run while GPUI waits on this, so the wait
-    /// only helps a store write already on a background thread; the first delete makes sure the
-    /// captures already there go even if the time runs out. An update's installer is started
-    /// once the writes are done, and waits for this process to end, so the delete comes first.
+    /// Runs at Toru's own Quit and at Windows' shutdown or log-off, when GPUI runs the quit
+    /// handlers and exits without asking the window. Queued writes, then an open editor's edits,
+    /// are written before this returns, since GPUI's time limit only holds the future. The main
+    /// thread's tasks don't run while GPUI waits on it, so the wait only helps a store write
+    /// already on a background thread; the first delete makes sure the captures already there go
+    /// even if the time runs out. An update's installer waits for this process to end, so the
+    /// delete comes first.
     pub fn on_app_quit(&mut self, cx: &mut Context<Self>) -> impl Future<Output = ()> + use<> {
         self.write_unstarted_now();
         self.write_open_edits_now(cx);
@@ -330,8 +288,8 @@ impl MainWindow {
         }
     }
 
-    /// Keeps `write` where the quit handler can reach it until the job queued with the returned
-    /// handle takes it as it starts. A job that finds it gone returns: it was written already.
+    /// The job queued with the returned handle takes it as it starts. A job that finds it gone
+    /// returns: it was written already.
     pub(super) fn hold_until_started<T: WriteAtShutdown + 'static>(&mut self, write: T) -> Held<T> {
         let held = Rc::new(RefCell::new(Some(write)));
         self.unstarted.retain(|held| held.is_unstarted());
@@ -339,8 +297,7 @@ impl MainWindow {
         held
     }
 
-    /// Writes, in queue order and before this returns, whatever queued job hasn't started. A job
-    /// already running on a background thread is left to finish if it can.
+    /// A job already running on a background thread is left to finish if it can.
     fn write_unstarted_now(&mut self) {
         let unstarted = std::mem::take(&mut self.unstarted);
         if !unstarted.iter().any(|held| held.is_unstarted()) {
@@ -353,10 +310,8 @@ impl MainWindow {
         });
     }
 
-    /// The open editor's edits not yet given to the card, written before this returns: at
-    /// Windows' shutdown GPUI exits once the quit handlers return, without running the queue
-    /// `keep_open_edits` uses. After Toru's own Quit that has taken them already, and this finds
-    /// nothing. A failure goes unreported, as there is no window left to say so in.
+    /// At Windows' shutdown GPUI exits once the quit handlers return, without running the queue
+    /// `keep_open_edits` uses. A failure goes unreported: there is no window left to say so in.
     fn write_open_edits_now(&mut self, cx: &mut Context<Self>) {
         let Some(editor) = self.editor.clone() else {
             return;
@@ -377,15 +332,12 @@ impl MainWindow {
         .ok();
     }
 
-    /// Cancel: the app stays, and so an update that asked for the quit isn't installed.
     fn dismiss_quit_prompt(&mut self, cx: &mut Context<Self>) {
         self.quit_prompt = None;
         self.updates.quit_cancelled();
         cx.notify();
     }
 
-    /// The Ask dialog. Keep in history is the primary action and holds focus when it opens;
-    /// Cancel and Esc leave the app running.
     pub(super) fn quit_dialog(&self, unsaved: usize, cx: &Context<Self>) -> Dialog {
         Dialog::new(
             "quit-dialog",
@@ -406,12 +358,10 @@ impl MainWindow {
     }
 }
 
-/// A count of work under way, shared with the tasks that finish it.
 pub(super) fn pending_counter() -> Rc<Cell<usize>> {
     Rc::new(Cell::new(0))
 }
 
-/// One more piece of work under way; the returned guard takes it off again when dropped.
 pub(super) fn begin(pending: &Rc<Cell<usize>>) -> Pending {
     pending.set(pending.get() + 1);
     Pending(pending.clone())
@@ -463,8 +413,7 @@ mod tests {
             .unwrap()
     }
 
-    /// What the editor gives the card for a 4 × 2 capture: red all over if `edited`, the
-    /// capture as it was otherwise.
+    /// Red all over if `edited`.
     fn flattened(edited: bool) -> Flattened {
         let mut flattened = Document::new(Pixmap::new(4, 2).unwrap()).flatten();
         if edited {
@@ -499,7 +448,6 @@ mod tests {
         std::fs::metadata(path).unwrap().len()
     }
 
-    /// Counts how often it is written.
     struct Counted(Rc<Cell<usize>>);
 
     impl WriteAtShutdown for Counted {

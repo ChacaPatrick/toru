@@ -4,7 +4,6 @@ use super::{FETCH_AHEAD, Gallery, Group, GroupKind, RETRY_FETCH_AFTER};
 use crate::main_window::history::{self, Next, Page};
 
 impl Gallery {
-    /// Starts fetching the next day if the list is close to running out and nothing holds it back.
     /// Called each frame, so days keep coming until the view has filled.
     pub(super) fn fetch_when_near_bottom(
         &mut self,
@@ -53,13 +52,12 @@ impl Gallery {
         }));
     }
 
-    /// Adds a fetched day below the groups listed so far, unless it holds nothing to list.
     fn show_page(&mut self, page: Option<Page>, window: &mut Window, cx: &mut Context<Self>) {
         self.fetch = None;
         self.fetch_failed = false;
         self.next = page.as_ref().map_or(Next::End, |page| page.next);
         if let Some(page) = page.filter(|page| !page.cards.is_empty()) {
-            self.remake_narrow_thumbnails(&page.cards, window, cx);
+            self.remake_narrow_or_missing_thumbnails(&page.cards, window, cx);
             let cards = page
                 .cards
                 .into_iter()
@@ -76,8 +74,6 @@ impl Gallery {
         cx.notify();
     }
 
-    /// Lists or drops the groups before this session. A focused card that goes with them stops
-    /// being rendered, which the main window's `on_focus_lost` answers by refocusing.
     pub fn set_show_previous(&mut self, on: bool, cx: &Context<Self>) {
         if self.show_previous != on {
             self.show_previous = on;

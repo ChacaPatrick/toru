@@ -1,46 +1,40 @@
-//! What assistive technology reads of anything that isn't a control. GPUI only reports elements
-//! with both an id and a role, so plain text is invisible to a screen reader, and AccessKit names
-//! a `Role::Label` node from its value, ignoring any label, while every other role is named by its
-//! label. This is the one place that knows that: give an element an `id` and one of these calls.
-
 use gpui::{Role, prelude::*};
 
-/// Every heading in the app is a section of a window with no outline above it. AccessKit adds one
-/// for UI Automation, so this reads as level 2.
+/// Every heading is a section of a window with no outline above it; AccessKit adds one for UI
+/// Automation, so this reads as level 2.
 ///
-/// UI Automation gets a Text element with the `heading` ARIA role, `Level` 2 and `level=1` in its
-/// ARIA properties, but `HeadingLevel` stays `HeadingLevel_None`: accesskit_windows (0.34, which
-/// gpui-pre 0.3.11 uses, and 0.35) never sets it. Narrator finds headings by that property, so its
-/// heading navigation skips these until accesskit_windows maps `Role::Heading` and its level to it.
-/// Proposed upstream in https://github.com/AccessKit/accesskit/issues/840; once released, these
-/// report `HeadingLevel2` with no change here.
+/// Narrator's heading navigation skips these: accesskit_windows (0.34 in gpui-pre 0.3.11, and
+/// 0.35) never sets `HeadingLevel`. Proposed upstream in
+/// https://github.com/AccessKit/accesskit/issues/840; once released, these report `HeadingLevel2`
+/// with no change here.
 const HEADING_LEVEL: usize = 1;
 
-/// `text` as it should be spoken: the visible separators read as a pause rather than a symbol.
+/// The visible separators read as a pause rather than a symbol.
 pub fn spoken(text: &str) -> String {
     text.replace(" · ", ", ")
 }
 
+/// GPUI only reports elements with both an id and a role, so plain text needs an `id` and one of
+/// these calls to reach a screen reader.
 pub trait Readable: StatefulInteractiveElement + Sized {
-    /// Standalone text, such as a status line or a path.
+    /// Standalone text, such as a status line or a path. AccessKit names a `Role::Label` node from
+    /// its value, ignoring any label.
     fn read_as_text(self, text: impl AsRef<str>) -> Self {
         self.role(Role::Label).aria_value(spoken(text.as_ref()))
     }
 
-    /// A section heading, with anything read along with it in `name`.
     fn read_as_heading(self, name: impl AsRef<str>) -> Self {
         self.role(Role::Heading)
             .aria_level(HEADING_LEVEL)
             .aria_label(spoken(name.as_ref()))
     }
 
-    /// A dialog's panel: assistive technology is told the rest of the window is out of reach.
+    /// Assistive technology is told the rest of the window is out of reach.
     fn modal_dialog(self) -> Self {
         self.a11y_synthetic_children(|builder| builder.parent_node().set_modal())
     }
 
-    /// While `hidden`, takes this element and everything in it out of the accessibility tree, as
-    /// behind a modal dialog. It only has a node then, so the tree is otherwise unchanged.
+    /// It only has a node while hidden, so the tree is otherwise unchanged.
     fn hidden_from_readers(self, hidden: bool) -> Self {
         if !hidden {
             return self;

@@ -1,6 +1,5 @@
-//! `.toggle`: a 44×24 switch whose knob sits at the left when off and the right when on. The
-//! switch is drawn at that size inside a box the minimum target tall (DESIGN.md §7), which is
-//! what takes the press and the focus.
+//! `.toggle`: drawn inside a `MIN_TARGET`-tall box (DESIGN.md §7), which takes the press and the
+//! focus.
 
 use std::rc::Rc;
 
@@ -23,7 +22,6 @@ pub struct Toggle {
 }
 
 impl Toggle {
-    /// `label` is the setting's name, read out with the on/off state.
     pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>, on: bool) -> Toggle {
         Toggle {
             id: id.into(),
@@ -34,7 +32,6 @@ impl Toggle {
         }
     }
 
-    /// A hint read after the name and state, such as the text under the switch.
     pub fn description(mut self, description: impl Into<SharedString>) -> Toggle {
         self.description = Some(description.into());
         self

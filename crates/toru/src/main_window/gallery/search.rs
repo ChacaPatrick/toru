@@ -1,12 +1,8 @@
-/// Whether a search for `query`, already lower-cased and trimmed, lets a card called `name`
-/// through. An empty query lets every card through.
+/// `query` is already lower-cased and trimmed.
 pub(super) fn name_matches(name: &str, query: &str) -> bool {
     query.is_empty() || name.to_lowercase().contains(query)
 }
 
-/// The notice under the session header when a search leaves it empty. `elsewhere`: whether an
-/// earlier group has a match, even one folded away by Collapse, in which case the notice
-/// says so rather than claiming nothing matches at all.
 pub(super) fn no_match_text(query: &str, elsewhere: bool) -> String {
     if elsewhere {
         format!("Nothing in this session matches “{query}”")

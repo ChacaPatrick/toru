@@ -1,10 +1,8 @@
-//! The overlay's arithmetic, all in physical pixels, where x grows to the right and y downward:
-//! a monitor's frame for the drag and the magnifier, and the desktop, where monitors and windows
-//! have their places, for picking a window. Nothing here touches GPUI, so every rule has a test.
+//! The overlay's arithmetic, in physical pixels. Nothing here touches GPUI, so every rule has a test.
 
 use xcap::image::{Rgba, RgbaImage, imageops};
 
-/// A frame position: a pixel's column and row, or the edge before them.
+/// A pixel's column and row, or the edge before them.
 pub type Pt = (i32, i32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,12 +22,10 @@ impl Rect {
         self.y + self.height
     }
 
-    /// Whether the pixel at `at` is one of this rect's.
     pub fn contains(self, at: Pt) -> bool {
         (self.x..self.right()).contains(&at.0) && (self.y..self.bottom()).contains(&at.1)
     }
 
-    /// The pixels in both rects, if there are any.
     pub fn intersect(self, other: Rect) -> Option<Rect> {
         let x = self.x.max(other.x);
         let y = self.y.max(other.y);
@@ -43,7 +39,6 @@ impl Rect {
         })
     }
 
-    /// The smallest rect holding both.
     pub fn union(self, other: Rect) -> Rect {
         let x = self.x.min(other.x);
         let y = self.y.min(other.y);
@@ -55,7 +50,6 @@ impl Rect {
         }
     }
 
-    /// This rect in the coordinates of a frame whose origin is at `origin` on the desktop.
     pub fn relative_to(self, origin: Pt) -> Rect {
         Rect {
             x: self.x - origin.0,
@@ -65,7 +59,6 @@ impl Rect {
     }
 }
 
-/// A drag in progress: the edge where the button went down and the edge under the pointer now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Selection {
     pub anchor: Pt,
@@ -80,7 +73,7 @@ impl Selection {
         }
     }
 
-    /// The pixels between the two edges, whichever way the drag went: a 400 px drag is 400 wide.
+    /// Between the two edges, whichever way the drag went: a 400 px drag is 400 wide.
     pub fn rect(self) -> Rect {
         Rect {
             x: self.anchor.0.min(self.cursor.0),
@@ -90,30 +83,26 @@ impl Selection {
         }
     }
 
-    /// A click, or a drag along one line, selects nothing.
     pub fn is_empty(self) -> bool {
         let rect = self.rect();
         rect.width == 0 || rect.height == 0
     }
 }
 
-/// The device pixel a window position is. GPUI divided a whole device pixel by the scale in
-/// `f32`, so multiplying back and rounding undoes it exactly, where flooring would land one too
-/// low whenever the division came out just under.
+/// GPUI divided a whole device pixel by the scale in `f32`, so multiplying back and rounding undoes
+/// it exactly, where flooring would land one too low whenever the division came out just under.
 fn device_pixel(value: f32, scale: f32) -> i32 {
     (value * scale).round() as i32
 }
 
-/// The frame pixel under a window position, for the magnifier, kept inside the frame.
 pub fn pixel_at(position: (f32, f32), scale: f32, frame: (u32, u32)) -> Pt {
     let at = |value: f32, len: u32| device_pixel(value, scale).clamp(0, len as i32 - 1);
     (at(position.0, frame.0), at(position.1, frame.1))
 }
 
-/// The pixel edge a drag's corner is on: the near edge of the pixel under the pointer, except on
-/// the frame's last column or row, which the pointer cannot go past, where it is the far edge so
-/// the frame's edge can be selected. A position outside the frame, which a drag that has crossed
-/// onto a neighbouring monitor reports, is clamped to the edge it went past.
+/// The near edge of the pixel under the pointer, except on the frame's last column or row, which
+/// the pointer cannot go past: there it is the far edge, so the frame's edge can be selected. A
+/// position outside the frame, from a drag that crossed onto a neighbouring monitor, is clamped.
 pub fn edge_at(position: (f32, f32), scale: f32, frame: (u32, u32)) -> Pt {
     let at = |value: f32, len: u32| {
         let pixel = device_pixel(value, scale);
@@ -123,8 +112,6 @@ pub fn edge_at(position: (f32, f32), scale: f32, frame: (u32, u32)) -> Pt {
     (at(position.0, frame.0), at(position.1, frame.1))
 }
 
-/// The parts of a `width` by `height` frame outside `rect`: above, below, left and right of it,
-/// skipping any that would be empty. Drawn dimmed, they leave the selection untouched.
 pub fn around(rect: Rect, width: i32, height: i32) -> Vec<Rect> {
     let bottom = rect.y + rect.height;
     let right = rect.x + rect.width;
@@ -159,9 +146,8 @@ pub fn around(rect: Rect, width: i32, height: i32) -> Vec<Rect> {
     .collect()
 }
 
-/// Where a `panel` sits beside the pointer at `cursor`: below and to the right, `gap` away, unless
-/// that would leave the `frame`, in which case it flips to the other side on that axis. Whatever
-/// is left is kept inside the frame. All in the same units, logical or physical.
+/// Below and to the right of `cursor`, `gap` away, flipping on an axis where that would leave the
+/// frame, then kept inside it. Any units, as long as they match.
 pub fn panel_origin(
     cursor: (f32, f32),
     panel: (f32, f32),
@@ -183,8 +169,7 @@ pub fn panel_origin(
     )
 }
 
-/// The `cells` by `cells` pixels of `frame` centred on `centre`, row by row, with `None` for any
-/// that lie outside the frame. `cells` is odd, so the centre pixel is the middle one.
+/// Row by row, `None` outside the frame. `cells` must be odd, so the centre pixel is the middle one.
 pub fn loupe_pixels(frame: &RgbaImage, centre: Pt, cells: u32) -> Vec<Option<Rgba<u8>>> {
     let reach = cells as i32 / 2;
     let mut pixels = Vec::with_capacity((cells * cells) as usize);
@@ -202,16 +187,13 @@ pub fn loupe_pixels(frame: &RgbaImage, centre: Pt, cells: u32) -> Vec<Option<Rgb
     pixels
 }
 
-/// The topmost of `windows`, which are listed topmost first, under the desktop pixel `at`.
+/// `windows` are listed topmost first.
 pub fn window_at(windows: impl IntoIterator<Item = Rect>, at: Pt) -> Option<usize> {
     windows.into_iter().position(|window| window.contains(at))
 }
 
-/// The pixels of `window` as the frozen monitors show them: each monitor's frame is copied
-/// where it overlaps the window, and the result is the window cut down to what is on some
-/// monitor, so a window hanging off the desktop's edge loses the part no screen shows. A gap
-/// between monitors inside the window, which no screen shows either, stays transparent. `None`
-/// if no monitor shows any of it.
+/// The window cut down to what some monitor shows; a gap between monitors inside it stays
+/// transparent.
 pub fn compose(window: Rect, monitors: &[(Rect, &RgbaImage)]) -> Option<RgbaImage> {
     let shown = monitors
         .iter()
@@ -236,12 +218,10 @@ pub fn compose(window: Rect, monitors: &[(Rect, &RgbaImage)]) -> Option<RgbaImag
     Some(image)
 }
 
-/// "400 × 300 px", the readout while dragging.
 pub fn size_text(rect: Rect) -> String {
     format!("{} × {} px", rect.width, rect.height)
 }
 
-/// "1532, 884", the pointer's pixel on the monitor.
 pub fn position_text(pixel: Pt) -> String {
     format!("{}, {}", pixel.0, pixel.1)
 }
@@ -323,8 +303,6 @@ mod tests {
         assert_eq!(edge_at((1279.5, 719.5), 2., FRAME), (2560, 1440));
     }
 
-    /// A drag that has crossed onto the next monitor keeps reporting positions, now outside this
-    /// frame; the selection stops at the edge it went past.
     #[test]
     fn an_overshoot_past_the_frame_clamps_to_that_edge() {
         assert_eq!(edge_at((2700., 700.), 1., FRAME), (2560, 700));
@@ -626,8 +604,6 @@ mod tests {
         assert!(compose(gone, &monitors).is_none());
     }
 
-    /// Where two monitors with a gap between them both show part of a window, the gap no screen
-    /// shows stays transparent rather than borrowing pixels from either.
     #[test]
     fn compose_leaves_a_gap_between_monitors_transparent() {
         let left = Rect {

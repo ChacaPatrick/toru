@@ -20,7 +20,6 @@ const OPEN_ITEM: &str = "open";
 const QUIT_ITEM: &str = "quit";
 const VISIBLE_LINES: usize = 30;
 
-/// What the tray and hotkey handlers send to the GPUI side.
 enum Message {
     Log(String),
     OpenWindow,

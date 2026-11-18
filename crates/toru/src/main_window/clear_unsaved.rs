@@ -9,7 +9,6 @@ fn clear_title(count: usize) -> String {
     format!("Clear {}?", plural(count, "unsaved capture"))
 }
 
-/// What the Clear unsaved question says, for this many unsaved captures.
 fn clear_body(count: usize) -> String {
     if count == 1 {
         "It will be deleted. It isn't saved to your folder, so it can't be brought back."
@@ -23,7 +22,6 @@ fn clear_body(count: usize) -> String {
 }
 
 impl MainWindow {
-    /// Bottom bar's Clear unsaved asks first, since an unsaved capture can't be brought back.
     pub(super) fn ask_clear_unsaved(&mut self, cx: &mut Context<Self>) {
         if self.gallery.read(cx).unsaved_in_session() == 0 {
             return;
@@ -44,9 +42,8 @@ impl MainWindow {
         cx.notify();
     }
 
-    /// The question before Clear unsaved, in the delete question's style: Cancel first, so it
-    /// holds focus when the dialog opens and a stray Enter clears nothing. The count is read as
-    /// it is drawn, so a capture landing while the question is up is counted.
+    /// Cancel first, so it holds focus when the dialog opens and a stray Enter clears nothing.
+    /// The count is read as it is drawn, so a capture landing while the question is up is counted.
     pub(super) fn clear_dialog(&self, cx: &Context<Self>) -> Dialog {
         let unsaved = self.gallery.read(cx).unsaved_in_session();
         Dialog::new(
@@ -60,8 +57,8 @@ impl MainWindow {
         .primary_action("Clear", act(cx, |this, cx| this.confirm_clear(cx)))
     }
 
-    /// Clears this session's unsaved captures. Runs on the queue so a capture still being stored
-    /// is cleared with the rest, and a Save already asked for is finished first.
+    /// On the queue, so a capture still being stored is cleared with the rest, and a Save
+    /// already asked for is finished first.
     fn clear_unsaved(&mut self, cx: &mut Context<Self>) {
         let store = self.store.clone();
         self.enqueue(cx, async move |this, cx| {

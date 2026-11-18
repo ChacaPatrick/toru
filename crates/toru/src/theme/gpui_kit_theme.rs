@@ -1,7 +1,5 @@
-//! `gpui-kit`'s text input and scrollbar read their colours and fonts from the kit's own theme
-//! global, which their element styling can't reach (the caret, selection and placeholder live
-//! inside the text element; the scrollbar is painted by the kit's base layer). So the active
-//! `Theme` is copied into the parts of it they use.
+//! `gpui-kit`'s text input and scrollbar read the kit's own theme global, which element styling
+//! can't reach (caret, selection, placeholder, scrollbar), so the active `Theme` is copied into it.
 
 use gpui::{App, Hsla};
 
@@ -19,8 +17,7 @@ pub fn sync_kit_theme(theme: &Theme, cx: &mut App) {
         kit.colors.input = theme.borders.input.color;
         kit.colors.border = c.hair;
         kit.colors.ring = c.focus;
-        // The mockups show no scrollbar, so the gallery's has no track and a thumb in the muted
-        // colour, at full strength when hovered.
+        // The mockups show no scrollbar, so it is kept faint.
         kit.colors.scrollbar = gpui::transparent_black();
         kit.colors.scrollbar_thumb = Hsla { a: 0.5, ..c.muted };
         kit.colors.scrollbar_thumb_hover = c.muted;

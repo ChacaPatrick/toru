@@ -50,7 +50,7 @@ fn control(
 }
 
 struct Controls {
-    /// One per control below, in tab order, with the name printed when it gains focus.
+    /// In tab order, with the name printed when it gains focus.
     focus: [(&'static str, FocusHandle); 4],
     last_focused: Option<&'static str>,
     copies: usize,

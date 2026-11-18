@@ -18,17 +18,15 @@ unsafe extern "system" {
     fn GetKeyState(key: i32) -> i16;
 }
 
-/// Whether the key with the virtual-key code `key` is down in the key event being handled.
-/// `GetKeyState` follows the thread's messages, so inside a key-down handler it says which
-/// keys were down as that key went down, whatever the layout names them.
+/// Down in the key event being handled: `GetKeyState` follows the thread's messages, so inside a
+/// key-down handler it says which keys were down as that key went down, whatever the layout
+/// names them.
 pub(super) fn key_down(key: i32) -> bool {
     // SAFETY: a plain user32 call with a virtual-key code.
     (unsafe { GetKeyState(key) } as u16) & 0x8000 != 0
 }
 
-/// The virtual-key code of a key a shortcut can use, by the key's name: the letters, digits,
-/// number pad digits and function keys are numbered in order, and the few other keys are
-/// named one by one. `None` for a key a shortcut can't use.
+/// `None` for a key a shortcut can't use.
 pub(super) fn virtual_key(key: Code) -> Option<i32> {
     let name = key.to_string();
     match name.as_bytes() {
@@ -65,7 +63,6 @@ pub(super) fn virtual_key(key: Code) -> Option<i32> {
     })
 }
 
-/// The first of `keys` that `key_down` finds down.
 pub(super) fn pressed_among(
     keys: impl Iterator<Item = Code>,
     key_down: impl Fn(i32) -> bool,
@@ -74,13 +71,12 @@ pub(super) fn pressed_among(
     keys.find(|key| virtual_key(*key).is_some_and(&key_down))
 }
 
-/// Which of `keys` is down in the key event being handled (`key_down`), or `None` if none
-/// of them is.
+/// In the key event being handled (`key_down`).
 pub fn pressed_key(keys: impl Iterator<Item = Code>) -> Option<Code> {
     pressed_among(keys, key_down)
 }
 
-/// The modifiers down in the key event being handled (`key_down`).
+/// In the key event being handled (`key_down`).
 pub fn held_modifiers() -> HeldModifiers {
     HeldModifiers {
         control: key_down(VK_CONTROL),

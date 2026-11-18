@@ -1,10 +1,6 @@
-//! Where the picture sits on the canvas: its zoom and the canvas position of its top-left
-//! corner, in logical pixels. Plain arithmetic, so the zoom buttons, the wheel and panning all
-//! go through the same few rules.
-
 use gpui::{Bounds, Point, Size, point, size};
 
-/// The zoom levels − and + step through; the wheel moves freely between them.
+/// What − and + step through; the wheel moves freely between them.
 pub const STEPS: [f32; 12] = [0.1, 0.25, 0.33, 0.5, 0.67, 0.75, 1., 1.25, 1.5, 2., 3., 4.];
 pub const MIN_ZOOM: f32 = STEPS[0];
 pub const MAX_ZOOM: f32 = 8.;
@@ -15,12 +11,11 @@ const ZOOM_PER_NOTCH: f32 = 1.2;
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Viewport {
     pub zoom: f32,
-    /// The picture's top-left corner, in canvas coordinates.
+    /// The picture's top-left corner, in logical canvas coordinates.
     pub origin: Point<f32>,
 }
 
 impl Viewport {
-    /// The picture as large as fits inside `area`, never above 100%, centred in it.
     pub fn fit(image: Size<f32>, area: Bounds<f32>) -> Viewport {
         let zoom = (area.size.width / image.width)
             .min(area.size.height / image.height)
@@ -35,8 +30,7 @@ impl Viewport {
         }
     }
 
-    /// Zooms to `zoom`, clamped to the range, keeping the picture point under `anchor` where it
-    /// is: the pointer for the wheel, the canvas centre for the buttons.
+    /// Keeps the picture point under `anchor` where it is.
     pub fn zoom_to(self, zoom: f32, anchor: Point<f32>) -> Viewport {
         let zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
         let image_point = point(
@@ -52,8 +46,7 @@ impl Viewport {
         }
     }
 
-    /// The next step up (`1`) or down (`-1`) from the current zoom, or the current zoom when
-    /// it is already at that end.
+    /// `direction` is `1` up or `-1` down; at that end the zoom stays.
     pub fn step(&self, direction: i32) -> f32 {
         // A hair of tolerance, so 50% reads as the 50% step after float arithmetic.
         let eps = 1e-3;
@@ -73,7 +66,7 @@ impl Viewport {
         }
     }
 
-    /// The zoom factor for a wheel movement of `lines` (positive away from the user).
+    /// `lines` is positive away from the user.
     pub fn wheel_factor(lines: f32) -> f32 {
         ZOOM_PER_NOTCH.powf(lines / NOTCH_LINES)
     }
@@ -85,8 +78,6 @@ impl Viewport {
         }
     }
 
-    /// Keeps the picture on the canvas: a picture smaller than the canvas on an axis stays
-    /// wholly inside it, and a larger one keeps covering it with no gap at either edge.
     pub fn clamped(self, image: Size<f32>, canvas: Size<f32>) -> Viewport {
         let clamp = |origin: f32, scaled: f32, canvas: f32| {
             if scaled <= canvas {
@@ -111,7 +102,6 @@ impl Viewport {
         )
     }
 
-    /// "53".
     pub fn percent(&self) -> u32 {
         (self.zoom * 100.).round() as u32
     }

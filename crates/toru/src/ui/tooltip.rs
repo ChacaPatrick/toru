@@ -1,5 +1,4 @@
-//! A tooltip: one line of hint text on a small pop surface, for a value with no room on the
-//! control, such as a card's file size. The mockups show none, so it borrows the menu's surface.
+//! The mockups show no tooltip, so it borrows the menu's surface.
 
 use gpui::{AnyView, App, Context, Render, SharedString, Window, div, prelude::*};
 

@@ -1,7 +1,5 @@
-//! Characters for the text being typed on the canvas, as the platform composes them: AltGr
-//! and accent keys through the keyboard layout, and whole words through an input method. A
-//! key's own name, which `Editor::type_key` sees, can't tell these apart. The caret always
-//! stands at the end of the text.
+//! Typed characters as the platform composes them (AltGr, accent keys, input methods), which a
+//! key's own name, as `Editor::type_key` sees it, can't tell apart. The caret is always at the end.
 
 use std::ops::Range;
 
@@ -12,8 +10,8 @@ use gpui::{
 
 use super::{Editor, canvas::CARET};
 
-/// While text is typed, the canvas takes the platform's text input for whatever has focus in
-/// the editor, except its name field, which takes its own. Called as the canvas paints.
+/// For whatever has focus in the editor except its name field, which takes its own. Called as
+/// the canvas paints.
 pub(super) fn handle_input(
     editor: &Entity<Editor>,
     bounds: Bounds<Pixels>,
@@ -36,14 +34,12 @@ pub(super) fn handle_input(
     }
 }
 
-/// Text from the clipboard with each line break as `\n`, whichever program put it there.
-pub(super) fn line_breaks(text: &str) -> String {
+pub(super) fn normalize_line_breaks(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
-/// Puts `text` in place of the `marked` end of `content`, or after it if nothing is marked,
-/// without control characters but with its line breaks. Returns the range it now takes if it
-/// is still being composed (`mark`).
+/// Puts `text` in place of the `marked` end of `content`, or after it if nothing is marked.
+/// Returns the range it now takes if it is still being composed (`mark`).
 fn put(
     content: &mut String,
     marked: Option<Range<usize>>,
@@ -53,7 +49,7 @@ fn put(
     let start = marked.map_or(content.len(), |marked| marked.start.min(content.len()));
     content.truncate(start);
     content.extend(
-        line_breaks(text)
+        normalize_line_breaks(text)
             .chars()
             .filter(|c| *c == '\n' || !c.is_control()),
     );
@@ -64,7 +60,7 @@ fn utf16_len(text: &str) -> usize {
     text.encode_utf16().count()
 }
 
-/// The byte offset in `text` of the UTF-16 offset `at`, or its end.
+/// `at` is a UTF-16 offset; past the end gives the end.
 fn byte_offset(text: &str, at: usize) -> usize {
     let mut units = 0;
     for (offset, c) in text.char_indices() {
@@ -192,7 +188,7 @@ mod tests {
 
     #[test]
     fn pasted_line_breaks_become_newlines() {
-        assert_eq!(line_breaks("a\r\nb\rc\nd"), "a\nb\nc\nd");
+        assert_eq!(normalize_line_breaks("a\r\nb\rc\nd"), "a\nb\nc\nd");
     }
 
     #[test]

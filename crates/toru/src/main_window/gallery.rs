@@ -1,43 +1,4 @@
-//! The gallery (DESIGN.md §2 with CLAUDE.md's overrides): one scrolling list holding "This
-//! session", then, while "Show previous screenshots" is on, "Earlier today" and one group per
-//! earlier day, each a header over a grid of cards, then the loading row for the next day. The
-//! grid has as many columns as fit the gallery's width with no card narrower than
-//! `MIN_CARD_WIDTH`: three at the mockups' window, two at the smallest, more on a wide one, so a
-//! card stays close to the mockups' size and its thumbnail is never stretched. With no card to
-//! list and no search, the look's empty state (`empty`) fills the space under the session header.
-//! A day group's Collapse folds its cards away, and the search field in the session header
-//! filters every group's cards by name as the user types. A card being renamed stays listed
-//! whatever its name becomes, and is filtered again when the field loses focus, so the typing
-//! has somewhere to go.
-//!
-//! The list is `gpui-kit`'s virtual list (`docs/spikes.md` §1.3): it needs every row's height
-//! up front, so the rows are rebuilt when a group collapses or expands, a day arrives, the earlier
-//! groups are shown or hidden, the search changes or the window's width changes the column
-//! count, and the card height comes from `card::layout` at the gallery's current width. Each
-//! name field's text lives in its `InputState`, so edits survive scrolling out of view and back.
-//!
-//! Earlier days come from the store a day at a time (`history`), off the main thread, once the
-//! list is nearly scrolled to its end. A search only looks through what is loaded and doesn't pull
-//! in more days, which the row at the bottom says. Thumbnails take up GPU memory for as long as
-//! they are held, so a group's are let go once it is far from the view or collapsed, and load
-//! again when it comes back.
-//!
-//! Keyboard (DESIGN.md §7): the cards are a roving tab stop. Tab enters the grid at the current
-//! card, the arrow keys move between cards, Enter opens one, and only the current card's own
-//! controls are tab stops, so Tab doesn't walk every control of every card. Moving focus scrolls
-//! the card into view with its ring, and when the current card is scrolled out of the list the
-//! first card still listed takes its place, so Tab never lands out of sight.
-//!
-//! Select mode (DESIGN.md §4): Select, a Ctrl-click on a thumbnail, or Ctrl+A enters it; every
-//! card then shows a checkbox, the session header keeps its search field (CLAUDE.md) with Select
-//! all and Done in Select's place and the mode's hint in its own hint's, and a card's lower row
-//! shows its path hint in place of its actions. A press on a checkbox or thumbnail toggles the card, a Shift-press ranges from the
-//! last one pressed, and Space does the same on the focused card. The selection is kept by card
-//! id, so it survives scrolling, and is cut down to the listed cards whenever the rows are
-//! rebuilt: a card a search filters out, one folded away by Collapse or one hidden by turning
-//! Show previous off drops out of it, so the bulk bar's counts always match the checkboxes on
-//! view. Esc or Done leaves, clearing the selection. The main window draws the bulk bar from
-//! `selection_counts` and routes Esc and Ctrl+A here from anywhere in the window.
+//! The gallery (DESIGN.md §2 with CLAUDE.md's overrides; keyboard §7, select mode §4).
 
 mod earlier_days;
 mod header;
@@ -83,35 +44,28 @@ use search::no_match_text;
 
 const PADDING_X: f32 = 18.;
 const PADDING_TOP: f32 = 16.;
-/// Below the last row: room for the toast and return pill, as the mockups leave.
+/// Room for the toast and return pill, as the mockups leave.
 const PADDING_BOTTOM: f32 = 64.;
-/// Below the last row while the bulk bar floats over the gallery's foot (the Select mockups'
-/// `padding-bottom: 90px`).
+/// The Select mockups' `padding-bottom: 90px`.
 const BULK_PADDING_BOTTOM: f32 = 90.;
-/// Between a header and its grid, between card rows, and between columns.
 const GAP: f32 = 16.;
-/// The narrowest a card may be, which sets how many columns a width holds: the mockups' three
-/// at their 980px gallery, where a card is 304px, and two beside the settings column at the
-/// smallest window. Every look's chip and actions fit one row at this width (`card::layout`).
+/// Sets how many columns fit: the mockups' three at their 980px gallery, and two beside the
+/// settings column at the smallest window. Every look's chip and actions fit one row at this
+/// width (`card::layout`).
 const MIN_CARD_WIDTH: f32 = 268.;
-/// The widest a card gets, just before the width has room for a third column: 1.35 times the
-/// mockups' card. Thumbnails are stored this wide, so no card ever stretches one.
+/// Thumbnails are stored this wide, so no card ever stretches one.
 const MAX_CARD_WIDTH: f32 = (MIN_CARD_WIDTH + GAP) * 1.5 - GAP;
-/// A header row is as tall as its controls: the search field and Select, or Collapse.
 const HEADER_HEIGHT: f32 = 32.;
-/// Between the session header's row and select mode's hint line beneath it.
 const SELECT_HINT_GAP: f32 = 6.;
 const SELECT_HINT: &str = "Select mode · Shift-click for a range · Ctrl+A for all";
 const SEARCH_WIDTH: f32 = 180.;
 /// `.earlier`'s margin and padding above its rule.
 const EARLIER_MARGIN: f32 = 6.;
 const EARLIER_PADDING: f32 = 14.;
-/// `.loadmore`'s height, also used for the no-match notice.
+/// `.loadmore`'s height.
 const NOTICE_HEIGHT: f32 = 44.;
-/// The return pill's distance from the top of the gallery.
 const PILL_TOP: f32 = 18.;
 const COPIED_FOR: Duration = Duration::from_millis(1500);
-/// How far below the view the next day is fetched.
 const FETCH_AHEAD: Pixels = px(1200.);
 /// How many views' heights above and below the view a group keeps its thumbnails, so scrolling a
 /// little and back doesn't reload them.
@@ -129,7 +83,7 @@ pub struct Group {
     pub kind: GroupKind,
     pub cards: Vec<Card>,
     pub collapsed: bool,
-    /// Whether any of its thumbnails may be held, so they need letting go.
+    /// Any of its thumbnails may be held, so they need letting go.
     pub drawn: bool,
 }
 
@@ -139,21 +93,19 @@ pub struct Card {
     pub files: CardFiles,
     pub capture: Capture,
     pub bytes: u64,
+    /// Holds the text, so edits survive scrolling out of view and back.
     pub name: Entity<InputState>,
-    /// The card itself, which the arrow keys move between.
     pub focus: gpui::FocusHandle,
     /// Why the name being typed wasn't accepted. The record keeps the last good name.
     pub name_error: Option<SharedString>,
 }
 
-/// Where a capture lives in the store.
 #[derive(Debug)]
 pub struct CardFiles {
     pub id: CaptureId,
     pub thumbnail: PathBuf,
 }
 
-/// A capture from the store on its way to becoming a card.
 #[derive(Debug)]
 pub struct NewCard {
     pub files: CardFiles,
@@ -162,66 +114,46 @@ pub struct NewCard {
 }
 
 pub enum GalleryEvent {
-    /// A card's Copy, which the main window carries out.
-    Copy {
-        card: usize,
-        capture: CaptureId,
-    },
-    Renamed {
-        capture: CaptureId,
-        name: String,
-    },
-    Save {
-        capture: CaptureId,
-    },
-    OpenFolder {
-        file: PathBuf,
-    },
-    /// A card's `⋯ → Open in editor`, a double-click on its thumbnail, or Enter on the card.
+    Copy { card: usize, capture: CaptureId },
+    Renamed { capture: CaptureId, name: String },
+    Save { capture: CaptureId },
+    OpenFolder { file: PathBuf },
     OpenEditor(usize),
-    /// A card's `⋯ → Delete`.
     Delete(usize),
 }
 
 pub struct Gallery {
     store: Arc<Store>,
-    /// The running session, whose captures earlier today's group leaves out.
+    /// Earlier today's group leaves out this session's captures.
     session: SessionId,
     groups: Vec<Group>,
     rows: Vec<Row>,
-    /// The "Show previous screenshots" setting: whether any group but the session's is listed.
     show_previous: bool,
     today: LocalDate,
     next: Next,
-    /// The fetch under way. Dropping it abandons the fetch.
+    /// Dropping it abandons the fetch.
     fetch: Option<Task<()>>,
     fetch_failed: bool,
-    /// Holds the thumbnails, and lets them go from the GPU's atlas when asked.
     thumbnails: Entity<RetainAllImageCache>,
-    /// Cards taken away since the last render, whose thumbnails it then lets go of.
+    /// Taken away since the last render, which lets go of their thumbnails.
     cleared: Vec<Card>,
-    /// Whether the last render had any such cards (`focus_to_restore`).
+    /// The last render had cards in `cleared` (`focus_to_restore`).
     cards_just_removed: bool,
-    /// The width the main window gives the gallery, from which the columns and the card width
-    /// follow.
     width: Pixels,
     scale: f32,
     columns: usize,
     card_layout: card::Layout,
-    /// Nothing is listed and nothing is being searched or loaded, so the empty state shows.
-    empty: bool,
-    /// The Region shortcut as the settings show it, if one is working, for the empty state.
+    show_empty_state: bool,
+    /// `None` unless one is working.
     region_shortcut: Option<SharedString>,
     next_card: usize,
     scroll: VirtualListScrollHandle,
-    /// The card whose Copy shows a check mark.
     copied: Flash<usize>,
     search: Entity<InputState>,
-    /// The search text, lower-cased, or empty for no filter.
+    /// Lower-cased; empty for no filter.
     query: String,
     /// The card Tab enters the grid at, by id. `None` only while the grid has no card.
     current: Option<usize>,
-    /// Tells a focus in the gallery from one elsewhere, and scrolls the list to a focused card.
     focus: FocusInView,
     /// The rows the list built last frame.
     rendered: Range<usize>,
@@ -275,7 +207,7 @@ impl Gallery {
                 height: px(0.),
                 open_folder_icon: false,
             },
-            empty: false,
+            show_empty_state: false,
             region_shortcut: None,
             next_card: 0,
             scroll: VirtualListScrollHandle::new(),
@@ -291,12 +223,10 @@ impl Gallery {
         gallery
     }
 
-    /// The Region shortcut to name in the empty state, or `None` if none is working.
     pub fn set_region_shortcut(&mut self, shortcut: Option<SharedString>) {
         self.region_shortcut = shortcut;
     }
 
-    /// How many of this session's captures aren't saved to the user's folder.
     pub fn unsaved_in_session(&self) -> usize {
         self.groups
             .iter()
@@ -306,8 +236,6 @@ impl Gallery {
             .count()
     }
 
-    /// Puts a capture at the top of this session. The name field's `Window` is why the main
-    /// window passes one in.
     /// Returns the new card's id, for "Open editor after capture".
     pub fn add_session_card(
         &mut self,
@@ -328,9 +256,8 @@ impl Gallery {
         new_card(self.next_card, new, window, cx)
     }
 
-    /// Ends the session: its cards go down into their day's group, and `session` starts empty on
-    /// `today`. A card from a day not fetched yet is dropped, as it will come from the store with
-    /// the rest of that day.
+    /// A card from a day not fetched yet is dropped, as it will come from the store with the rest
+    /// of that day.
     pub fn end_session(
         &mut self,
         session: SessionId,
@@ -384,7 +311,6 @@ impl Gallery {
             .find(|card| card.files.id == capture)
     }
 
-    /// Turns a card to Saved once its file is written.
     pub fn mark_saved(&mut self, capture: CaptureId, file: SavedFile, cx: &mut Context<Self>) {
         if let Some(card) = self.stored_card(capture) {
             card.capture.saved_path = Some(file.path);
@@ -393,7 +319,7 @@ impl Gallery {
         }
     }
 
-    /// This session's captures and how many of them are saved, for the bottom bar.
+    /// `(captures, saved)`.
     pub fn session_counts(&self) -> (usize, usize) {
         let cards = &self.groups[0].cards;
         let saved = cards.iter().filter(|c| c.capture.is_saved()).count();
@@ -406,7 +332,6 @@ impl Gallery {
         }
     }
 
-    /// A card's Save, or its Open folder once saved.
     pub fn save_or_open(&mut self, id: usize, cx: &mut Context<Self>) {
         let Some(card) = self.card(id) else {
             return;
@@ -424,8 +349,6 @@ impl Gallery {
             .show(card, COPIED_FOR, cx, |this| &mut this.copied);
     }
 
-    /// Enter on a card, its `⋯ → Open in editor`, or a double-click on its thumbnail (DESIGN.md
-    /// §5, §7).
     pub fn open_editor(&mut self, id: usize, cx: &mut Context<Self>) {
         cx.emit(GalleryEvent::OpenEditor(id));
     }
@@ -434,7 +357,6 @@ impl Gallery {
         self.groups.iter()
     }
 
-    /// The card with `id`, for the editor to open.
     pub fn card(&self, id: usize) -> Option<&Card> {
         self.groups
             .iter()
@@ -543,7 +465,7 @@ impl Render for Gallery {
         let session_bottom = self.session_bottom(theme);
         let pill = self.scrolled(theme) > session_bottom;
 
-        // Scroll a newly focused control into view, keeping it clear of the pill and the bulk bar.
+        // A newly focused control scrolls into view clear of the pill and the bulk bar.
         let bar =
             (!self.selection.is_empty()).then(|| px(bulk_bar::BOTTOM) + bulk_bar::height(theme));
         let viewport = uncovered(self.scroll.bounds(), pill, bar);
@@ -590,7 +512,7 @@ impl Render for Gallery {
         self.release_far_thumbnails(&near, window, cx);
         self.fetch_when_near_bottom(content, scrolled, viewport, window, cx);
         // Under the session header, over the list, which has nothing else to show or scroll.
-        let empty = self.empty.then(|| {
+        let empty = self.show_empty_state.then(|| {
             let theme = cx.theme();
             div()
                 .absolute()
@@ -634,9 +556,8 @@ impl Render for Gallery {
                             gallery.update(cx, |this, cx| {
                                 // Straight to the offset, so this render already hides the pill.
                                 this.scroll.set_offset(point(px(0.), px(0.)));
-                                // The pill goes with it, so focus moves into the gallery, where
-                                // Tab reaches the current card, rather than falling back to the
-                                // window's first control.
+                                // The pill goes with it, so focus moves into the gallery rather
+                                // than falling back to the window's first control.
                                 this.focus.focus().focus(window, cx);
                                 cx.notify();
                             })
@@ -646,10 +567,6 @@ impl Render for Gallery {
     }
 }
 
-/// A card for a capture, with its name field. The field's `Window` is why the main window passes
-/// one into `add_session_card`. The name goes to the store as it is typed, and the store refuses
-/// what it can't take; a renamed card must also still be found by its new name, so a search
-/// filters it again afterwards.
 fn new_card(id: usize, new: NewCard, window: &mut Window, cx: &mut Context<Gallery>) -> Card {
     let NewCard {
         files,
@@ -694,8 +611,7 @@ fn new_card(id: usize, new: NewCard, window: &mut Window, cx: &mut Context<Galle
     }
 }
 
-/// `.loadmore`: a centred line of muted text on the load fill, dashed around, read out as a
-/// polite live region (DESIGN.md §7) when it appears or changes.
+/// `.loadmore`, read out as a polite live region (DESIGN.md §7) when it appears or changes.
 fn notice(
     id: &'static str,
     text: String,

@@ -1,9 +1,5 @@
-//! A radio group, as the wireframes draw On close: a column of rows, each a round (or, in the
-//! square looks, square) mark beside its label, taking the toggle's colours so a chosen option
-//! reads like a toggle that is on. One tab stop: focus sits on the chosen row, the arrow keys
-//! move the choice and focus together, and any row, the full width of the group and the minimum
-//! target tall (DESIGN.md §7), can be clicked. A row can carry a detail under its label, such as
-//! the palette picker's swatches, which is part of the same target.
+//! As the wireframes draw On close. The marks take the toggle's colours, so a chosen option reads
+//! like a toggle that is on.
 
 use std::{rc::Rc, sync::Arc};
 
@@ -22,8 +18,7 @@ const DOT: f32 = 8.;
 /// Between rows, each already `MIN_TARGET` tall: the smallest gap §7 asks for between targets.
 const ROW_GAP: f32 = 6.;
 const MARK_GAP: f32 = 10.;
-/// Between a label and the detail under it, which sits closer to its own label than to the next
-/// row's.
+/// Less than `ROW_GAP`, so a detail sits with its own label rather than the next row's.
 const DETAIL_GAP: f32 = 2.;
 
 #[derive(IntoElement)]
@@ -38,7 +33,6 @@ pub struct RadioGroup {
 }
 
 impl RadioGroup {
-    /// `label` names the group, such as "On close"; `selected` indexes `options`.
     pub fn new(
         id: impl Into<ElementId>,
         label: impl Into<SharedString>,
@@ -56,19 +50,17 @@ impl RadioGroup {
         }
     }
 
-    /// A hint for the group as a whole, such as the text under it.
     pub fn description(mut self, description: impl Into<SharedString>) -> RadioGroup {
         self.description = Some(description.into());
         self
     }
 
-    /// One element per option, drawn under its label and aligned with it.
+    /// One per option, drawn under its label as part of the same target.
     pub fn details(mut self, details: impl IntoIterator<Item = AnyElement>) -> RadioGroup {
         self.details = details.into_iter().map(Some).collect();
         self
     }
 
-    /// A detail under one option's label alone.
     pub fn detail(mut self, option: usize, detail: AnyElement) -> RadioGroup {
         if self.details.len() <= option {
             self.details.resize_with(option + 1, || None);

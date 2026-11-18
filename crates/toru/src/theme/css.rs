@@ -1,5 +1,4 @@
-//! Helpers that read like the CSS in `design/tokens.json`, so each look's file is a transcription
-//! of its entry.
+//! Helpers that read like the CSS in `design/tokens.json`, so each look's file transcribes it.
 
 use gpui::{BoxShadow, FontWeight, Hsla, px, rgb};
 
@@ -35,7 +34,7 @@ pub fn checker(a: u32, b: u32, tile: f32) -> Fill {
     }
 }
 
-/// Two repeating 1px lines every `cell` over `bg`, as the NeoBrutalism canvas draws them.
+/// The NeoBrutalism canvas: two repeating 1px lines every `cell` over `bg`.
 pub fn grid(bg: u32, line: u32, cell: f32) -> Fill {
     Fill::Grid {
         bg: hex(bg),
@@ -49,12 +48,12 @@ pub fn soft_shadow(y: f32, blur: f32, color: Hsla) -> BoxShadow {
     BoxShadow::new(px(0.), px(y), color).blur_radius(px(blur / 2.))
 }
 
-/// CSS `{x}px {y}px 0 color`: a sharp offset copy of the box.
+/// CSS `{x}px {y}px 0 color`.
 pub fn hard_shadow(x: f32, y: f32, color: Hsla) -> BoxShadow {
     BoxShadow::new(px(x), px(y), color)
 }
 
-/// CSS `inset {x}px {y}px 0 color`: a sharp band along the inside edges the offset points at.
+/// CSS `inset {x}px {y}px 0 color`.
 pub fn inset_shadow(x: f32, y: f32, color: Hsla) -> BoxShadow {
     BoxShadow::new(px(x), px(y), color).inset()
 }
@@ -72,7 +71,7 @@ pub fn mono(size: f32, weight: FontWeight) -> TypeStyle {
 }
 
 impl TypeStyle {
-    /// The same style with `text-transform: uppercase`.
+    /// `text-transform: uppercase`.
     pub fn upper(self) -> TypeStyle {
         TypeStyle {
             case: Case::Upper,

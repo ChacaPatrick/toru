@@ -1,17 +1,11 @@
-//! The status chip on a card: `Unsaved`, or `Saved ✓` in the accent. Status is always text, never
-//! colour alone, so the chip's words carry the state. A check mark at the end of the text is
-//! drawn as the look's own check icon, as Copy's is: only Japandi's body face has the glyph, and
-//! the one a fallback font lends the other looks suits neither.
-
 use gpui::{App, ElementId, Pixels, SharedString, Window, div, prelude::*, px};
 
 use super::{Icon, Readable};
 use crate::theme::{ActiveTheme, Theme, ThemedText};
 
 const PADDING_X: f32 = 9.;
-/// The check mark a chip's text may end with, and the gap before the icon drawn for it. The
-/// icon has air inside its own box, so with this it sits a space from the words and the chip
-/// is as wide as the glyph made it.
+/// Drawn as the look's check icon, as Copy's is: only Japandi's body face has the glyph. The icon
+/// has air inside its own box, so with `CHECK_GAP` the chip is as wide as the glyph made it.
 const CHECK: &str = " ✓";
 const CHECK_GAP: f32 = 1.;
 
@@ -44,7 +38,7 @@ impl Chip {
         }
     }
 
-    /// How wide the chip will be laid out, for a row that must know before it is.
+    /// Before layout.
     pub fn width(&self, theme: &Theme, window: &Window) -> Pixels {
         let border = if self.saved {
             theme.borders.accent

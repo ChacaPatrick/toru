@@ -6,20 +6,16 @@ use super::tools::Tool;
 use super::{Editor, tools};
 
 impl Editor {
-    /// The document's crop as the Crop tool's rectangle, or `None` without one.
     pub(super) fn document_crop_draft(&self) -> Option<Annotation> {
         self.document
             .is_cropped()
             .then(|| rectangle(self.document.crop()))
     }
 
-    /// The Crop tool's rectangle as whole pixels, if there is one.
     pub(super) fn crop_rect(&self) -> Option<IntRect> {
         whole_pixels(self.crop_draft.as_ref()?.bounds())
     }
 
-    /// Crops to the rectangle, as one undo step, and returns to Select. With no rectangle it
-    /// just returns to Select.
     pub(super) fn apply_crop(&mut self, cx: &mut Context<Self>) {
         if self.drag.is_some() {
             return;
@@ -31,7 +27,7 @@ impl Editor {
     }
 }
 
-/// `rect` as a rectangle mark, for the Crop tool's draft; its style is never drawn.
+/// Its style is never drawn.
 fn rectangle(rect: IntRect) -> Annotation {
     Annotation {
         shape: Shape::Rectangle,
@@ -49,7 +45,6 @@ fn rectangle(rect: IntRect) -> Annotation {
     }
 }
 
-/// `b` rounded to whole pixels, at least one each way, for the crop.
 fn whole_pixels(b: Bounds<f32>) -> Option<IntRect> {
     let (left, top) = (b.left().round() as i32, b.top().round() as i32);
     IntRect::from_ltrb(

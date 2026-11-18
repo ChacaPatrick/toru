@@ -2,15 +2,13 @@ use gpui::{Bounds, Point, Size, point, size};
 
 use super::{Annotation, HandleIndex, Shape};
 
-/// The least a resize leaves of a mark, in picture pixels: a line's length, each side of a box,
-/// the shorter side of a placed mark. Smaller would be hard to see and to grab again.
+/// In picture pixels: a line's length, each side of a box, the shorter side of a placed mark.
+/// Smaller would be hard to see and to grab again.
 const MIN_SIZE: f32 = 8.;
 
 impl Annotation {
-    /// Follows the pointer to `to`: the second point of a line or box, or the next point of a
-    /// trail. `constrain` is Shift: a line snaps to 45°, a box becomes a square, a trail is drawn
-    /// straight from its start. The mark stays within the picture `within`: the pointer is held
-    /// at its edge, and a snapped or squared end is cut short so it fits too.
+    /// `constrain` is Shift: a line snaps to 45°, a box becomes a square, a trail is drawn
+    /// straight from its start. A snapped or squared end is cut short to stay within the picture.
     pub fn extend(&mut self, to: Point<f32>, constrain: bool, within: Bounds<f32>) {
         let to = in_picture(within, to);
         let start = self.points[0];
@@ -32,12 +30,10 @@ impl Annotation {
         self.points.push(end);
     }
 
-    /// The mark shifted by `delta`, kept within a picture `within` big. `constrain` is Shift,
-    /// which keeps the move to a multiple of 45°: a snapped move that would leave the picture is
-    /// cut short along its direction, where a free one slides along the edge.
+    /// `constrain` is Shift, which keeps the move to a multiple of 45°: a snapped move that would
+    /// leave the picture is cut short along its direction, where a free one slides along the edge.
     pub fn moved(&self, delta: Point<f32>, constrain: bool, within: Size<f32>) -> Annotation {
         let b = self.bounds();
-        // How far the box may go each way on each axis without leaving the picture.
         let (left, right) = (-b.left(), within.width - b.right());
         let (up, down) = (-b.top(), within.height - b.bottom());
         let delta = if constrain {
@@ -72,8 +68,7 @@ impl Annotation {
         }
     }
 
-    /// A placed mark scaled to fill `b`, which keeps its proportions: text by its font size, a
-    /// badge by its diameter, a sticker by its box.
+    /// `b` must have the mark's proportions.
     fn fitted_to(&self, b: Bounds<f32>) -> Annotation {
         let old = self.bounds();
         let mut out = self.clone();
@@ -91,12 +86,8 @@ impl Annotation {
         out
     }
 
-    /// The mark with handle `handle` dragged to `to`: a line's end moves, a box's corner moves
-    /// with the opposite corner still, and a trail is stretched to fit its new box. `constrain`
-    /// is Shift, as when drawing: the line's end snaps to 45° from the other, the box stays
-    /// square, and the trail keeps its proportions. The mark stays within the picture `within`,
-    /// and the end or corner that stays still stays still: a constrained end that would leave
-    /// the picture is cut short instead.
+    /// The opposite end or corner stays still, and a trail is stretched to its new box.
+    /// `constrain` is Shift, as in `extend`; a trail then keeps its proportions.
     pub fn resized(
         &self,
         handle: HandleIndex,
@@ -148,14 +139,13 @@ impl Annotation {
             if left { old.right() } else { old.left() },
             if top { old.bottom() } else { old.top() },
         );
-        // The corner that moves, whose side of the anchor a box too small to tell keeps.
+        // A box too small to tell keeps to this corner's side of the anchor.
         let moving = point(
             if left { old.left() } else { old.right() },
             if top { old.top() } else { old.bottom() },
         );
-        // `to` pushed out to the least size on each axis, then held within the picture: pulled
-        // back towards the anchor when the mark keeps its proportions, else on each axis alone.
-        // Against the picture's edge, or on a picture smaller than it, the least size gives way.
+        // Held within the picture towards the anchor when the mark keeps its proportions, else
+        // on each axis alone. Against the picture's edge the least size gives way.
         let held = |to: Point<f32>, least: Size<f32>, keep_proportions: bool| {
             let pushed = point(
                 at_least(anchor.x, to.x, least.width, moving.x),
@@ -238,7 +228,6 @@ impl Annotation {
     }
 }
 
-/// `to` snapped so the line from `from` runs at a multiple of 45°.
 fn snap_angle(from: Point<f32>, to: Point<f32>) -> Point<f32> {
     let (dx, dy) = (to.x - from.x, to.y - from.y);
     let length = (dx * dx + dy * dy).sqrt();
@@ -272,7 +261,6 @@ fn at_least(anchor: f32, to: f32, min: f32, side: f32) -> f32 {
     }
 }
 
-/// `to` pulled in so the box from `from` is square, towards the pointer's side on each axis.
 fn square(from: Point<f32>, to: Point<f32>) -> Point<f32> {
     let (dx, dy) = (to.x - from.x, to.y - from.y);
     let side = dx.abs().max(dy.abs());
@@ -282,8 +270,6 @@ fn square(from: Point<f32>, to: Point<f32>) -> Point<f32> {
     )
 }
 
-/// `to` pulled in so the box from `from` keeps the proportions of `size`, as large as fits
-/// towards the pointer on each axis.
 fn proportional(from: Point<f32>, to: Point<f32>, size: Size<f32>) -> Point<f32> {
     if size.width < 1. || size.height < 1. {
         return to;
@@ -296,8 +282,7 @@ fn proportional(from: Point<f32>, to: Point<f32>, size: Size<f32>) -> Point<f32>
     )
 }
 
-/// `at` held within the picture `picture`: a drag that leaves it draws along its edge, not in
-/// the margin where nothing shows.
+/// So a drag that leaves the picture draws along its edge, not in the margin where nothing shows.
 pub fn in_picture(picture: Bounds<f32>, at: Point<f32>) -> Point<f32> {
     point(
         at.x.clamp(picture.left(), picture.right()),
@@ -305,11 +290,9 @@ pub fn in_picture(picture: Bounds<f32>, at: Point<f32>) -> Point<f32> {
     )
 }
 
-/// `to` pulled back towards `from` until it is within the picture `within`, so a square from
-/// `from` stays square and a snapped line keeps its angle, each as large as fits. `from` is
-/// expected to be inside already.
+/// `to` pulled back towards `from` until it is within the picture, so a square stays square and
+/// a snapped line keeps its angle. `from` must be inside already.
 fn fit(from: Point<f32>, to: Point<f32>, within: Bounds<f32>) -> Point<f32> {
-    // How much of the way from `from` to `to` fits along one axis.
     let room = |from: f32, delta: f32, low: f32, high: f32| {
         if delta > 0. {
             (high - from) / delta
@@ -357,12 +340,10 @@ mod tests {
         // A pointer past the edge is held at it first, then squared and fitted.
         rect.extend(point(1200., 560.), true, picture);
         assert_eq!(rect.points[1], point(200., 600.));
-        // A snapped line stops at the edge along its 45°.
         let mut line = Annotation::new(Shape::Line, point(100., 500.), style(LineStyle::Solid));
         line.extend(point(300., 650.), true, picture);
         assert!((line.points[1].x - 200.).abs() < 1e-3);
         assert!((line.points[1].y - 600.).abs() < 1e-3);
-        // Without Shift the pointer is simply held at the edge.
         let mut pen = Annotation::new(Shape::Pen, point(100., 500.), style(LineStyle::Solid));
         pen.extend(point(1100., 700.), false, picture);
         assert_eq!(pen.points[1], point(1000., 600.));
@@ -423,10 +404,9 @@ mod tests {
     #[test]
     fn resizing_keeps_the_opposite_corner_and_stretches_a_trail() {
         let rect = mark(Shape::Rectangle, (10., 10.), (30., 30.));
-        // Dragging the top-left handle leaves the bottom-right where it was.
+        // Handle 0 is the top-left.
         let resized = rect.resized(0, point(0., 0.), false, PICTURE);
         assert_eq!(resized.bounds(), Bounds::new(point(0., 0.), size(30., 30.)));
-        // The bottom-right handle leaves the top-left.
         let resized = rect.resized(3, point(50., 40.), false, PICTURE);
         assert_eq!(
             resized.bounds(),
@@ -452,14 +432,12 @@ mod tests {
 
     #[test]
     fn shift_constrains_a_resize_as_it_does_a_drawing() {
-        // A box's corner keeps it square, from the corner that stays.
         let rect = mark(Shape::Rectangle, (10., 10.), (30., 30.));
         let squared = rect.resized(3, point(50., 40.), true, PICTURE);
         assert_eq!(
             squared.bounds(),
             Bounds::new(point(10., 10.), size(40., 40.))
         );
-        // A line's end snaps to 45° from its other end.
         let line = mark(Shape::Line, (0., 0.), (10., 0.));
         let snapped = line.resized(1, point(20., 3.), true, PICTURE);
         assert!(snapped.points[1].y.abs() < 1e-3);
@@ -477,13 +455,11 @@ mod tests {
         // Only 50 fit to the right, so the 45° move stops at 50 on both axes.
         let moved = rect.moved(point(100., 100.), true, picture);
         assert_eq!(moved.bounds().origin, point(950., 150.));
-        // A free move slides along the edge instead.
         let slid = rect.moved(point(100., 100.), false, picture);
         assert_eq!(slid.bounds().origin, point(950., 200.));
         // Pulled far up and left, the move stops where the box meets the top, still at 45°.
         let back = rect.moved(point(-1000., -1000.), true, picture);
         assert_eq!(back.bounds().origin, point(800., 0.));
-        // Within the picture, a snapped move is the snapped move.
         let free = rect.moved(point(-20., -3.), true, picture);
         assert!((free.bounds().origin.x - (900. - (400f32 + 9.).sqrt())).abs() < 1e-3);
         assert!((free.bounds().origin.y - 100.).abs() < 1e-3);
@@ -516,7 +492,6 @@ mod tests {
             squashed.bounds(),
             Bounds::new(point(10., 10.), size(MIN_SIZE, MIN_SIZE))
         );
-        // Flat on one axis only, the other keeps its size.
         let flat = rect.resized(0, point(5., 30.), true, PICTURE);
         assert!(flat.bounds().size.width >= MIN_SIZE && flat.bounds().size.height >= MIN_SIZE);
         // A line's end dragged onto its other end stays the least length the way it pointed.
@@ -529,7 +504,6 @@ mod tests {
             line.resized(1, point(12., 10.), true, PICTURE).points[1],
             point(10. + MIN_SIZE, 10.)
         );
-        // A trail keeps a size it can be stretched back from.
         let pen = mark(Shape::Pen, (0., 0.), (20., 10.));
         let squashed = pen.resized(3, point(0., 0.), false, PICTURE);
         assert_eq!(squashed.bounds().size, size(MIN_SIZE, MIN_SIZE));
@@ -545,7 +519,6 @@ mod tests {
         let b = squashed.bounds();
         assert!((b.size.height - MIN_SIZE).abs() < 0.01 && b.size.width > MIN_SIZE);
         assert_eq!(b.origin, point(10., 10.));
-        // And each can be grown back.
         let grown = squashed.resized(3, point(10. + b.size.width * 4., 200.), false, PICTURE);
         assert!(grown.bounds().size.height > MIN_SIZE * 3.);
     }
@@ -565,12 +538,10 @@ mod tests {
             crossed.bounds(),
             Bounds::new(point(996., 200.), size(4., 100.))
         );
-        // Under Shift the box stays square, as large as fits.
         let squared = rect.resized(0, point(997., 299.), true, wide);
         let b = squared.bounds();
         assert_eq!(b.size.width, b.size.height);
         assert!(b.right() <= 1000. && b.bottom() <= 600.);
-        // A trail and a placed mark are kept inside too.
         let pen = mark(Shape::Pen, (500., 100.), (996., 300.));
         let pushed = pen.resized(0, point(999., 100.), false, wide);
         assert!(pushed.bounds().right() <= 1000.);
@@ -596,7 +567,6 @@ mod tests {
         // Shrunk to half under Shift, both sides halve.
         let halved = pen.resized(3, point(200., 101.), true, PICTURE);
         assert_eq!(halved.bounds().size, size(100., 0.5));
-        // A thin box widened keeps its height.
         let rect = mark(Shape::Rectangle, (100., 100.), (300., 103.));
         let widened = rect.resized(3, point(400., 103.), false, PICTURE);
         assert_eq!(
@@ -616,8 +586,7 @@ mod tests {
     fn placed_marks_resize_in_proportion_from_the_opposite_corner() {
         let text = text("Hello", (10., 10.), 16.);
         let b = text.bounds();
-        // The bottom-right handle dragged to twice the width: the size doubles, the top-left
-        // stays, and the height follows.
+        // Twice the width doubles the size; the height follows.
         let bigger = text.resized(
             3,
             point(10. + b.size.width * 2., 10. + b.size.height * 2.),
@@ -627,7 +596,6 @@ mod tests {
         assert_eq!(bigger.text().unwrap().size, 32.);
         assert_eq!(bigger.bounds().origin, point(10., 10.));
         assert!((bigger.bounds().size.height - b.size.height * 2.).abs() < 0.01);
-        // The top-left handle keeps the bottom-right still.
         let smaller = text.resized(0, point(10. + b.size.width / 2., 0.), true, PICTURE);
         assert_eq!(smaller.bounds().bottom_right(), b.bottom_right());
         assert_eq!(smaller.text().unwrap().size, 8.);
@@ -641,7 +609,6 @@ mod tests {
         // Dragged 60 right but only 30 up, the square follows the shorter axis.
         let grown = sticker.resized(1, point(100., 30.), false, PICTURE);
         assert_eq!(grown.bounds(), Bounds::new(point(40., 30.), size(30., 30.)));
-        // Moving shifts a placed mark like any other.
         assert_eq!(
             badge.moved(point(5., 5.), false, PICTURE.size).points,
             vec![point(55., 55.)]

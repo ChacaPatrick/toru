@@ -1,10 +1,4 @@
-//! Deleting captures (DESIGN.md §4), from the bulk bar or a card's `⋯` menu, one rule for both. It
-//! asks once, for the whole set, since an unsaved capture can't be brought back and the question
-//! is also where "Also delete files" is ticked; a saved capture otherwise leaves the gallery with
-//! its file still in the user's folder. The store goes first, on the capture queue, so a Save
-//! already asked for finishes first, and only then do the cards go. A file that Save writes after
-//! the question opened wasn't mentioned in it, so the tick box doesn't reach it. A file the tick
-//! box takes goes to the Recycle Bin, so it can still be brought back.
+//! Deleting captures (DESIGN.md §4).
 
 use std::{io, path::Path};
 
@@ -15,22 +9,21 @@ use super::{MainWindow, act, gallery::plural};
 use crate::platform;
 use crate::ui::{Dialog, Toast};
 
-/// A card on its way out, as it was when the user asked.
+/// As it was when the user asked.
 #[derive(Clone)]
 pub struct DeleteCard {
     pub card: usize,
     pub capture: CaptureId,
-    /// The question counts it as saved, and only then can "Also delete files" take its file.
+    /// Only a capture the question counted as saved can have its file taken by "Also delete
+    /// files": a file Save writes after the question opened wasn't mentioned in it.
     pub saved: bool,
 }
 
-/// The question on the screen.
 pub(super) struct DeletePrompt {
     cards: Vec<DeleteCard>,
     with_files: bool,
 }
 
-/// How a delete went.
 #[derive(Default, Debug, PartialEq)]
 struct Deleted {
     cards: Vec<usize>,
@@ -45,7 +38,6 @@ fn delete_title(count: usize) -> String {
     format!("Delete {}?", plural(count, "capture"))
 }
 
-/// What the question says, for this many unsaved and saved captures.
 fn delete_body(unsaved: usize, saved: usize) -> String {
     let unsaved_text = if unsaved == 1 {
         "1 unsaved capture can't be brought back.".to_string()
@@ -69,8 +61,7 @@ fn delete_body(unsaved: usize, saved: usize) -> String {
     }
 }
 
-/// What the toast says once `count` captures have gone. `files_stay`: saved files were left in
-/// the user's folder, which the toast says so nobody goes looking for a deleted file.
+/// Says when saved files stayed, so nobody goes looking for a deleted file.
 fn deleted_message(count: usize, files_stay: bool) -> String {
     let captures = plural(count, "capture");
     if files_stay {
@@ -80,8 +71,7 @@ fn deleted_message(count: usize, files_stay: bool) -> String {
     }
 }
 
-/// Deletes the cards' captures from the store, one failure not stopping the rest. A saved file
-/// that goes is handed to `remove`, which in the app sends it to the Recycle Bin.
+/// One failure doesn't stop the rest. In the app `remove` sends a file to the Recycle Bin.
 fn delete_stored(
     store: &Store,
     cards: Vec<DeleteCard>,
@@ -114,13 +104,11 @@ fn delete_stored(
 }
 
 impl MainWindow {
-    /// The bulk bar's Delete.
     pub(super) fn delete_selected(&mut self, cx: &mut Context<Self>) {
         let cards = self.gallery.read(cx).selected_for_delete();
         self.ask_delete(cards, cx);
     }
 
-    /// A card's `⋯ → Delete`.
     pub(super) fn delete_card(&mut self, card: usize, cx: &mut Context<Self>) {
         let cards = self.gallery.read(cx).card_for_delete(card);
         self.ask_delete(cards.into_iter().collect(), cx);
@@ -157,6 +145,7 @@ impl MainWindow {
         }
     }
 
+    /// On the queue, so a Save already asked for finishes first; only then do the cards go.
     fn delete_now(&mut self, cards: Vec<DeleteCard>, with_files: bool, cx: &mut Context<Self>) {
         let store = self.store.clone();
         self.enqueue(cx, async move |this, cx| {
@@ -225,12 +214,11 @@ mod tests {
     use super::super::captures::tests::{TestDir, add};
     use super::*;
 
-    /// How the tests remove a file: for good, so they leave nothing in the Recycle Bin.
+    /// For good, so the tests leave nothing in the Recycle Bin.
     fn remove(path: &Path) -> io::Result<()> {
         fs::remove_file(path)
     }
 
-    /// A store with one unsaved capture in a session.
     fn stored(dir: &TestDir) -> (Store, SessionId, CaptureId) {
         let store = dir.store();
         let session = store.new_session().unwrap();

@@ -1,13 +1,4 @@
-//! The main window (DESIGN.md §2): title bar, capture toolbar, the body with the gallery and the
-//! settings column, then the bottom bar, with the toast above it. While anything is selected the
-//! bulk bar (§4) floats over the gallery's foot, centred on the gallery, in the bottom bar's
-//! place. Opening a card in the
-//! editor (§5) replaces everything under the title bar with it. Captures come in through
-//! `captures`, the gallery's buttons act on them in `save`, `copy_files`, `clear_unsaved` and `delete`, and the gallery pages through
-//! earlier days itself (`history`). Each choice that is a setting reads and writes `Settings`,
-//! every write going through `change_settings` to the store. Old unsaved captures are deleted by
-//! the retention setting (`retention`) at launch, at midnight and when the setting changes. A
-//! newer release is downloaded and offered in a notice under the toolbar (`updates`).
+//! DESIGN.md §2.
 
 mod backdrop;
 mod bottom_bar;
@@ -62,107 +53,91 @@ use gallery::{Gallery, GalleryEvent};
 pub use open_editor::EditorStart;
 use shortcuts_dialog::ShortcutsDialog;
 
-/// The window's title in the taskbar. The title bar Toru draws has its own (`MainWindow::title`).
+/// The taskbar's title. The title bar Toru draws has its own (`MainWindow::title`).
 pub const WINDOW_TITLE: &str = "Toru";
 
 const TOAST_FOR: Duration = Duration::from_secs(2);
 /// `.hint`'s `line-height: 1.45`.
 const HINT_LEADING: f32 = 1.45;
-/// How often the date is looked at. A timer set for midnight would be wrong after a sleep or a
-/// changed clock, so the date itself is checked often, whatever the window is doing.
+/// A timer set for midnight would be wrong after a sleep or a changed clock, so the date is polled.
 const DAY_CHECK_EVERY: Duration = Duration::from_secs(10);
 
 pub struct MainWindow {
     store: Arc<Store>,
     session: SessionId,
-    /// The date this session is for. It moves on as soon as a change of date is seen, ahead of
-    /// `session`, which follows on the queue.
+    /// Moves on as soon as a change of date is seen, ahead of `session`, which follows on the queue.
     day: LocalDate,
     settings: Settings,
-    /// The Region button, focused when the window opens so Tab works from the start (spike 1.5).
-    first: FocusHandle,
-    /// The toolbar's gear, which shows and hides the settings column.
+    /// Focused when the window opens so Tab works from the start (spike 1.5).
+    region_button: FocusHandle,
     gear: FocusHandle,
-    /// The name pattern as typed. `settings.name_pattern` only follows it while it is valid;
-    /// otherwise `pattern_error` says what is wrong.
+    /// As typed. `settings.name_pattern` only follows it while it is valid.
     pattern: Entity<InputState>,
     pattern_error: Option<NameError>,
-    /// The Delete unsaved after control's state (`retention`).
     retention: retention::RetentionControl,
     settings_scroll: ScrollHandle,
-    /// Scrolls the settings column to whichever of its controls takes keyboard focus.
     settings_focus: FocusInView,
     session_started: SharedString,
     /// The display Full screen captures. `None`, or a display that has since gone, means the
     /// primary one.
     display: Option<DisplayId>,
     gallery: Entity<Gallery>,
-    /// The editor, while a capture is open in it, in place of the toolbar and gallery.
     editor: Option<Entity<Editor>>,
     toast: Flash<Toast>,
-    /// Whether the window is the active one, so a toast shown now would be seen.
+    /// So a toast shown now would be seen.
     window_active: bool,
-    /// Failures from while it wasn't, shown when it next is.
+    /// Failures from while the window wasn't active, shown when it next is.
     missed_failures: Vec<SharedString>,
-    /// The window new cards' name fields are created in.
     window: AnyWindowHandle,
     /// The last job handed to `enqueue`, which the next one waits for.
     queue: Option<Task<()>>,
     /// A full-screen capture is under way, so a second press doesn't overlap it.
     capturing: bool,
-    /// How many captures and store jobs are under way, which quitting waits for (`closing`).
+    /// Captures and store jobs under way, which quitting waits for.
     pending: Rc<Cell<usize>>,
-    /// Queued writes not started yet, oldest first, which Windows' shutdown writes itself.
+    /// Oldest first; Windows' shutdown writes them itself.
     unstarted: Vec<Rc<dyn closing::Unstarted>>,
-    /// `Pictures\Screenshots`, where captures go unless the Save to setting says otherwise.
+    /// `Pictures\Screenshots`.
     default_save_folder: Option<PathBuf>,
     countdown: Option<delayed::RunningCountdown>,
-    /// Quitting is waiting for `pending` work before it applies the On close setting.
+    /// Waiting for `pending` work before applying the On close setting.
     quitting: bool,
-    /// The tray icon is there to bring the window back from, so closing may hide it.
+    /// Closing may hide the window only while a tray icon can bring it back.
     has_tray: bool,
-    /// The window was opened hidden in the tray (`--tray`) and hasn't been shown since, so GPUI
-    /// hasn't placed it yet (`show_window`).
+    /// Opened hidden in the tray (`--tray`) and not shown since, so GPUI hasn't placed it yet.
     pub started_hidden: bool,
-    /// Whether Windows starts Toru when the user signs in, as the registry says
-    /// (`platform::starts_with_windows`). It isn't in `Settings`, so the installer's checkbox
-    /// and this setting can't disagree.
+    /// Read from the registry, not kept in `Settings`, so the installer's checkbox and this
+    /// setting can't disagree.
     starts_with_windows: bool,
-    /// The quit dialog is up, asking about this many unsaved captures (`closing`).
+    /// How many unsaved captures the quit dialog asks about.
     quit_prompt: Option<usize>,
-    /// The delete dialog is up, asking about these cards (`delete`).
     delete_prompt: Option<delete::DeletePrompt>,
-    /// The Clear unsaved dialog is up (`clear_unsaved`).
     clear_prompt: bool,
-    /// The open dialog's first action, focused when the dialog opens.
+    /// The open dialog's first action.
     dialog_focus: FocusHandle,
-    /// What had focus when a dialog opened, to go back to when it closes (`closing`).
+    /// What had focus when a dialog opened, to go back to when it closes.
     opener: Option<FocusHandle>,
-    /// The Save to folder picker is open, so a second Change doesn't open another.
+    /// So a second Change doesn't open another folder picker.
     picking_folder: bool,
-    /// The editor's Save or Save as is under way, so a second press can't write a second file.
+    /// So a second press of the editor's Save can't write a second file.
     saving_edit: bool,
-    /// The custom palette editor, while it is open over the window.
     custom_editor: Option<CustomEditor>,
-    /// The editor's file picker while it is open, one per window whatever the editor does.
+    /// One per window, whatever the custom palette editor does.
     background_picker: BackgroundPicker,
-    /// The theme's background photo, once asked for (`backdrop`).
     backdrop: Option<Backdrop>,
-    /// The photo being read right now, so one change starts one read.
+    /// So one change starts one read.
     backdrop_loading: Option<PathBuf>,
-    /// Photos no longer shown, taken out of the GPU at the next frame.
+    /// Taken out of the GPU at the next frame.
     stale_backdrops: Vec<Arc<RenderImage>>,
-    /// The global shortcut registry (`shortcuts`), and the rows it was last given.
     hotkeys: Hotkeys,
+    /// The rows `hotkeys` was last given.
     shortcuts: Vec<Planned>,
-    /// The Edit shortcuts dialog, while it is open (`shortcuts_dialog`).
     shortcuts_dialog: Option<ShortcutsDialog>,
     /// The `editor` start-up argument asked for a card before history had loaded one; the first
-    /// card to arrive opens, as asked.
+    /// card to arrive opens.
     editor_awaits_history: Option<EditorStart>,
     /// The next editor to open gets the mockup's sample marks.
     demo_marks: bool,
-    /// Checking for a newer version, and the one waiting to be installed (`updates`).
     updates: updates::Updates,
 }
 
@@ -175,23 +150,16 @@ impl MainWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let first = cx.focus_handle().tab_stop(true);
-        first.focus(window, cx);
+        let region_button = cx.focus_handle().tab_stop(true);
+        region_button.focus(window, cx);
         // Something must hold focus for Tab to work (`docs/spikes.md` §1.5). This fires in the
-        // draw where the focused element stops being rendered, as a collapsed group's card or a
-        // name field scrolled out of the list does. Focus goes to the nearest focusable ancestor
-        // still drawn, the gallery or the settings column, so Tab carries on from there; in the
-        // gallery, a card just deleted hands focus to the card beside it instead. When
-        // there is none, it goes to the editor's Back while the editor is open; otherwise, as when
-        // the bottom bar gives way to the bulk bar, the bulk bar goes with the selection while a
-        // button on it has focus, it goes into the gallery, where Tab reaches the current card,
-        // or to that card when one was just deleted; the toolbar's Region button would start a
-        // capture on the Enter or Space that follows.
-        // With no such ancestor and the custom palette panel or the Edit shortcuts dialog open,
-        // focus goes back into it, to its first field or its Done: the quit dialog's Cancel
-        // takes its buttons away while one has focus, and the dialogs are siblings, so nothing
-        // of the one that went lies inside the one that stays. The editor gets focus this way
-        // too when it opened under a dialog (`show_editor`).
+        // draw where the focused element stops being rendered (a collapsed group's card, a name
+        // field scrolled away, the bulk bar going with the selection). Focus goes to the nearest
+        // focusable ancestor still drawn; in the gallery, a card just deleted hands focus to the
+        // card beside it. With no ancestor, focus goes back into the custom palette panel or the
+        // Edit shortcuts dialog: the dialogs are siblings, so when the quit dialog closes over one
+        // nothing of it is an ancestor. Never to the toolbar's Region button: the Enter or Space
+        // that follows would start a capture.
         cx.on_focus_lost(window, |this, window, cx| {
             let gallery = this.gallery.read(cx);
             let target = window
@@ -237,8 +205,7 @@ impl MainWindow {
             this.update(cx, |this, cx| this.refresh_hotkeys(cx)).ok();
         })
         .detach();
-        // Closing the window hides it in the tray or quits, by the settings (`closing`); GPUI
-        // itself never closes it.
+        // GPUI itself never closes the window; `closing` hides it or quits.
         let this = cx.weak_entity();
         window.on_window_should_close(cx, move |_, cx| {
             this.update(cx, |this, cx| this.on_close_requested(cx))
@@ -272,7 +239,7 @@ impl MainWindow {
             if let Some(start) = this.editor_awaits_history {
                 this.open_newest_in_editor(start, cx);
             }
-            // Nothing left to clear, as after midnight starts an empty session: the question goes.
+            // As after midnight starts an empty session.
             if this.clear_prompt && gallery.read(cx).unsaved_in_session() == 0 {
                 this.clear_prompt = false;
                 cx.notify();
@@ -308,7 +275,7 @@ impl MainWindow {
             session,
             day: now.date,
             settings,
-            first,
+            region_button,
             gear: cx.focus_handle().tab_stop(true),
             pattern,
             pattern_error: None,
@@ -358,7 +325,7 @@ impl MainWindow {
         this
     }
 
-    /// Whether a dialog, or the custom palette panel, is open over the window.
+    /// Counts the custom palette panel as a dialog.
     fn dialog_open(&self) -> bool {
         self.retention.asking()
             || self.custom_editor.is_some()
@@ -369,8 +336,7 @@ impl MainWindow {
             || self.updates.whats_new_open()
     }
 
-    /// Runs `f` on the window. Deferred, because the window can't be reached from inside one of
-    /// its own handlers.
+    /// Deferred, because the window can't be reached from inside one of its own handlers.
     fn on_window(&self, cx: &mut Context<Self>, f: impl FnOnce(&mut Window) + 'static) {
         let window = self.window;
         cx.defer(move |cx| {
@@ -385,7 +351,6 @@ impl MainWindow {
         }
     }
 
-    /// Every change to a setting goes through here, and on to the store.
     fn change_settings(&mut self, cx: &mut Context<Self>, change: impl FnOnce(&mut Settings)) {
         change(&mut self.settings);
         let settings = self.settings.clone();
@@ -400,9 +365,8 @@ impl MainWindow {
             .show(toast, TOAST_FOR, cx, |this| &mut this.toast);
     }
 
-    /// Select mode's keys, from anywhere in the window (DESIGN.md §4 and §7): Esc leaves it and
-    /// Ctrl+A selects every listed card. A control that handles the key itself, as a name field
-    /// does with both, keeps it.
+    /// Select mode's keys from anywhere in the window (DESIGN.md §4 and §7). A control that
+    /// handles the key itself, as a name field does, keeps it.
     fn key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
         // A dialog's question stands until it is answered, whatever is behind it, and focus
         // can be left behind a dialog when what held it inside went away.
@@ -436,7 +400,6 @@ fn act<V: 'static>(
     move |_, cx| view.update(cx, |this, cx| f(this, cx))
 }
 
-/// The width left for the gallery beside the settings column.
 fn gallery_width(settings: &Settings, window: &Window) -> Pixels {
     let settings_width = if settings.settings_collapsed {
         px(0.)
@@ -494,7 +457,6 @@ impl Render for MainWindow {
                                 body.child(settings::settings_column(self, window, cx))
                             }),
                     )
-                    // The bulk bar takes the bottom bar's place while anything is selected (§4).
                     .when(counts.selected == 0, |this| {
                         this.child(bottom_bar::bottom_bar(self, window, cx))
                     })
@@ -503,9 +465,8 @@ impl Render for MainWindow {
                     })
             }
         };
-        // In the order they stack, each keeping its place in this list, and so its id, however
-        // many are up. The dialogs lie over the editor as much as the gallery: quitting is asked
-        // about wherever the user is.
+        // Each keeps its place in this list, and so its id, however many are up. They lie over
+        // the editor too: quitting is asked about wherever the user is.
         let dialogs: Vec<(usize, AnyElement)> = [
             self.retention_dialog(cx).map(IntoElement::into_any_element),
             self.custom_editor_view(window, cx),

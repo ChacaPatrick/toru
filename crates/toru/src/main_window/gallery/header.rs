@@ -10,9 +10,6 @@ use crate::theme::{ActiveTheme, DayDate, ThemedText};
 use crate::ui::{Button, Readable, TextField};
 
 impl Gallery {
-    /// The session header with the search field and Select at its right, and select mode's
-    /// hint on a line beneath while the mode is on, or an earlier group's header with its rule
-    /// above and Collapse at its right.
     pub(super) fn header(&self, index: usize, cx: &Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let c = &theme.colors;
@@ -89,7 +86,7 @@ impl Gallery {
             .child(titles);
         if index == 0 {
             // The search field stays through select mode (CLAUDE.md), so a search that is still
-            // filtering the cards is on view; Select all and Done take Select's place.
+            // filtering the cards is on view.
             let controls = div().flex_none().flex().items_center().gap(px(8.)).child(
                 TextField::new(&self.search, "Search names")
                     .height(px(HEADER_HEIGHT))
@@ -177,13 +174,11 @@ pub fn plural(count: usize, noun: &str) -> String {
     }
 }
 
-/// What assistive technology calls a group's Collapse or Expand button.
 fn collapse_name(collapsed: bool, group: &str) -> String {
     let action = if collapsed { "Expand" } else { "Collapse" };
     format!("{action} {group}")
 }
 
-/// A day as the look writes it: "Tue, Nov 4", "NOV 4" or "TUE NOV 4".
 pub(super) fn day_date(date: LocalDate, style: DayDate) -> String {
     let (weekday, month, day) = (date.weekday_short(), date.month_short(), date.day);
     match style {

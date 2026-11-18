@@ -1,12 +1,5 @@
-//! Text set from the bundled fonts' outlines, for the text and number badge annotations.
-//! `tiny-skia` has no text of its own, so each glyph's outline is read with `ttf-parser` from the
-//! same files GPUI sets the interface in, and filled as a path: the picture on screen and the
-//! saved file show the same letters. A character the bundled face lacks, such as Chinese or an
-//! emoji, is taken from the first system font that has it (`platform::fallback_fonts`). Those
-//! files are mapped rather than read, so asking one whether it has a character costs a few pages
-//! of it, and the CJK ones are tried in the user's language's order (`Cjk`). Everything here is
-//! a plain function of the text and its font, in picture pixels, so the tests can check the
-//! pixels.
+//! `tiny-skia` has no text of its own, so glyph outlines are read with `ttf-parser` from the
+//! files GPUI sets the interface in, and filled as paths.
 
 use std::{
     path::PathBuf,
@@ -20,8 +13,8 @@ use ttf_parser::{Face, GlyphId, OutlineBuilder};
 use crate::platform;
 use crate::theme::{FONTS, bundled_font};
 
-/// A face as GPUI names it. The file is looked up each time it is needed; the lookup is a walk
-/// over ten entries and parsing a face only reads its table directory.
+/// The file is looked up each time it is needed: the lookup is a walk over ten entries, and
+/// parsing a face only reads its table directory.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Font {
     pub family: SharedString,
@@ -29,8 +22,8 @@ pub struct Font {
 }
 
 impl Font {
-    /// The bundled face nearest to this font. A family that isn't bundled, which the themes
-    /// never ask for, is set in the first bundled face rather than not at all.
+    /// A family that isn't bundled, which the themes never ask for, is set in the first bundled
+    /// face rather than not at all.
     fn face(&self) -> Face<'static> {
         let font = bundled_font(&self.family, self.weight).unwrap_or(&FONTS[0]);
         Face::parse(font.data, 0).expect("the bundled fonts are valid TrueType files")
@@ -48,8 +41,6 @@ pub enum Cjk {
 }
 
 impl Cjk {
-    /// The language a locale name such as `ja-JP`, `zh-Hant-TW` or `ko_KR.UTF-8` is in, or
-    /// `None` when it is none of these.
     fn of_locale(locale: &str) -> Option<Cjk> {
         let locale = locale.to_ascii_lowercase();
         let mut parts = locale.split(['-', '_', '.']);
@@ -72,9 +63,7 @@ impl Cjk {
         }
     }
 
-    /// The fonts `content` takes its CJK characters from first: Japanese ones if it has kana,
-    /// which only Japanese is written in, else those of the first of the user's languages
-    /// (`platform::user_languages`) that is one of these, else Simplified Chinese.
+    /// Kana mean Japanese, as only Japanese is written in them.
     fn preferred(content: &str, languages: &[String]) -> Cjk {
         if content.chars().any(is_kana) {
             return Cjk::Japanese;
@@ -107,7 +96,8 @@ fn ordered<T>(fonts: &[T], cjk: Cjk, language: impl Fn(&T) -> Option<Cjk>) -> Ve
         .collect()
 }
 
-/// A system font to fall back on, mapped and parsed on first use and kept for the app's life.
+/// Mapped rather than read, so asking one whether it has a character costs a few pages of it.
+/// Kept for the app's life.
 struct Fallback {
     path: PathBuf,
     cjk: Option<Cjk>,
@@ -115,7 +105,6 @@ struct Fallback {
 }
 
 impl Fallback {
-    /// `None` if the file is missing or isn't a font, which is then never tried again.
     fn face(&self) -> Option<&Face<'static>> {
         self.face
             .get_or_init(|| Face::parse(platform::map_file(&self.path)?, 0).ok())
@@ -136,8 +125,6 @@ static FALLBACKS: LazyLock<Vec<Fallback>> = LazyLock::new(|| {
 
 static LANGUAGES: LazyLock<Vec<String>> = LazyLock::new(platform::user_languages);
 
-/// The faces a text is set in: its font's bundled face, then the fallbacks in the order that
-/// text tries them.
 struct Faces {
     main: Face<'static>,
     fallbacks: Vec<&'static Fallback>,
@@ -152,9 +139,7 @@ impl Faces {
         }
     }
 
-    /// The face that draws `ch` and its glyph there: the main face if it has one, else the
-    /// first fallback that does. A later fallback is only opened when the ones before it lack
-    /// the character.
+    /// A later fallback is only opened when the ones before it lack the character.
     fn glyph(&self, ch: char) -> Option<(&Face<'static>, GlyphId)> {
         if let Some(glyph) = self.main.glyph_index(ch) {
             return Some((&self.main, glyph));
@@ -179,7 +164,6 @@ fn is_invisible(ch: char) -> bool {
     )
 }
 
-/// Whether `content` holds a character no face can draw, which is left blank.
 pub fn has_blanks(content: &str, font: &Font) -> bool {
     let faces = Faces::new(font, content);
     content.chars().any(|ch| {
@@ -187,20 +171,18 @@ pub fn has_blanks(content: &str, font: &Font) -> bool {
     })
 }
 
-/// Where a text's lines land, in picture pixels from its top-left corner.
+/// In picture pixels from the text's top-left corner.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Layout {
-    /// The box around every line: the widest line by the lines' heights. Empty text is one line
-    /// tall and nothing wide, so a caret has somewhere to stand.
+    /// Empty text is one line tall and nothing wide, so a caret has somewhere to stand.
     pub size: Size<f32>,
-    /// The top of the caret after the last character, which is `line_height` tall.
+    /// The caret's top, after the last character.
     pub caret: Point<f32>,
     pub line_height: f32,
 }
 
-/// Lays `content` out in `font` at `size` picture pixels, one line per `\n`, as CSS does at
-/// `line-height: normal`: each line is the face's ascent, descent and line gap tall. A
-/// character from a fallback font is as wide as that font sets it, on the same line.
+/// Each line is the face's ascent, descent and line gap tall, as CSS does at
+/// `line-height: normal`.
 pub fn layout(content: &str, font: &Font, size: f32) -> Layout {
     let faces = Faces::new(font, content);
     let metrics = Metrics::of(&faces.main, size);
@@ -222,8 +204,6 @@ pub fn layout(content: &str, font: &Font, size: f32) -> Layout {
     }
 }
 
-/// The outlines of `content` set as `layout` lays it out, with the top-left corner at
-/// `origin`, as one path to fill. `None` when there is nothing to draw.
 pub fn outline(content: &str, font: &Font, size: f32, origin: Point<f32>) -> Option<Path> {
     let faces = Faces::new(font, content);
     let metrics = Metrics::of(&faces.main, size);
@@ -248,7 +228,6 @@ pub fn outline(content: &str, font: &Font, size: f32, origin: Point<f32>) -> Opt
     builder.path.finish()
 }
 
-/// The bundled face's vertical metrics scaled to a size.
 struct Metrics {
     size: f32,
     line_height: f32,
@@ -287,7 +266,6 @@ impl Metrics {
         face.glyph_hor_advance(glyph).unwrap_or(0) as f32 * self.scale(face)
     }
 
-    /// How far `ch` moves the pen, from whichever face draws it.
     fn advance(&self, faces: &Faces, ch: char) -> f32 {
         match faces.glyph(ch) {
             Some((face, glyph)) => self.advance_of(face, glyph),
@@ -297,8 +275,7 @@ impl Metrics {
     }
 }
 
-/// Collects glyph outlines, which the face gives in font units with y up, into one path in
-/// picture pixels with y down, each glyph at its pen position `at` on the baseline.
+/// Font units with y up in, picture pixels with y down out; `at` is the pen on the baseline.
 struct Outline {
     path: PathBuilder,
     scale: f32,
@@ -388,7 +365,6 @@ mod tests {
         assert!(one.size.height > 16. && one.size.height < 24.);
         assert_eq!(one.line_height, one.size.height);
         assert_eq!(one.caret, point(one.size.width, 0.));
-        // Twice the size is twice as wide and tall.
         let big = layout("Hello", &font, 32.);
         assert!((big.size.width - one.size.width * 2.).abs() < 0.01);
         assert!((big.size.height - one.size.height * 2.).abs() < 0.01);
@@ -403,7 +379,6 @@ mod tests {
         assert_eq!(two.size.width, hello.size.width);
         assert!((two.size.height - hello.line_height * 2.).abs() < 0.01);
         assert_eq!(two.caret, point(hi.size.width, hello.line_height));
-        // Nothing typed yet still stands one line tall for the caret.
         let empty = layout("", &font, 16.);
         assert_eq!(empty.size, size(0., hello.line_height));
         assert_eq!(empty.caret, point(0., 0.));
@@ -419,7 +394,6 @@ mod tests {
         assert!((0..w).all(|x| picture.pixel(x, 0).unwrap().red() == 255));
         assert!((0..h).all(|y| picture.pixel(0, y).unwrap().red() == 255));
         assert!((0..h).all(|y| picture.pixel(w - 1, y).unwrap().red() == 255));
-        // An empty string draws nothing.
         assert!(outline("", &font, 24., point(0., 0.)).is_none());
     }
 
@@ -433,8 +407,7 @@ mod tests {
     #[test]
     fn a_character_no_face_has_takes_a_spaces_room_and_is_reported() {
         let font = vt323();
-        // No font has a glyph for a private-use code point; the text keeps its rhythm, draws
-        // nothing for it and says so.
+        // No font has a glyph for a private-use code point.
         let lost = '\u{10FFFD}';
         let with = layout(&format!("a{lost}b"), &font, 20.);
         let space = layout("a b", &font, 20.);
@@ -449,8 +422,7 @@ mod tests {
         assert!(!has_blanks("a b\nc\u{200D}d\u{FE0F}", &font));
     }
 
-    /// Chinese, Japanese, Korean, Cyrillic and an emoji, none in VT323's subset, come from the
-    /// system fonts: drawn, set as wide as they are, and not reported as blanks.
+    /// None of these is in VT323's subset.
     #[cfg(windows)]
     #[test]
     fn characters_the_face_lacks_come_from_system_fonts() {
@@ -515,7 +487,6 @@ mod tests {
             Cjk::Simplified
         );
         assert_eq!(Cjk::preferred("漢字", &[]), Cjk::Simplified);
-        // Kana make it Japanese whatever the locale, half-width katakana too.
         for text in ["漢字かな", "カタカナ", "ｶﾀｶﾅ", "ㇰ"] {
             assert_eq!(
                 Cjk::preferred(text, &languages(&["zh-CN"])),
@@ -573,7 +544,6 @@ mod tests {
         );
     }
 
-    /// The family name a face gives itself.
     #[cfg(windows)]
     fn family(face: &Face) -> String {
         face.names()
@@ -586,7 +556,6 @@ mod tests {
             .unwrap_or_default()
     }
 
-    /// Kanji in a text with kana come from Yu Gothic, not YaHei, whatever the user's language.
     #[cfg(windows)]
     #[test]
     fn kanji_with_kana_come_from_the_japanese_font() {

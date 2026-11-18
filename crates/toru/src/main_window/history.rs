@@ -1,5 +1,5 @@
-//! Paging through earlier days, newest first, for the gallery. Plain functions, so the rules can be
-//! tested without a window.
+//! Paging through earlier days, newest first. Plain functions, so the rules can be tested
+//! without a window.
 
 use std::{fs, ops::Range};
 
@@ -11,7 +11,6 @@ use toru_core::{
 
 use super::gallery::{CardFiles, NewCard};
 
-/// What the gallery fetches when the user next nears the bottom.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Next {
     /// Nothing has been fetched yet, so which day comes first isn't known.
@@ -22,8 +21,8 @@ pub enum Next {
 }
 
 impl Next {
-    /// Whether `day` has been fetched already, so that a capture from it must be listed by hand
-    /// rather than waiting for its day to arrive from the store.
+    /// A capture from a fetched day must be listed by hand rather than wait for its day to
+    /// arrive from the store.
     pub fn has_fetched(self, day: LocalDate) -> bool {
         match self {
             Next::Unknown => false,
@@ -33,7 +32,6 @@ impl Next {
     }
 }
 
-/// One day's captures from the store, and the day after them.
 #[derive(Debug)]
 pub struct Page {
     pub day: LocalDate,
@@ -41,8 +39,7 @@ pub struct Page {
     pub next: Next,
 }
 
-/// Fetches the day `next` points at, or `None` if there isn't one. Today's page leaves out the
-/// running session, which has its own group. Runs off the main thread.
+/// Today's page leaves out the running session, which has its own group.
 pub fn fetch_page(
     store: &Store,
     session: SessionId,
@@ -87,13 +84,12 @@ pub fn fetch_page(
     Ok(Some(Page { day, cards, next }))
 }
 
-/// Whether the rows run out within `ahead` below the bottom of the view, so more should be fetched.
 pub fn near_bottom(content: Pixels, scrolled: Pixels, viewport: Pixels, ahead: Pixels) -> bool {
     content - (scrolled + viewport) < ahead
 }
 
-/// Which of `count` groups have a row of cards reaching into `band`, a range of distances from the
-/// top of the list. `rows` is every row's group, if it is a row of cards, and height.
+/// `band` is a range of distances from the top of the list. `rows` is every row's group, if it
+/// is a row of cards, and height.
 pub fn groups_near(
     rows: impl Iterator<Item = (Option<usize>, Pixels)>,
     band: Range<Pixels>,
@@ -114,7 +110,7 @@ pub fn groups_near(
     near
 }
 
-/// Where `day`'s group goes among `days`, which run newest first, and whether it is already there.
+/// `days` run newest first. Also says whether `day` is already there.
 pub fn day_slot(days: &[LocalDate], day: LocalDate) -> (usize, bool) {
     let slot = days.partition_point(|&other| other > day);
     (slot, days.get(slot) == Some(&day))

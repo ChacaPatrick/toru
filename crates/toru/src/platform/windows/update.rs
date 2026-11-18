@@ -32,7 +32,7 @@ fn curl_failed(code: Option<i32>) -> io::Error {
     io::Error::other(format!("curl ended with {code:?}"))
 }
 
-/// The text at `url`, which is small: an update's manifest. Blocks, so not for the main thread.
+/// For small text, such as an update's manifest. Blocks, so not for the main thread.
 pub fn fetch_text(url: &str) -> io::Result<String> {
     let output = curl(30).arg(url).output()?;
     if !output.status.success() {
@@ -41,7 +41,7 @@ pub fn fetch_text(url: &str) -> io::Result<String> {
     String::from_utf8(output.stdout).map_err(io::Error::other)
 }
 
-/// Downloads `url` to the file `to`, replacing it. Blocks for as long as the download takes.
+/// Replaces `to`. Blocks for as long as the download takes.
 pub fn download(url: &str, to: &Path) -> io::Result<()> {
     let status = curl(900)
         .arg("-o")
@@ -56,9 +56,8 @@ pub fn download(url: &str, to: &Path) -> io::Result<()> {
     }
 }
 
-/// Starts an update's `setup` on its own, so it outlives this process: it waits for Toru to
-/// exit, installs over it without showing anything, and starts the new Toru
-/// (`INSTALLER_ARGS`).
+/// Detached, so it outlives this process: it waits for Toru to exit, installs over it without
+/// showing anything, and starts the new Toru (`INSTALLER_ARGS`).
 pub fn start_installer(setup: &Path) -> io::Result<()> {
     Command::new(setup)
         .args(INSTALLER_ARGS)

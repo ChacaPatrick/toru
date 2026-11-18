@@ -35,7 +35,6 @@ impl TestDir {
         Store::open(&self.app_data()).unwrap()
     }
 
-    /// Stands in for a file the user saved outside the app's folder.
     pub(super) fn user_file(&self, name: &str) -> PathBuf {
         let folder = self.0.join("Pictures");
         fs::create_dir_all(&folder).unwrap();

@@ -25,7 +25,7 @@ const OPEN_FOLDER_FAILED: &str = "Couldn't open that folder. It may have moved."
 
 const BAD_FOLDER: &str = "Toru can't use a folder with that name";
 
-/// Where and how captures are saved, fixed when the user asks.
+/// Fixed when the user asks.
 #[derive(Clone)]
 pub(super) struct SaveTarget {
     pub(super) store: Arc<Store>,
@@ -49,7 +49,7 @@ impl MainWindow {
         })
     }
 
-    /// A card's Save. A second press before the first finishes finds it saved and does nothing.
+    /// A second press before the first finishes finds it saved and does nothing.
     pub(super) fn save_card(&mut self, capture: CaptureId, cx: &mut Context<Self>) {
         let Some(target) = self.save_target(cx) else {
             return;
@@ -70,14 +70,13 @@ impl MainWindow {
         self.save_captures(captures, cx);
     }
 
-    /// The bulk bar's Save, which skips what is saved already.
     pub(super) fn save_selected(&mut self, cx: &mut Context<Self>) {
         let captures = self.gallery.read(cx).selected_unsaved();
         self.save_captures(captures, cx);
     }
 
-    /// Saves each capture as its own job, so a capture or rename made meanwhile waits for one
-    /// file rather than all of them, and one failure doesn't stop the rest.
+    /// Each capture is its own job, so a capture or rename made meanwhile waits for one file
+    /// rather than all of them, and one failure doesn't stop the rest.
     fn save_captures(&mut self, captures: Vec<CaptureId>, cx: &mut Context<Self>) {
         if captures.is_empty() {
             self.show_toast(Toast::new("Nothing new to save"), cx);
@@ -109,9 +108,8 @@ impl MainWindow {
         });
     }
 
-    /// Save to's Change. `rfd` runs the picker on a thread of its own, so the window keeps
-    /// drawing; a pick lands in the setting whatever happens to the folder afterwards, and saving
-    /// to it is what finds out it has gone (`check_chosen_folder`).
+    /// A pick lands in the setting whatever happens to the folder afterwards; saving to it is what
+    /// finds out it has gone (`check_chosen_folder`).
     pub(super) fn change_save_folder(&mut self, window: &Window, cx: &mut Context<Self>) {
         if self.picking_folder {
             return;
@@ -147,7 +145,6 @@ impl MainWindow {
         self.change_settings(cx, |settings| settings.save_folder = Some(folder));
     }
 
-    /// A saved card's Open folder and its `⋯ → Reveal`.
     pub(super) fn open_folder(&mut self, file: PathBuf, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let opened = cx
@@ -161,8 +158,7 @@ impl MainWindow {
         .detach();
     }
 
-    /// Where captures are saved: the setting, else Pictures\Screenshots. `None` only if Windows
-    /// can't say where Pictures is.
+    /// `None` only if Windows can't say where Pictures is.
     pub(super) fn save_folder(&self) -> Option<PathBuf> {
         self.settings
             .save_folder
@@ -171,7 +167,7 @@ impl MainWindow {
     }
 }
 
-/// Saves `capture` and turns its card to Saved. `None` means it was already saved.
+/// `None` means it was already saved.
 async fn save_and_show(
     this: &WeakEntity<MainWindow>,
     cx: &mut AsyncApp,

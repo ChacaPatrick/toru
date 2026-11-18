@@ -77,7 +77,6 @@ pub fn set_starts_with_windows(_on: bool) -> std::io::Result<()> {
 
 pub fn trim_working_set() {}
 
-/// Updates aren't written for this platform yet.
 pub fn fetch_text(_url: &str) -> std::io::Result<String> {
     Err(std::io::ErrorKind::Unsupported.into())
 }

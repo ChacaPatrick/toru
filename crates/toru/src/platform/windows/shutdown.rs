@@ -7,8 +7,8 @@ unsafe extern "system" {
     fn ShutdownBlockReasonDestroy(hwnd: isize) -> i32;
 }
 
-/// Runs `write` with `reason` on the main window, which Windows shows if it ends the session
-/// while the write still holds it up, rather than an app that doesn't say why.
+/// Windows shows `reason` if it ends the session while the write still holds it up, rather than
+/// an app that doesn't say why.
 pub fn while_holding_up_shutdown<T>(reason: &str, write: impl FnOnce() -> T) -> T {
     let hwnd = main_window();
     if let Some(hwnd) = hwnd {

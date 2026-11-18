@@ -1,15 +1,9 @@
-//! The custom fourth palette of a look: six colours of the user's own, stored as text in
-//! `LookAppearance::custom_palette`, from which everything else a palette sets is derived.
-//!
-//! The stored form is `bg=#efe9df surface=#faf7f1 text=#2b2a26 …`, one `key=#rrggbb` per
-//! colour, so it reads in the database and survives a hand edit. A key that is missing or
-//! doesn't parse keeps the fallback's colour, so bad data can never stop a look from loading.
+//! A look's custom fourth palette: six colours of the user's own, from which the rest derive.
 
 use gpui::{Hsla, Rgba};
 
 use super::{Colors, Fill, Theme, contrast::over};
 
-/// The colours the user sets, in the order the editor shows them.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CustomPalette {
     pub bg: Hsla,
@@ -20,7 +14,7 @@ pub struct CustomPalette {
     pub accent_text: Hsla,
 }
 
-/// What each colour is called in the stored text and in the editor.
+/// Stored key and editor label, in the editor's order.
 pub const FIELDS: [(&str, &str); 6] = [
     ("bg", "Background"),
     ("surface", "Surface"),
@@ -30,7 +24,6 @@ pub const FIELDS: [(&str, &str); 6] = [
     ("accent_text", "Accent text"),
 ];
 
-/// How far a derived surface moves from one anchor colour towards another.
 const SURFACE_2_MIX: f32 = 0.5;
 const HAIR_MIX: f32 = 0.18;
 const LINE_MIX: f32 = 0.3;
@@ -38,7 +31,6 @@ const SHADE: f32 = 0.08;
 const HALO: f32 = 0.25;
 
 impl CustomPalette {
-    /// The six colours a theme shows, as the starting point for editing it.
     pub fn from_theme(theme: &Theme) -> CustomPalette {
         let c = &theme.colors;
         CustomPalette {
@@ -46,14 +38,15 @@ impl CustomPalette {
             surface: c.surface,
             text: c.text,
             muted: c.muted,
-            // The fill of the primary button, which is the accent in every look; NeoBrutalism's
-            // `accent` is its black outline.
+            // NeoBrutalism's `accent` is its black outline; the primary button's fill is the
+            // accent in every look.
             accent: c.accent_bg,
             accent_text: c.accent_text,
         }
     }
 
-    /// Reads the stored text, taking any colour that is missing or malformed from `fallback`.
+    /// Any colour missing or malformed comes from `fallback`, so bad data never stops a look
+    /// from loading.
     pub fn parse(text: &str, fallback: CustomPalette) -> CustomPalette {
         let mut palette = fallback;
         for entry in text.split_whitespace() {
@@ -70,6 +63,7 @@ impl CustomPalette {
         palette
     }
 
+    /// One `key=#rrggbb` per colour, so it reads in the database and survives a hand edit.
     pub fn to_stored(self) -> String {
         FIELDS
             .iter()
@@ -78,7 +72,7 @@ impl CustomPalette {
             .join(" ")
     }
 
-    /// The colour stored under `key`, which must be one of `FIELDS`.
+    /// `key` must be one of `FIELDS`.
     pub fn get(&self, key: &str) -> Hsla {
         match key {
             "bg" => self.bg,
@@ -108,18 +102,13 @@ impl CustomPalette {
         })
     }
 
-    /// The four swatches the picker shows, in the built-in palettes' order: background, surface,
-    /// accent, text.
     pub fn swatches(&self) -> [Hsla; 4] {
         [self.bg, self.surface, self.accent, self.text]
     }
 
-    /// Writes the six colours into `c` and derives every other colour a palette sets from
-    /// them, the way the built-in palettes' overrides do: the second surface, which the title
-    /// bar shares, sits between the background and the surface, a selected card sinks to the
-    /// background (text must read on both, so it reads there), hairlines are a faint tint of the text over the
-    /// background, the toast and the on-states take the accent, and the bulk bar is the text
-    /// colour inverted. Each look applies its own `follow_palette` after this.
+    /// Derives the rest the way the built-in palettes' overrides do. A selected card sinks to the
+    /// background, where text must read anyway. Each look applies its own `follow_palette` after
+    /// this.
     pub fn apply(&self, c: &mut Colors) {
         c.bg = self.bg;
         c.surface = self.surface;
@@ -143,8 +132,7 @@ impl CustomPalette {
         c.toast_text = self.accent_text;
         c.chip_bg = c.surface_2;
         c.chip_text = self.muted;
-        // Opaque, where the looks' own tags let a little of the picture through: the muted
-        // colour then reads on the tag as it does on the surface, whatever the picture.
+        // Opaque, unlike the looks' own tags, so muted reads on it whatever the picture.
         c.tag_bg = self.surface;
         c.tag_text = self.muted;
         c.thumb = Fill::Solid(c.surface_2);
@@ -173,23 +161,22 @@ impl CustomPalette {
         c.follow_accent();
     }
 
-    /// The hairline colour: a faint tint of the text over the background.
     pub fn hair(&self) -> Hsla {
         mix(self.bg, self.text, HAIR_MIX)
     }
 
-    /// The edge of a control, a little stronger than a hairline.
+    /// The edge of a control.
     pub fn line(&self) -> Hsla {
         mix(self.bg, self.text, LINE_MIX)
     }
 }
 
-/// `from` moved `amount` of the way to `to`, in sRGB as the screen blends.
+/// In sRGB, as the screen blends.
 pub(super) fn mix(from: Hsla, to: Hsla, amount: f32) -> Hsla {
     over(Hsla { a: amount, ..to }, from)
 }
 
-/// `#rrggbb` or `rrggbb`, in either case, as an opaque colour.
+/// `#rrggbb` or `rrggbb`, either case.
 pub fn parse_hex(text: &str) -> Option<Hsla> {
     let digits = text.trim().strip_prefix('#').unwrap_or(text.trim());
     if digits.len() != 6 || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -199,7 +186,7 @@ pub fn parse_hex(text: &str) -> Option<Hsla> {
     Some(gpui::rgb(value).into())
 }
 
-/// A colour as `#rrggbb`, its alpha dropped.
+/// `#rrggbb`, alpha dropped.
 pub fn hex_text(color: Hsla) -> String {
     let rgba = Rgba::from(color);
     let channel = |value: f32| (value.clamp(0., 1.) * 255.).round() as u8;
@@ -256,7 +243,6 @@ mod tests {
         let fallback = linen();
         assert_eq!(CustomPalette::parse("", fallback), fallback);
         assert_eq!(CustomPalette::parse("garbage ==== bg=", fallback), fallback);
-        // A good key among bad ones is taken; unknown keys and bad colours are passed over.
         let mixed = CustomPalette::parse("bg=#000000 text=notacolour nope=#ffffff", fallback);
         assert_eq!(hex_text(mixed.bg), "#000000");
         assert_eq!(mixed.text, fallback.text);
@@ -294,9 +280,7 @@ mod tests {
         }
     }
 
-    /// Every built-in palette, entered as a custom one, still meets DESIGN.md §7, so the
-    /// derived colours are sound whenever the six entered ones are; and with a background photo
-    /// behind the window too, whatever the picture.
+    /// Shows the derived colours are sound whenever the six entered ones are, photo or not.
     #[test]
     fn built_in_colours_entered_as_custom_meet_design_md_7() {
         let mut failures = Vec::new();

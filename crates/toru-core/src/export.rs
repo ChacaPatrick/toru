@@ -1,6 +1,3 @@
-//! Writing captures out as image files: into the user's folder when they are saved, and into a
-//! throwaway folder for Copy all.
-
 use std::fs::{self, File};
 use std::io::{self, Cursor, ErrorKind, Write};
 use std::path::{Path, PathBuf};
@@ -30,9 +27,8 @@ pub struct CopySet {
     pub missing: usize,
 }
 
-/// Writes the capture into `folder`, creating it if needed, and records it as saved. A capture
-/// already saved is left alone and gives `None`, so saving twice can't make a second file. If
-/// anything fails, the capture stays unsaved with its temp image and no new file is left behind.
+/// A capture already saved gives `None`, so saving twice can't make a second file. If anything
+/// fails, the capture stays unsaved and no new file is left behind.
 pub fn save_capture(
     store: &Store,
     id: CaptureId,
@@ -56,11 +52,9 @@ pub fn save_capture(
     }))
 }
 
-/// Writes the editor's `edited` picture into `folder` as the capture's saved file, under a new
-/// name if a file has it, and shows it on the card. `original` is the capture as it was taken,
-/// kept for Reset edits, or `None` if `edited` is that picture. If `redacted`, `edited` hides some
-/// of the capture, so the original is deleted once the file is written. A capture saved before
-/// keeps its earlier file, which is never overwritten, and the record moves to the new one.
+/// `original` is the capture as it was taken, kept for Reset edits, or `None` if `edited` is that
+/// picture. If `redacted`, the original is deleted once the file is written. A file saved before
+/// is never overwritten; the record moves to the new one.
 #[allow(clippy::too_many_arguments)]
 pub fn save_edited(
     store: &Store,
@@ -94,8 +88,8 @@ pub fn save_edited(
     Ok(saved)
 }
 
-/// A Save of edits that failed. `stored` is the size of the card's picture if it had already
-/// taken the edits: it shows them now, though no file does.
+/// `stored` is the size of the card's picture if it had already taken the edits: it shows them
+/// now, though no file does.
 #[derive(Debug)]
 pub struct SaveEditedError {
     pub error: StoreError,
@@ -111,7 +105,6 @@ impl From<StoreError> for SaveEditedError {
     }
 }
 
-/// `save_edited`'s file, and the record moving to it.
 fn write_edited(
     store: &Store,
     id: CaptureId,
@@ -136,8 +129,7 @@ fn write_edited(
     })
 }
 
-/// Save as: `edited` written to `folder` as `name`, under a new name if a file has it. The
-/// capture and its card don't change, as this is a copy.
+/// Save as. The capture and its card don't change.
 pub fn save_copy(
     edited: &RgbaImage,
     folder: &Path,
@@ -152,8 +144,7 @@ pub fn save_copy(
     })
 }
 
-/// Gets `captures` ready to copy as files: a saved capture is its own file, and an unsaved one is
-/// written to a new folder from `Store::new_copy_folder` under its name.
+/// A saved capture is its own file; an unsaved one is written to a new copy folder.
 pub fn prepare_copy_set(
     store: &Store,
     captures: &[CaptureId],
@@ -182,8 +173,7 @@ fn fill_copy_set(
     let mut missing = 0;
     for &id in captures {
         let capture = store.capture(id)?;
-        // Edits waiting for Save are what the card shows, so the temp copy goes in place of the
-        // file.
+        // Edits waiting for Save are what the card shows, so they go in place of the file.
         match capture
             .saved_path
             .filter(|_| !store.image_path(id).is_file())
@@ -200,7 +190,7 @@ fn fill_copy_set(
     Ok((files, missing))
 }
 
-/// The temp PNG in `format`. PNG needs no re-encoding, so the bytes go across untouched.
+/// `source` is a PNG, so for PNG the bytes go across untouched.
 fn encoded(source: &Path, format: SaveFormat) -> Result<Vec<u8>> {
     if format == SaveFormat::Png {
         return Ok(fs::read(source)?);
@@ -229,8 +219,7 @@ fn encoded_pixels(pixels: &RgbaImage, format: SaveFormat) -> Result<Vec<u8>> {
     }
 }
 
-/// Writes `bytes` to `name.ext`, or to `name_2.ext` and so on if that is taken. `create_new` makes
-/// the check and the creation one step, so an existing file is never overwritten.
+/// `create_new` checks and creates in one step, so an existing file is never overwritten.
 fn write_new_file(
     folder: &Path,
     name: &str,
@@ -336,7 +325,6 @@ mod tests {
         captures.iter().map(|stored| stored.id).collect()
     }
 
-    /// Solid red: an edited picture that is easy to tell from `frame`.
     fn edited() -> RgbaImage {
         RgbaImage::from_pixel(10, 10, Rgba([255, 0, 0, 255]))
     }
@@ -414,7 +402,6 @@ mod tests {
         let store = dir.store();
         let session = store.new_session().unwrap();
         let id = add(&store, session, "shot");
-        // A file where the folder should be.
         let blocked = dir.0.join("blocked");
         fs::write(&blocked, b"").unwrap();
 
@@ -471,7 +458,7 @@ mod tests {
         assert_eq!(png_at(&store.original_path(id)), frame());
     }
 
-    /// Puts a folder with something in it where `id`'s thumbnail goes, so it can't be written.
+    /// A folder with something in it, so the thumbnail can't be written.
     fn block_thumbnail(store: &Store, id: CaptureId) {
         let thumbnail = store.thumbnail_path(id);
         fs::remove_file(&thumbnail).unwrap();
@@ -487,7 +474,6 @@ mod tests {
         let id = add(&store, session, "shot");
         block_thumbnail(&store, id);
 
-        // Back: the picture is the capture now, so the card is told so.
         let bytes = store
             .store_edit(id, &edited(), Some(&frame()), true, 8)
             .unwrap();
@@ -495,10 +481,8 @@ mod tests {
         assert_eq!(png_at(&store.image_path(id)), edited());
         assert!(store.redaction(id).unwrap().redacted);
 
-        // Once the way is clear, the gallery's next load makes it from the picture, at the
-        // picture's size, which the record takes.
         fs::remove_dir_all(store.thumbnail_path(id)).unwrap();
-        assert!(store.remake_narrow_thumbnail(id, 8).unwrap());
+        assert!(store.remake_narrow_or_missing_thumbnail(id, 8).unwrap());
         assert_eq!(png_at(&store.thumbnail_path(id)).dimensions(), (8, 8));
         let capture = store.capture(id).unwrap();
         assert_eq!((capture.width, capture.height), (10, 10));
@@ -558,7 +542,6 @@ mod tests {
         assert_eq!(png_at(&store.full_image_path(id).unwrap()), edited());
         assert_eq!(png_at(&store.original_path(id)), frame());
 
-        // Saving takes the waiting edit to a new file and the temp copy goes.
         let saved = save_edited(
             &store,
             id,
@@ -658,7 +641,6 @@ mod tests {
 
         assert!(!store.original_path(id).exists());
         assert!(store.redaction(id).unwrap().original_removed);
-        // A later edit can't bring it back, and the edit waiting for Save survives a restart.
         store
             .store_edit(id, &RgbaImage::new(3, 3), Some(&frame()), true, 8)
             .unwrap();
@@ -685,7 +667,6 @@ mod tests {
         store
             .store_edit(marked, &edited(), Some(&frame()), false, 8)
             .unwrap();
-        // Reset stays possible until the picture is saved.
         assert!(store.original_path(redacted).is_file());
         assert!(!store.redaction(redacted).unwrap().original_removed);
 
@@ -742,7 +723,6 @@ mod tests {
         assert_eq!(png_at(&store.full_image_path(id).unwrap()), edited());
         assert!(store.redaction(id).unwrap().original_removed);
 
-        // More edits over the saved picture are fine, and the original stays removed.
         store.store_edit(id, &edited(), None, true, 8).unwrap();
         assert!(store.redaction(id).unwrap().original_removed);
     }

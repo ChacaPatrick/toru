@@ -4,14 +4,12 @@ use super::geometry::Pt;
 use super::{Overlay, geometry};
 use crate::theme::ActiveTheme;
 
-/// The magnifier shows this many frame pixels across, each `LOUPE_ZOOM` logical pixels wide.
+/// Frame pixels across, each `LOUPE_ZOOM` logical pixels wide.
 pub(super) const LOUPE_CELLS: u32 = 15;
 
 pub(super) const LOUPE_ZOOM: f32 = 8.;
 
 impl Overlay {
-    /// The magnifier: the frame pixels around the pointer, blown up, with the centre cell
-    /// outlined and one-pixel hairlines crossing through it.
     pub(super) fn loupe(&self, pointer: Pt, cx: &App) -> Div {
         let theme = cx.theme();
         let c = &theme.colors;

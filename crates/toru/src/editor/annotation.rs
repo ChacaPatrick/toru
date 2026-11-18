@@ -1,12 +1,3 @@
-//! The marks the tools leave (DESIGN.md §5): arrows, lines, rectangles, ellipses, pen and
-//! highlighter trails, which are dragged out, text, number badges and stickers, which are
-//! placed with a click, and the blocks that hide part of the picture. Each is a shape, its
-//! points in picture pixels and a style, and knows how to draw itself with `tiny-skia`, where
-//! its handles are, how to move and resize, and whether a point hits it. Everything here is
-//! plain arithmetic on picture pixels, so the same code serves the canvas, the saved file and
-//! the tests. Points are in the pixels of the whole picture, so a crop, which only changes what
-//! is shown, leaves every mark where it was.
-
 mod dragging;
 mod draw;
 mod hit;
@@ -26,10 +17,8 @@ use super::tools::{Head, LineStyle, Width};
 pub use dragging::in_picture;
 pub use draw::paint_pixels;
 
-/// How many picture pixels wide the highlighter is for each `Width`, against the other tools' 1.
-const HIGHLIGHTER_WIDTHS: f32 = 6.;
+const HIGHLIGHTER_WIDTH_SCALE: f32 = 6.;
 
-/// How a mark is drawn: the panel's choices, with the swatch resolved to its colour.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Style {
     /// The stroke, the text, a badge's disc or a sticker's fill.
@@ -42,19 +31,17 @@ pub struct Style {
     pub opacity: f32,
 }
 
-/// A text annotation's content and how it is set, in picture pixels.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Text {
     pub content: String,
     pub font: Font,
-    /// The font size in picture pixels.
+    /// In picture pixels.
     pub size: f32,
     /// Set in capitals, as NeoBrutalism's `.anno.text` is.
     pub upper: bool,
 }
 
 impl Text {
-    /// The content as it is set: in capitals if the look asks.
     pub fn shown(&self) -> String {
         if self.upper {
             self.content.to_uppercase()
@@ -68,11 +55,10 @@ impl Text {
     }
 }
 
-/// A number badge: a disc with its number in it.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Badge {
     pub number: u32,
-    /// The disc's diameter in picture pixels; the digits are half as tall.
+    /// In picture pixels; the digits are half as tall.
     pub diameter: f32,
     pub font: Font,
 }
@@ -91,11 +77,9 @@ pub enum Shape {
     Number(Badge),
     /// Its two points are the sticker's box, always square.
     Sticker(Sticker),
-    /// A box that hides what is under it.
     Block(BlockKind),
 }
 
-/// A shape's kind alone, for what the panel shows and the options a tool keeps.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
     Arrow,
@@ -126,19 +110,15 @@ impl Shape {
         }
     }
 
-    /// Whether the mark is a trail of points rather than two ends.
     pub fn is_trail(&self) -> bool {
         matches!(self, Shape::Pen | Shape::Highlighter)
     }
 
-    /// Whether the mark's two points are a line's ends, which the handles sit on, rather than a
-    /// box's corners.
     fn is_line(&self) -> bool {
         matches!(self, Shape::Arrow(_) | Shape::Line)
     }
 
-    /// Whether the mark is placed with a click and has a size of its own, rather than dragged
-    /// out: text, a badge or a sticker.
+    /// Placed with a click and sized on its own, rather than dragged out.
     pub fn is_placed(&self) -> bool {
         matches!(self, Shape::Text(_) | Shape::Number(_) | Shape::Sticker(_))
     }
@@ -148,20 +128,19 @@ impl Shape {
     }
 }
 
-/// Which of a mark's handles: the index into `handles()`.
+/// Index into `Annotation::handles()`.
 pub type HandleIndex = usize;
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct Annotation {
     pub shape: Shape,
-    /// The two ends of a line or two corners of a box, or every point of a trail, in picture
-    /// pixels.
+    /// The two ends of a line or two corners of a box, or every point of a trail. In
+    /// whole-picture pixels, so a crop leaves every mark where it was.
     pub points: Vec<Point<f32>>,
     pub style: Style,
 }
 
 impl Annotation {
-    /// A mark just begun at `at`.
     pub fn new(shape: Shape, at: Point<f32>, style: Style) -> Annotation {
         Annotation {
             shape,
@@ -170,8 +149,6 @@ impl Annotation {
         }
     }
 
-    /// A text, badge or sticker placed with a click: text at its top-left corner, a badge and a
-    /// sticker centred on the click, the sticker `side` wide.
     pub fn placed(shape: Shape, at: Point<f32>, side: f32, style: Style) -> Annotation {
         let points = match &shape {
             Shape::Sticker(_) => vec![
@@ -187,9 +164,8 @@ impl Annotation {
         }
     }
 
-    /// Whether the mark is big enough to keep: a click without a drag draws nothing, but a
-    /// placed mark has its own size, and a box dragged along one axis only, which would be a
-    /// line or a crop of no size, is none.
+    /// A click without a drag draws nothing, and nor does a box dragged along one axis only,
+    /// which would be a line or a crop of no size.
     pub fn is_drawn(&self) -> bool {
         let size = self.bounds().size;
         if self.shape.is_placed() {
@@ -201,7 +177,6 @@ impl Annotation {
         }
     }
 
-    /// The box around the mark: its points, or what a placed mark takes up.
     pub fn bounds(&self) -> Bounds<f32> {
         match &self.shape {
             Shape::Text(text) => Bounds::new(self.points[0], text.layout().size),
@@ -223,7 +198,6 @@ impl Annotation {
         }
     }
 
-    /// The text of a text mark, to show or edit.
     pub fn text(&self) -> Option<&Text> {
         match &self.shape {
             Shape::Text(text) => Some(text),
@@ -231,7 +205,6 @@ impl Annotation {
         }
     }
 
-    /// The text mark with `content` in place of its own.
     pub fn with_content(&self, content: String) -> Annotation {
         let mut out = self.clone();
         if let Shape::Text(text) = &mut out.shape {
@@ -240,15 +213,13 @@ impl Annotation {
         out
     }
 
-    /// Where the caret stands after a text mark's last character: its top, and its height, in
-    /// picture pixels.
+    /// The caret's top after the last character, and its height, in picture pixels.
     pub fn caret(&self) -> Option<(Point<f32>, f32)> {
         let layout = self.text()?.layout();
         Some((self.points[0] + layout.caret, layout.line_height))
     }
 
-    /// Where the handles are: a line's two ends, else the four corners of the box, top-left,
-    /// top-right, bottom-left, bottom-right as the mockup draws them.
+    /// A line's two ends, else the box's corners in reading order, as the mockup draws them.
     pub fn handles(&self) -> Vec<Point<f32>> {
         if self.shape.is_line() {
             return self.points.clone();
@@ -262,17 +233,17 @@ impl Annotation {
         ]
     }
 
-    /// The stroke's width in picture pixels; a placed mark and a block have none.
+    /// In picture pixels.
     pub fn pixel_width(&self) -> f32 {
-        let widths = match self.shape {
-            Shape::Highlighter => HIGHLIGHTER_WIDTHS,
+        let scale = match self.shape {
+            Shape::Highlighter => HIGHLIGHTER_WIDTH_SCALE,
             _ if self.shape.is_placed() || self.shape.is_block() => 0.,
             _ => 1.,
         };
-        self.style.width.pixels() * widths
+        self.style.width.pixels() * scale
     }
 
-    /// A sticker's design unit in picture pixels: its box over the design box.
+    /// One sticker design unit, in picture pixels.
     fn sticker_unit(&self) -> f32 {
         self.bounds().size.width / sticker::UNITS
     }

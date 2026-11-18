@@ -1,14 +1,4 @@
-//! The global shortcuts in the window (DESIGN.md §3): keeping the registry in step with the
-//! settings and the displays, acting on a press, and the Edit shortcuts dialog. The dialog lists
-//! each action, and each connected display, with its shortcut. Pressing a shortcut button
-//! records: the next key combination becomes the shortcut, Esc stops without a change, and Clear
-//! takes a shortcut away. The registered shortcuts stay registered while recording, so a press
-//! of one arrives as a hotkey and is recorded, or refused as another row's, rather than acted on;
-//! PrtScn, which Windows would otherwise act on itself, is held in every combination for the
-//! duration. Recording ends when the window loses activation or hides, so a press in another
-//! app never rebinds a row. Every change is saved and registered at once, and what is wrong
-//! with a shortcut, from a bad stored string to a combination another app holds, is said in
-//! text under its row.
+//! The global shortcuts in the window, and the Edit shortcuts dialog (DESIGN.md §3).
 
 use std::collections::HashMap;
 
@@ -23,7 +13,6 @@ use crate::ui::{Button, Dialog};
 
 const WIDTH: f32 = 520.;
 const ROW_GAP: f32 = 10.;
-/// Between a row and the problem text under it.
 const NOTE_GAP: f32 = 4.;
 /// `.hint`'s `line-height: 1.45`.
 const HINT_LEADING: f32 = 1.45;
@@ -37,25 +26,21 @@ const RECORDING: &str = "Press keys…";
 /// A row's shortcut button and Clear button.
 type RowFocus = (FocusHandle, FocusHandle);
 
-/// The Edit shortcuts dialog while it is open.
 pub(super) struct ShortcutsDialog {
-    /// The row recording a new shortcut, if one is.
     recording: Option<Binding>,
     /// Why the last key press was not taken, shown under its row until the next press or until
     /// recording stops.
     refused: Option<(Binding, String)>,
-    /// Each row's buttons, by what the row binds, so a row keeps its focus whatever its place.
+    /// By what the row binds, so a row keeps its focus whatever its place.
     rows: HashMap<Binding, RowFocus>,
-    /// The Done button's. Its own, so the quit dialog's first action stays separate should
-    /// quitting be asked about while this dialog is open.
+    /// Its own, so the quit dialog's first action stays separate should quitting be asked about
+    /// while this dialog is open.
     pub(super) done: FocusHandle,
 }
 
 impl MainWindow {
-    /// Plans the shortcuts from the settings and the displays connected now, and registers them
-    /// if that changed anything: a shortcut is only let go and taken again when it must be, so
-    /// another app can't slip in between. Called at start, on each change to a shortcut, and
-    /// whenever the displays change, the window being hidden in the tray or not.
+    /// A shortcut is only let go and taken again when it must be, so another app can't slip in
+    /// between.
     pub(super) fn refresh_hotkeys(&mut self, cx: &mut Context<Self>) {
         let (displays, _) = self.displays(cx);
         let entries = shortcuts::entries(&self.settings, |display| {
@@ -88,9 +73,8 @@ impl MainWindow {
         }
     }
 
-    /// A global shortcut was pressed: the capture it is bound to, with the saved settings, as
-    /// if its toolbar button had been pressed. The window may be hidden in the tray. While a
-    /// shortcut is being recorded the keys are what is being recorded instead.
+    /// The window may be hidden in the tray. While a shortcut is being recorded the registered
+    /// shortcuts stay registered, so their keys arrive here and are what is being recorded.
     pub fn hotkey_pressed(&mut self, id: u32, cx: &mut Context<Self>) {
         if self.recording().is_some() {
             if let Some(shortcut) = self.hotkeys.pressed(id) {
@@ -120,13 +104,10 @@ impl MainWindow {
         }
     }
 
-    /// The row for `binding`, as last planned.
     pub(super) fn planned(&self, binding: &Binding) -> Option<&Planned> {
         self.shortcuts.iter().find(|row| row.binding == *binding)
     }
 
-    /// The toolbar's hint: the Region and Window shortcuts that are working, as the mockups
-    /// show them.
     pub(super) fn toolbar_hint(&self) -> String {
         [Binding::Region, Binding::Window]
             .iter()
@@ -137,8 +118,6 @@ impl MainWindow {
             .join(" · ")
     }
 
-    /// The Region shortcut as the settings show it, if it is working, for the gallery's empty
-    /// state to name.
     pub(super) fn region_shortcut(&self) -> Option<SharedString> {
         self.planned(&Binding::Region)
             .filter(|row| row.problem.is_none())
@@ -146,7 +125,6 @@ impl MainWindow {
             .map(SharedString::from)
     }
 
-    /// What the dialog calls a row.
     fn binding_name(&self, binding: &Binding, cx: &Context<Self>) -> String {
         match binding {
             Binding::Region => "Region".into(),
@@ -166,7 +144,6 @@ impl MainWindow {
         }
     }
 
-    /// The dialog's rows (`dialog_rows`), with the displays as they are connected now.
     fn rows(&self, cx: &Context<Self>) -> Vec<Planned> {
         let (displays, _) = self.displays(cx);
         let connected: Vec<&str> = displays
@@ -192,16 +169,13 @@ impl MainWindow {
         cx.notify();
     }
 
-    /// Done, or Esc with nothing being recorded. Focus goes back to the Edit shortcuts… button
-    /// (`return_focus`).
     pub(super) fn close_shortcuts_dialog(&mut self, cx: &mut Context<Self>) {
         self.stop_recording(cx);
         self.shortcuts_dialog = None;
         cx.notify();
     }
 
-    /// Focuses `focus` once the current update is over, since the window can't be reached from
-    /// inside one of its own handlers.
+    /// Deferred, since the window can't be reached from inside one of its own handlers.
     fn focus_later(&self, focus: FocusHandle, cx: &mut Context<Self>) {
         let window = self.window;
         cx.defer(move |cx| {
@@ -211,7 +185,6 @@ impl MainWindow {
         });
     }
 
-    /// The row recording a new shortcut, if one is.
     fn recording(&self) -> Option<Binding> {
         self.shortcuts_dialog
             .as_ref()
@@ -231,7 +204,6 @@ impl MainWindow {
         cx.notify();
     }
 
-    /// Ends recording, taken or not, lets PrtScn go, and takes the last refusal's note away.
     /// Also called as the window loses activation or hides, so a press in another app can't
     /// rebind a row.
     pub(super) fn stop_recording(&mut self, cx: &mut Context<Self>) {
@@ -245,9 +217,8 @@ impl MainWindow {
         cx.notify();
     }
 
-    /// The keys pressed while recording. Keys another row already has are refused, with a note,
-    /// so the user never ends up with two rows wanting the same press. Taken keys are saved and
-    /// registered at once.
+    /// Keys another row already has are refused, so the user never ends up with two rows wanting
+    /// the same press.
     fn record(&mut self, shortcut: Shortcut, cx: &mut Context<Self>) {
         let Some(binding) = self.recording() else {
             return;
@@ -296,10 +267,9 @@ impl MainWindow {
         }
     }
 
-    /// A key pressed in the dialog while recording: Esc on its own stops, anything else is the
-    /// new shortcut or the reason it can't be. The platform is asked which key is down, since it
-    /// numbers keys the same on every layout where GPUI names them by what they type
-    /// (`shortcuts::keys`). Returns whether the key was taken.
+    /// The platform is asked which key is down, since it numbers keys the same on every layout
+    /// where GPUI names them by what they type (`shortcuts::keys`). Returns whether the key was
+    /// taken.
     fn recording_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
         if self.recording().is_none() {
             return false;
@@ -320,8 +290,8 @@ impl MainWindow {
         true
     }
 
-    /// The dialog, for the frame. Rows come and go with the displays, so each row's focus
-    /// handles are looked up, or made, as it is drawn.
+    /// Rows come and go with the displays, so each row's focus handles are looked up, or made, as
+    /// it is drawn.
     pub(super) fn shortcuts_dialog(&mut self, cx: &mut Context<Self>) -> Option<Dialog> {
         self.shortcuts_dialog.as_ref()?;
         let rows = self.rows(cx);
@@ -434,7 +404,6 @@ impl MainWindow {
 }
 
 impl ShortcutsDialog {
-    /// The row's focus handles, made the first time the row is asked about.
     fn row_focus(&mut self, binding: &Binding, cx: &mut Context<MainWindow>) -> &RowFocus {
         self.rows.entry(binding.clone()).or_insert_with(|| {
             (
@@ -445,9 +414,9 @@ impl ShortcutsDialog {
     }
 }
 
-/// The dialog's rows, in an order that holds as shortcuts are set and cleared: the four
-/// actions, then each connected display in the order the platform lists them, with its shortcut
-/// or none, then any display that isn't connected but keeps a shortcut.
+/// In an order that holds as shortcuts are set and cleared: the actions, then each connected
+/// display in the order the platform lists them, then any display that isn't connected but keeps
+/// a shortcut.
 fn dialog_rows(planned: &[Planned], connected: &[&str]) -> Vec<Planned> {
     fn display_key(row: &Planned) -> Option<&str> {
         match &row.binding {
@@ -478,13 +447,11 @@ fn dialog_rows(planned: &[Planned], connected: &[&str]) -> Vec<Planned> {
     rows
 }
 
-/// A row's name without the display's size: "Display 2 · 2560×1440" is just "Display 2" here.
+/// "Display 2 · 2560×1440" is just "Display 2" here.
 fn short_binding_name(name: &str) -> &str {
     name.split(" · ").next().unwrap_or(name)
 }
 
-/// What assistive technology calls a row's shortcut button: what it sets and what it is set to,
-/// or that it is waiting for the new keys.
 fn keys_button_name(binding: &str, keys: Option<&str>, recording: bool) -> String {
     let state = match (recording, keys) {
         (true, _) => "recording, press the new keys",
@@ -494,9 +461,7 @@ fn keys_button_name(binding: &str, keys: Option<&str>, recording: bool) -> Strin
     format!("{} shortcut, {state}", short_binding_name(binding))
 }
 
-/// Whether two plans want the same registrations: the same rows with the same keys, and the
-/// same ones held back before registration. Registration results aren't compared, since they
-/// are what applying finds out.
+/// Registration results aren't compared, since they are what applying finds out.
 fn same_plan(a: &[Planned], b: &[Planned]) -> bool {
     let key = |row: &Planned| {
         (
@@ -511,7 +476,6 @@ fn same_plan(a: &[Planned], b: &[Planned]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(a, b)| key(a) == key(b))
 }
 
-/// The settings column's note under the Shortcuts group, when a shortcut isn't working.
 pub(super) fn column_note(rows: &[Planned]) -> Option<&'static str> {
     rows.iter()
         .any(|row| !matches!(row.problem, None | Some(Problem::Disconnected)))

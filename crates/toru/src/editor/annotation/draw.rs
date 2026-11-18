@@ -4,7 +4,7 @@ use tiny_skia::{
     Pixmap, PixmapPaint, Rect, Stroke, StrokeDash, Transform,
 };
 
-use super::outline::{CURL_AMPLITUDE, HEAD_MIN, HEAD_WIDTHS, LONG_HEAD};
+use super::outline::{CURL_AMPLITUDE, HEAD_MIN, HEAD_WIDTHS, LONG_HEAD_SCALE};
 use super::sketch::{SKETCH_AMPLITUDE, SKETCH_PASSES, wobble};
 use super::{Annotation, Shape};
 use crate::editor::sticker::{self, Part};
@@ -16,9 +16,8 @@ const DASH: f32 = 3.;
 
 const GAP: f32 = 2.;
 
-/// A mark's layer reaches this far past the picture it is drawn on. The rasterizer shades a
-/// pixel at a layer's edge a little differently from one inside, so the edge is kept out of
-/// sight and a region of the picture comes out the same as the whole.
+/// The rasterizer shades a pixel at a layer's edge a little differently from one inside, so a
+/// mark's layer reaches this far past the picture, and a region comes out the same as the whole.
 const LAYER_MARGIN: i32 = 2;
 
 /// How far past its line box text may paint, as a share of its size: a glyph's side bearing
@@ -26,10 +25,7 @@ const LAYER_MARGIN: i32 = 2;
 const TEXT_OVERHANG: f32 = 0.25;
 
 impl Annotation {
-    /// How far past its points the mark may paint: half its stroke, and an arrow's head, the
-    /// curl of a curly shaft and the sketchy wobble, with a pixel over for anti-aliasing. Text
-    /// may overhang its line box by a little of its size; a sticker by half its outline. A
-    /// block fills its box and nothing more.
+    /// How far past its bounds the mark may paint, in picture pixels.
     pub fn reach(&self) -> f32 {
         match &self.shape {
             Shape::Text(text) => text.size * TEXT_OVERHANG + 1.,
@@ -38,13 +34,12 @@ impl Annotation {
             Shape::Block(_) => 0.,
             _ => {
                 let width = self.pixel_width();
-                let head = (width * HEAD_WIDTHS).max(HEAD_MIN) * LONG_HEAD;
+                let head = (width * HEAD_WIDTHS).max(HEAD_MIN) * LONG_HEAD_SCALE;
                 width / 2. + head + CURL_AMPLITUDE + SKETCH_AMPLITUDE + 1.
             }
         }
     }
 
-    /// The whole pixels the mark may paint.
     pub fn paint_rect(&self) -> Option<IntRect> {
         let b = self.bounds();
         let reach = self.reach();
@@ -56,9 +51,8 @@ impl Annotation {
         )
     }
 
-    /// A block's pixels over `base`, the picture with the blocks under this one applied, and
-    /// the whole-picture rectangle they fill. `None` for any other mark, or a block off the
-    /// picture.
+    /// `base` is the picture with the blocks under this one applied; the rectangle is in
+    /// whole-picture pixels.
     pub fn block_pixels(&self, base: &Pixmap) -> Option<(IntRect, Pixmap)> {
         let Shape::Block(kind) = self.shape else {
             return None;
@@ -66,17 +60,14 @@ impl Annotation {
         block::render(kind, base, self.paint_rect()?, self.style.color)
     }
 
-    /// Draws the mark on a picture whose top-left pixel is picture pixel `(0, 0)`.
     #[cfg(test)]
     pub fn draw(&self, picture: &mut Pixmap) {
         self.draw_at(picture, point(0, 0));
     }
 
-    /// Draws the mark on `picture`, whose top-left pixel is picture pixel `origin`: the whole
-    /// picture, or a region of it rendered on its own. The mark is stroked opaque on a layer of
-    /// its own and that is laid on at its opacity, so the passes of a sketchy stroke and an
-    /// arrow's head over its shaft don't darken where they cross. A block draws nothing here:
-    /// its pixels depend on the picture under it, so `Document` takes them from `block_pixels`.
+    /// `origin` is the picture pixel at `picture`'s top-left. Stroked opaque on a layer laid on at
+    /// its opacity, so a sketchy stroke's passes and an arrow's head don't darken where they
+    /// cross. A block's pixels depend on the picture under it, so they come from `block_pixels`.
     pub fn draw_at(&self, picture: &mut Pixmap, origin: Point<i32>) {
         if self.shape.is_block() {
             return;
@@ -118,8 +109,6 @@ impl Annotation {
         );
     }
 
-    /// Paints the mark opaque onto `layer`, through `transform`: a stroke's paths stroked, text
-    /// and a badge filled, a sticker's parts each its own way.
     fn paint(&self, layer: &mut Pixmap, transform: Transform) {
         let mut paint = Paint {
             anti_alias: true,
@@ -145,7 +134,7 @@ impl Annotation {
                 if let Some(disc) = PathBuilder::from_circle(c.x, c.y, badge.diameter / 2.) {
                     fill(layer, &disc, &paint);
                 }
-                // The digits, half the disc tall, centred on it as the mockup's flex box does.
+                // Half the disc tall, centred as the mockup's flex box does.
                 let digits = badge.number.to_string();
                 let size = badge.diameter / 2.;
                 let layout = text::layout(&digits, &badge.font, size);
@@ -204,7 +193,6 @@ impl Annotation {
         }
     }
 
-    /// The paths that make the mark up, each stroked alike. A sketchy mark comes as its passes.
     fn paths(&self) -> Vec<Path> {
         let polylines = self.polylines();
         let sketchy = self.style.line == LineStyle::Sketchy;
@@ -236,8 +224,7 @@ impl Annotation {
     }
 }
 
-/// Lays `pixels`, which fill whole-picture rectangle `rect`, on `picture`, whose top-left pixel
-/// is picture pixel `origin`, replacing what was there.
+/// `rect` is in whole-picture pixels; `origin` is the picture pixel at `picture`'s top-left.
 pub fn paint_pixels(picture: &mut Pixmap, origin: Point<i32>, rect: IntRect, pixels: &Pixmap) {
     picture.draw_pixmap(
         rect.x() - origin.x,
@@ -253,7 +240,6 @@ pub fn paint_pixels(picture: &mut Pixmap, origin: Point<i32>, rect: IntRect, pix
     );
 }
 
-/// A polyline, closed or open, as a path; `None` when it has no segment.
 fn polyline(points: &[Point<f32>], closed: bool) -> Option<Path> {
     let (first, rest) = points.split_first()?;
     let mut path = PathBuilder::new();
@@ -270,7 +256,6 @@ fn polyline(points: &[Point<f32>], closed: bool) -> Option<Path> {
     path.finish()
 }
 
-/// A trail as a smooth curve: each segment bends through the midpoints of its neighbours.
 fn smooth(points: &[Point<f32>]) -> Option<Path> {
     let (first, rest) = points.split_first()?;
     let mut path = PathBuilder::new();
@@ -378,7 +363,6 @@ mod tests {
                 }
             }
         }
-        // Nothing paints outside the mark's reach.
         let rect = line.paint_rect().unwrap();
         for y in 0..40 {
             for x in 0..60 {
@@ -444,9 +428,8 @@ mod tests {
         assert!(is_red(&picture, 10, 10));
     }
 
-    /// Writes every shape in every style, with text in each bundled face, badges and the
-    /// stickers, to the PNG named by `TORU_SAMPLE_SHEET`, for looking at the drawing by eye.
-    /// Run with `--ignored`.
+    /// For looking at the drawing by eye: writes every shape to the PNG `TORU_SAMPLE_SHEET`
+    /// names. Run with `--ignored`.
     #[test]
     #[ignore]
     fn writes_a_sample_sheet() {
@@ -522,7 +505,6 @@ mod tests {
         underline.extend(point(730., 445.), false, PICTURE);
         underline.draw(&mut picture);
         highlighter.draw(&mut picture);
-        // Text in each bundled family, at the mockup's size and double it.
         let mut x = 20.;
         for font in crate::theme::FONTS.iter().step_by(2) {
             let mut label = text("Total", (x, 470.), 16.);
@@ -569,7 +551,6 @@ mod tests {
                 && (*x as f32) <= b.right() + 1.
                 && (*y as f32) <= b.bottom() + 1.
         }));
-        // The badge is a red disc with white digits in the middle.
         let mut picture = white(60, 60);
         badge(1, (30., 30.), 28.).draw(&mut picture);
         assert!(is_red(&picture, 20, 30));
@@ -578,14 +559,12 @@ mod tests {
             let p = picture.pixel(x, 30).unwrap();
             p.red() > 200 && p.green() > 200
         }));
-        // Capitals when asked.
         let lower = text("ab", (0., 0.), 20.).bounds().size.width;
         let mut upper = text("ab", (0., 0.), 20.);
         if let Shape::Text(t) = &mut upper.shape {
             t.upper = true;
         }
         assert!(upper.bounds().size.width > lower);
-        // A sticker fills with its colour, outlined in the second.
         let mut picture = white(80, 80);
         let mut hand = sticker(Sticker::Hand(0), (40., 40.), 64.);
         hand.style.second = Color::from_rgba8(0, 0, 255, 255);

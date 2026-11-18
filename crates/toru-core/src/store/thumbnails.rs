@@ -6,7 +6,7 @@ use rusqlite::params;
 use super::{CaptureId, Result, Store, encode_png};
 
 impl Store {
-    /// The card's thumbnail and recorded size, now that its picture is `edited`.
+    /// Also records `edited`'s size.
     pub fn replace_thumbnail(
         &self,
         id: CaptureId,
@@ -17,7 +17,7 @@ impl Store {
         self.write_thumbnail(id, edited, max_thumbnail_width)
     }
 
-    /// `replace_thumbnail` with the thumbnails already locked.
+    /// The caller holds the thumbnail lock.
     fn write_thumbnail(&self, id: CaptureId, pixels: &RgbaImage, max_width: u32) -> Result<()> {
         let png = thumbnail_png(pixels, max_width)?;
         self.publish(&self.thumbnail_path(id), &png)?;
@@ -28,13 +28,15 @@ impl Store {
         Ok(())
     }
 
-    /// Remakes the thumbnail from the full picture if it is narrower than `max_width` allows,
-    /// as thumbnails stored before the cards could grow are, or missing, as one that couldn't
-    /// follow an edit is (`store_edit`). Returns whether it did. A saved file whose size no
-    /// longer matches the record is left alone: it was changed outside Toru. A missing thumbnail
-    /// is made from the picture whatever its size, which the record then takes, since it can
-    /// only be missing after an edit, which may have failed to record a crop's new size.
-    pub fn remake_narrow_thumbnail(&self, id: CaptureId, max_width: u32) -> Result<bool> {
+    /// Narrow ones were stored before the cards could grow; a missing one couldn't follow an edit
+    /// (`store_edit`). A saved file whose size no longer matches the record is left alone: it was
+    /// changed outside Toru. A missing thumbnail is made whatever the picture's size, which the
+    /// record then takes, since the edit may have failed to record a crop's new size.
+    pub fn remake_narrow_or_missing_thumbnail(
+        &self,
+        id: CaptureId,
+        max_width: u32,
+    ) -> Result<bool> {
         let _writing = self.lock_thumbnails();
         let capture = self.capture(id)?;
         if !self.thumbnail_path(id).exists() {
@@ -64,7 +66,6 @@ impl Store {
     }
 }
 
-/// `pixels` as a thumbnail PNG no wider than `max_width`.
 pub(super) fn thumbnail_png(pixels: &RgbaImage, max_width: u32) -> Result<Vec<u8>> {
     let (width, height) = pixels.dimensions();
     let thumbnail_width = width.min(max_width);
@@ -97,13 +98,13 @@ mod tests {
             .unwrap();
         let width = || image::image_dimensions(store.thumbnail_path(id)).unwrap();
 
-        assert!(!store.remake_narrow_thumbnail(id, 10).unwrap());
-        assert!(store.remake_narrow_thumbnail(id, 30).unwrap());
+        assert!(!store.remake_narrow_or_missing_thumbnail(id, 10).unwrap());
+        assert!(store.remake_narrow_or_missing_thumbnail(id, 30).unwrap());
         assert_eq!(width(), (30, 15));
         // Never wider than the picture, so a thumbnail as wide as it is left alone.
-        assert!(store.remake_narrow_thumbnail(id, 100).unwrap());
+        assert!(store.remake_narrow_or_missing_thumbnail(id, 100).unwrap());
         assert_eq!(width(), (40, 20));
-        assert!(!store.remake_narrow_thumbnail(id, 100).unwrap());
+        assert!(!store.remake_narrow_or_missing_thumbnail(id, 100).unwrap());
     }
 
     #[test]
@@ -116,7 +117,7 @@ mod tests {
         pixels(8, 8).save(&path).unwrap();
         store.mark_saved(id, &path).unwrap();
 
-        assert!(!store.remake_narrow_thumbnail(id, 100).unwrap());
+        assert!(!store.remake_narrow_or_missing_thumbnail(id, 100).unwrap());
         assert_eq!(
             image::image_dimensions(store.thumbnail_path(id)).unwrap(),
             (THUMB, 1)

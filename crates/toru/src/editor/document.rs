@@ -1,11 +1,3 @@
-//! What the editor edits: the capture's pixels, untouched, plus the list of annotations laid
-//! over them and the crop that chooses what of the picture is kept, with undo and redo over
-//! both. `render` draws them into one bitmap with `tiny-skia`, and that same bitmap is what the
-//! canvas shows and what Save writes, so the screen and the file can't differ. The crop is a
-//! rectangle of the whole picture and the marks stay in the whole picture's pixels, so cropping,
-//! and undoing it, moves nothing. A picture edited before opens flattened, with the capture as
-//! it was taken held beside it for Reset edits.
-
 use std::sync::Arc;
 
 use gpui::{Point, Size, point, size};
@@ -18,9 +10,7 @@ use super::{
     text,
 };
 
-/// The undoable state: the picture under the marks, the marks, bottom to top, and the crop, if
-/// any, as a rectangle of the whole picture. Reset edits changes the picture, so undo can bring
-/// back one flattened earlier.
+/// Reset edits changes `base`, so undo can bring back one flattened earlier.
 #[derive(Clone)]
 pub struct Edits {
     base: Arc<Pixmap>,
@@ -38,7 +28,6 @@ impl PartialEq for Edits {
 }
 
 impl Edits {
-    /// Whether some text holds a character no font can draw, which the picture leaves blank.
     pub fn has_blanks(&self) -> bool {
         self.annotations
             .iter()
@@ -47,33 +36,28 @@ impl Edits {
     }
 }
 
-/// The result of the edits, taken for Copy, Save or going Back.
 #[derive(Clone)]
 pub struct Flattened {
     pub picture: Arc<Pixmap>,
-    /// The capture as it was taken, for Reset edits.
     pub original: Arc<Pixmap>,
-    /// Whether `picture` differs from `original`.
     pub is_edited: bool,
-    /// Whether `picture` hides some of the capture under blur, pixelate or solid boxes, so
-    /// saving it deletes the original.
+    /// Hides some of the capture under a block, so saving it deletes the original.
     pub redacted: bool,
     /// The state flattened, to say so once it is written.
     pub edits: Edits,
 }
 
 pub struct Document {
-    /// The capture as it was taken: what Reset edits returns to.
     original: Arc<Pixmap>,
     edits: History<Edits>,
-    /// The state the card's picture and thumbnail show, so Back writes only what changed;
-    /// `None` once writing one failed, as the card may show anything then.
+    /// What the card's picture and thumbnail show, so Back writes only what changed; `None` once
+    /// writing one failed, as the card may show anything then.
     written: Option<Edits>,
-    /// The state the user's saved file shows, if there is a file and it shows one of these.
+    /// `None` when there is no saved file or it shows none of these states.
     saved: Option<Edits>,
     /// The picture as opened, if it already hides some of the capture.
     redacted_base: Option<Arc<Pixmap>>,
-    /// The original was deleted when a picture hiding some of it was saved: no Reset edits.
+    /// Deleted when a picture hiding some of it was saved: no Reset edits.
     original_removed: bool,
 }
 
@@ -103,15 +87,12 @@ impl Document {
         }
     }
 
-    /// What the store says of the capture: whether the picture as opened already hides some of
-    /// it, and whether its original is gone.
     pub fn with_redaction(mut self, redaction: Redaction) -> Document {
         self.redacted_base = redaction.redacted.then(|| self.edits.get().base.clone());
         self.original_removed = redaction.original_removed;
         self
     }
 
-    /// Whether the picture as it stands hides some of the capture.
     fn is_redacted(&self) -> bool {
         let edits = self.edits.get();
         self.redacted_base
@@ -123,19 +104,14 @@ impl Document {
                 .any(|mark| matches!(mark.shape, Shape::Block(_)))
     }
 
-    /// Whether Reset edits can go back to the capture as it was taken.
     pub fn can_reset(&self) -> bool {
         !self.original_removed
     }
 
-    /// A save of `picture`, flattened from `saved` and hiding some of the capture, has deleted
-    /// the original. Reset edits is off, and undo can't go back past the save, so what was
-    /// hidden can't come back. If nothing has changed since, `picture` becomes the picture,
-    /// with no marks or crop over it, and `to_card` says the card shows it too (Save, not Save
-    /// as). If something has, the saved marks go into the whole picture and what came since
-    /// stays over it: a mark changed since is added again on top, its saved self staying in
-    /// the picture. After a Reset since, the saved picture is taken as it is, and what came
-    /// since goes.
+    /// Saving `picture`, which hides some of the capture, deleted the original, so undo can't go
+    /// back past the save. Unchanged since, `picture` becomes the picture, and the card's too if
+    /// `to_card` (Save, not Save as); else the saved marks go into the picture under what came
+    /// since. After a Reset since, the saved picture is taken as it is.
     pub fn forget_original(&mut self, picture: Arc<Pixmap>, saved: &Edits, to_card: bool) {
         self.original_removed = true;
         let present = self.edits.get().clone();
@@ -173,7 +149,6 @@ impl Document {
         &self.edits.get().base
     }
 
-    /// The width of what is shown and saved: the crop's, or the whole picture's.
     pub fn width(&self) -> u32 {
         self.crop().width()
     }
@@ -182,29 +157,26 @@ impl Document {
         self.crop().height()
     }
 
-    /// The whole picture, as captured.
     pub fn whole(&self) -> IntRect {
         IntRect::from_xywh(0, 0, self.base().width(), self.base().height())
             .expect("a pixmap is at least one pixel")
     }
 
-    /// The whole picture's size in picture pixels: what a mark may be moved within, crop or no.
+    /// What a mark may be moved within, crop or no.
     pub fn size(&self) -> Size<f32> {
         size(self.base().width() as f32, self.base().height() as f32)
     }
 
-    /// The part of the picture that is kept: the crop, or the whole picture without one.
+    /// The whole picture when there is no crop.
     pub fn crop(&self) -> IntRect {
         self.edits.get().crop.unwrap_or_else(|| self.whole())
     }
 
-    /// Whether a crop is set.
     pub fn is_cropped(&self) -> bool {
         self.edits.get().crop.is_some()
     }
 
-    /// Crops to `crop`, or uncrops with `None`, as one undoable step. The rectangle is held
-    /// within the picture; one that covers it all is no crop. Returns whether anything changed.
+    /// Held within the picture; one that covers it all is no crop.
     pub fn set_crop(&mut self, crop: Option<IntRect>) -> bool {
         let crop = crop
             .and_then(|crop| crop.intersect(&self.whole()))
@@ -216,7 +188,6 @@ impl Document {
         true
     }
 
-    /// Whether the picture differs from the capture as it was taken.
     pub fn is_edited(&self) -> bool {
         let edits = self.edits.get();
         !edits.annotations.is_empty()
@@ -224,38 +195,30 @@ impl Document {
             || !Arc::ptr_eq(&edits.base, &self.original)
     }
 
-    /// Whether the card's picture shows something other than this.
+    /// The card's picture shows something other than this.
     pub fn is_unwritten(&self) -> bool {
         self.written.as_ref() != Some(self.edits.get())
     }
 
-    /// Whether the user's saved file shows exactly this.
     pub fn is_saved(&self) -> bool {
         self.saved.as_ref() == Some(self.edits.get())
     }
 
-    /// `edits` have been written to the user's file, and so to the card.
     pub fn mark_saved(&mut self, edits: Edits) {
         self.written = Some(edits.clone());
         self.saved = Some(edits);
     }
 
-    /// The card shows `edits`, though no file does: a redacted Save stored them on the card,
-    /// then couldn't write the file.
     pub fn mark_written(&mut self, edits: Edits) {
         self.written = Some(edits);
     }
 
-    /// Writing `edits` to the card failed, so if they are still what counts as written, the
-    /// next Back writes whatever is there.
     pub fn write_failed(&mut self, edits: &Edits) {
         if self.written.as_ref() == Some(edits) {
             self.written = None;
         }
     }
 
-    /// The picture for the card if it shows something else, which from then on counts as
-    /// written: Back, and quitting with the editor open, give the card this.
     pub fn take_unwritten(&mut self) -> Option<Flattened> {
         if !self.is_unwritten() {
             return None;
@@ -265,7 +228,6 @@ impl Document {
         Some(flattened)
     }
 
-    /// The picture as it stands.
     pub fn flatten(&self) -> Flattened {
         Flattened {
             picture: Arc::new(self.render()),
@@ -276,19 +238,16 @@ impl Document {
         }
     }
 
-    /// The marks on the picture, bottom to top.
+    /// Bottom to top.
     pub fn annotations(&self) -> &[Annotation] {
         &self.edits.get().annotations
     }
 
-    /// Puts `annotation` on top, as one undoable step. Returns its index.
     pub fn add(&mut self, annotation: Annotation) -> usize {
         self.edits.edit(|edits| edits.annotations.push(annotation));
         self.annotations().len() - 1
     }
 
-    /// Replaces the mark at `index`, as one undoable step. Returns whether anything changed:
-    /// nothing happens if the mark is already so.
     pub fn replace(&mut self, index: usize, annotation: Annotation) -> bool {
         if self
             .annotations()
@@ -302,8 +261,7 @@ impl Document {
         true
     }
 
-    /// Replaces the mark at `index` within the last undo step, for the later moves of a slider
-    /// drag whose first move was a `replace`.
+    /// Within the last undo step, for a slider drag's moves after its first `replace`.
     pub fn amend(&mut self, index: usize, annotation: Annotation) {
         if index < self.annotations().len() {
             self.edits
@@ -311,8 +269,8 @@ impl Document {
         }
     }
 
-    /// Takes the mark at `index` off: as one undoable step, or within the last step if
-    /// `amend`, so an eraser drag that takes several marks off is undone as one.
+    /// `amend` folds it into the last step, so an eraser drag that takes several marks off is
+    /// undone as one.
     pub fn remove(&mut self, index: usize, amend: bool) {
         if index >= self.annotations().len() {
             return;
@@ -327,7 +285,7 @@ impl Document {
         }
     }
 
-    /// The topmost mark within `tolerance` picture pixels of `at`, as its index.
+    /// The topmost mark's index. `tolerance` is in picture pixels.
     pub fn hit_test(&self, at: Point<f32>, tolerance: f32) -> Option<usize> {
         self.annotations()
             .iter()
@@ -350,8 +308,6 @@ impl Document {
         self.edits.redo()
     }
 
-    /// Reset edits: back to the capture as it was taken, with every annotation and the crop
-    /// off, as one undoable step. `false` when it is already so.
     pub fn reset(&mut self) -> bool {
         if !self.is_edited() || !self.can_reset() {
             return false;
@@ -367,21 +323,16 @@ impl Document {
         true
     }
 
-    /// The picture with its annotations, within the crop, as the canvas shows it and Save
-    /// writes it.
+    /// The canvas shows the same bitmap Save writes, so the screen and the file can't differ.
     pub fn render(&self) -> Pixmap {
         self.render_region(self.crop(), None, None)
             .expect("the crop is within the picture")
             .1
     }
 
-    /// The pixels in `region` of the whole picture with its marks, as a picture of their own:
-    /// the crop for the canvas, a mark's surroundings so a drag only redraws where the mark is,
-    /// or the whole picture for the Crop tool. For a drag's preview, the mark at `index` is left
-    /// out, or drawn as `preview` in its place, under the same marks as before, so a mark being
-    /// moved or resized keeps its depth; a `preview` with no `index` is a mark being drawn, on
-    /// top. Committing the preview to the document renders the same pixels, so nothing shifts
-    /// on release. `None` if the region misses the picture.
+    /// The mark at `index` is left out, or drawn as `preview` in its place, so a mark being
+    /// moved or resized keeps its depth; a `preview` with no `index` goes on top. Committing the
+    /// preview renders the same pixels, so nothing shifts on release.
     pub fn render_region(
         &self,
         region: IntRect,
@@ -406,11 +357,8 @@ impl Document {
         Some((region, picture))
     }
 
-    /// Draws the marks, bottom to top, on `picture`, whose top-left pixel is picture pixel
-    /// `origin`, with the drag's preview as `render_region` describes. A block reads the base
-    /// with the blocks under it applied, so a block over another shows only what the first
-    /// left and adding a block never reveals more; that base is built up, over the whole
-    /// picture, only when a second block needs it.
+    /// A block reads the base with the blocks under it applied, built up over the whole picture
+    /// only when a second block needs it.
     fn draw_marks(
         &self,
         picture: &mut Pixmap,
@@ -480,7 +428,6 @@ mod tests {
         assert_eq!(document.render().data(), base.data());
     }
 
-    /// The crop's pixels with a drag's preview, as the canvas shows them.
     fn render_with(
         document: &Document,
         index: Option<usize>,
@@ -560,7 +507,6 @@ mod tests {
         assert_eq!(document.annotations()[0].points[0].y, 10.);
         assert!(document.redo());
         assert_eq!(document.annotations()[0].points[0].y, 8.);
-        // Amending past the end does nothing.
         document.amend(3, red_line(0., 40., 1.));
         assert_eq!(document.annotations().len(), 1);
     }
@@ -674,7 +620,6 @@ mod tests {
         }
         assert!(cropped.pixels().iter().all(|p| p.red() == p.green()));
         assert!(whole.pixel(32, 10).unwrap().red() > 200);
-        // The mark stays where it was, in the whole picture's pixels.
         assert_eq!(document.annotations()[0].points[0].y, 10.);
         // The same crop again, or one that is held to the picture's edge, changes nothing new.
         assert!(!document.set_crop(Some(crop)));
@@ -689,7 +634,6 @@ mod tests {
         assert!(document.reset());
         assert!(!document.is_cropped());
         assert!(!document.is_edited());
-        // A crop alone is an edit.
         let mut just_cropped = Document::new(base);
         assert!(just_cropped.set_crop(Some(crop)));
         assert!(just_cropped.is_edited());
@@ -708,7 +652,6 @@ mod tests {
         assert_eq!(document.annotations()[0].points[0].y, 10.);
         assert!(document.undo());
         assert_eq!(document.annotations().len(), 3);
-        // Removing what isn't there does nothing.
         document.remove(7, true);
         assert_eq!(document.annotations().len(), 3);
     }
@@ -731,7 +674,6 @@ mod tests {
                 );
             }
             assert!(whole.pixel(5, 30).unwrap().red() > 200);
-            // A region of the block comes out the same as the whole, cells and all.
             let (region, part) = document
                 .render_region(IntRect::from_xywh(30, 25, 40, 30).unwrap(), None, None)
                 .unwrap();
@@ -831,7 +773,6 @@ mod tests {
         assert!(document.annotations().is_empty());
         assert_eq!((document.width(), document.height()), (90, 60));
         assert_eq!(document.render().pixel(40, 30).unwrap(), blocked);
-        // The card and the file show it already, and it still counts as hiding something.
         assert!(document.is_saved());
         assert!(!document.is_unwritten());
         assert!(document.flatten().redacted);
@@ -879,7 +820,6 @@ mod tests {
         assert!(!document.can_reset());
         let back = document.take_unwritten().unwrap();
         assert!(back.redacted);
-        // Taking the moved block off still leaves the saved one.
         document.remove(0, false);
         assert_eq!(document.render().pixel(25, 25).unwrap(), hidden);
     }
@@ -908,7 +848,6 @@ mod tests {
 
     #[test]
     fn saved_and_unwritten_follow_the_edits() {
-        // A saved capture opens showing what its file shows.
         let mut document = Document::opened(plain(40, 20, 0), None, true);
         assert!(document.is_saved());
         assert!(!document.is_unwritten());
@@ -917,7 +856,6 @@ mod tests {
         assert!(!document.is_saved());
         assert!(document.is_unwritten());
 
-        // Saved, then changed, then undone back to what was saved.
         let flattened = document.flatten();
         assert!(flattened.is_edited);
         document.mark_saved(flattened.edits);
@@ -965,8 +903,7 @@ mod tests {
     #[test]
     fn the_flattened_picture_is_cropped_and_what_a_block_covers_is_gone() {
         use super::super::block::BlockKind;
-        // One pixel of white on black and the next of black on white, so any kind of block
-        // leaves neither behind.
+        // White and black pixels in turn, which no kind of block leaves behind.
         let image = RgbaImage::from_fn(96, 64, |x, y| {
             let on = if (x + y) % 2 == 0 { 255 } else { 0 };
             xcap::image::Rgba([on, on, on, 255])
@@ -988,12 +925,10 @@ mod tests {
                     );
                 }
             }
-            // Outside the block the picture is as it was.
             assert_eq!(written.get_pixel(4, 3).0, [0, 0, 0, 255]);
         }
     }
 
-    /// A blue block of `kind` dragged from `from` to `to` on a 96×64 picture.
     fn block(kind: super::super::block::BlockKind, from: (f32, f32), to: (f32, f32)) -> Annotation {
         use super::super::annotation::{Shape, Style};
         use super::super::tools::{LineStyle, Width};
@@ -1022,12 +957,10 @@ mod tests {
         let base = super::super::block::tests::text_like(96, 64);
         let is_blue = |p: tiny_skia::PremultipliedColorU8| p.blue() == 255 && p.red() == 0;
         for kind in [BlockKind::Blur, BlockKind::Pixelate] {
-            // Solid over the text, then Blur or Pixelate over part of the solid: nothing of
-            // the text comes back, the block is solid blue through and through.
+            // Nothing of the text under the solid comes back through the block over it.
             let mut document = Document::new(base.clone());
             document.add(block(BlockKind::Solid, (0., 0.), (96., 64.)));
             let over = block(kind, (10., 10.), (80., 50.));
-            // As a preview, on top, and committed.
             let preview = render_with(&document, None, Some(&over));
             assert!(
                 preview.pixels().iter().all(|p| is_blue(*p)),
@@ -1036,7 +969,6 @@ mod tests {
             let index = document.add(over.clone());
             let whole = document.render();
             assert!(whole.pixels().iter().all(|p| is_blue(*p)), "{kind:?}");
-            // A region of the second block comes out the same as the whole.
             let (region, part) = document
                 .render_region(IntRect::from_xywh(30, 25, 40, 30).unwrap(), None, None)
                 .unwrap();
@@ -1045,7 +977,6 @@ mod tests {
                     assert_eq!(part.pixel(x, y), whole.pixel(x + 30, y + 25), "{kind:?}");
                 }
             }
-            // The same block moved as a preview at its depth reads the solid too.
             let moved = block(kind, (12., 12.), (82., 52.));
             let dragged = render_with(&document, Some(index), Some(&moved));
             assert!(
@@ -1053,10 +984,8 @@ mod tests {
                 "{kind:?} dragged"
             );
         }
-        // A small Pixelate over a large one shows the large one's cells, not finer ones. Both
-        // have 8px cells, the large block's anchored at (0, 0) and the small one's at (8, 8),
-        // so they share a grid and every cell the small block averages is already one colour:
-        // its pixels stay what the large one made them.
+        // Both have 8px cells on one grid, the small block's anchored at (8, 8), so every cell it
+        // averages is already one colour and nothing finer than the large one's cells shows.
         let mut document = Document::new(base.clone());
         document.add(block(BlockKind::Pixelate, (0., 0.), (96., 32.)));
         let large = document.render();

@@ -1,5 +1,4 @@
-//! `.toast`: a message above the bottom bar, read out by screen readers as a polite live region.
-//! It appears and disappears without motion, so a reduced-motion setting has nothing to turn off.
+//! `.toast`. It appears without motion, so a reduced-motion setting has nothing to turn off.
 
 use gpui::{App, Role, SharedString, Window, accesskit::Live, div, prelude::*, px};
 
@@ -9,7 +8,6 @@ use crate::theme::{ActiveTheme, ThemedText};
 #[derive(IntoElement, Clone)]
 pub struct Toast {
     message: SharedString,
-    /// Something went wrong, so the message stands alone without the check mark.
     failed: bool,
 }
 
@@ -35,9 +33,8 @@ impl RenderOnce for Toast {
         let c = &theme.colors;
         let border = theme.borders.toast;
         let font = theme.type_scale.toast;
-        // The row spans the window so the toast can sit at its centre; it takes no clicks. The
-        // toast itself lies over the gallery, so a press on it stops there rather than reaching
-        // a card beneath, while the wheel still scrolls the list.
+        // The row spans the window to centre the toast and takes no clicks. The toast lies over
+        // the gallery: a press on it must not reach a card beneath, but the wheel still scrolls.
         div()
             .absolute()
             .left_0()

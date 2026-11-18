@@ -1,11 +1,3 @@
-//! A popup menu under a button, such as a card's `⋯` or the toolbar's Delayed. The mockups show no
-//! open menu, so it borrows the editor pill's surface, border and shadow, and the corner buttons'
-//! item size. The arrow keys and Tab move between items, Enter or Space picks one, Esc closes.
-//!
-//! Besides plain items, which close the menu when picked, a menu can hold choices: one of a group
-//! that stays open when picked, so several can be set in one visit, with a check mark on the
-//! chosen one so the choice is told apart by more than colour. Headers name the groups.
-
 use std::{cell::Cell, rc::Rc, sync::Arc};
 
 use gpui::{
@@ -15,21 +7,22 @@ use gpui::{
 };
 
 use super::{
-    Button, Handler, Icon, Readable, RingFocus, button::MenuTrigger, focus_ring, keyboard_focus,
-    keyed_focus, menu_opened,
+    Button, Icon, PressHandler, Readable, RingFocus, button::MenuTrigger, focus_ring,
+    keyboard_focus, keyed_focus, menu_opened,
 };
 use crate::theme::{ActiveTheme, ThemedText};
 
 actions!(menu, [NextItem, PreviousItem]);
 
-/// The key context of an open menu's panel, which `ui::init` binds Tab in.
+/// `ui::init` binds Tab in it.
 pub const KEY_CONTEXT: &str = "Menu";
 
 const ITEM_HEIGHT: f32 = 32.;
 const HEADER_HEIGHT: f32 = 26.;
 const DIVIDER_MARGIN: f32 = 4.;
 const PANEL_PADDING: f32 = 4.;
-/// The check mark's column, in front of every item of a menu that has choices.
+/// In front of every item of a menu that has choices. The check mark tells the chosen one apart
+/// by more than colour.
 const CHECK_SLOT: f32 = 20.;
 /// The group an item and its check mark share, so the mark recolours with the hovered item.
 const HOVER_GROUP: &str = "menu-item";
@@ -39,7 +32,7 @@ enum Row {
         label: SharedString,
         /// `Some` for a choice, with whether it is the chosen one.
         selected: Option<bool>,
-        handler: Handler,
+        handler: PressHandler,
     },
     Header(SharedString),
     Divider,
@@ -51,13 +44,12 @@ pub struct Menu {
     label: SharedString,
     trigger: Button,
     rows: Vec<Row>,
-    /// Line the panel up with the trigger's right edge, for buttons near the window's right side.
     align_right: bool,
 }
 
 impl Menu {
-    /// `label` names the menu for screen readers; `trigger` opens it and its click is replaced,
-    /// unless it is a split button, whose sub opens the menu instead (`Button::split`).
+    /// `trigger`'s click is replaced, unless it is a split button, whose sub opens the menu
+    /// instead (`Button::split`).
     pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>, trigger: Button) -> Menu {
         Menu {
             id: id.into(),
@@ -68,7 +60,7 @@ impl Menu {
         }
     }
 
-    /// An action; picking it closes the menu.
+    /// Picking it closes the menu.
     pub fn item(
         mut self,
         label: impl Into<SharedString>,
@@ -82,7 +74,7 @@ impl Menu {
         self
     }
 
-    /// One of a group of choices; picking it leaves the menu open.
+    /// Picking it leaves the menu open, so several can be set in one visit.
     pub fn choice(
         mut self,
         label: impl Into<SharedString>,
@@ -97,7 +89,6 @@ impl Menu {
         self
     }
 
-    /// Names the group of rows that follows.
     pub fn header(mut self, label: impl Into<SharedString>) -> Menu {
         self.rows.push(Row::Header(label.into()));
         self
@@ -114,12 +105,10 @@ impl Menu {
     }
 }
 
-/// Which item has keyboard focus, if any.
 fn focused_item(items: &[FocusHandle], window: &Window) -> Option<usize> {
     items.iter().position(|focus| focus.is_focused(window))
 }
 
-/// Tab and Shift+Tab: moves focus `step` items on from the focused one, wrapping at either end.
 fn step_focus(items: &[FocusHandle], step: isize, window: &mut Window, cx: &mut App) {
     let count = items.len() as isize;
     let current = focused_item(items, window).unwrap_or(0) as isize;
@@ -178,7 +167,7 @@ impl RenderOnce for Menu {
             }
         });
 
-        let toggle: Handler = Rc::new({
+        let toggle: PressHandler = Rc::new({
             let close = close.clone();
             let set_open = set_open.clone();
             let first = item_focus.first().cloned();
@@ -222,6 +211,8 @@ impl RenderOnce for Menu {
             }
         };
 
+        // The mockups show no open menu, so it borrows the editor pill's surface, border and
+        // shadow, and the corner buttons' item size.
         let font = theme.type_scale.corner;
         let header_font = theme.type_scale.label;
         let hair = theme.borders.hair;

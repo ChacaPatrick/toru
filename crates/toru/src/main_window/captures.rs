@@ -1,10 +1,3 @@
-//! The capture pipeline: a frame comes in through `add_capture`, gets its name, goes into the
-//! store, becomes a card and, when the setting says so, lands on the clipboard.
-//!
-//! Slow work stays off the main thread, and everything that writes runs on one queue
-//! (`enqueue`): names are chosen one at a time so two captures can't get the same `_2`, and
-//! clipboard writes can't overlap and mix formats (`docs/spikes.md` §1.4).
-
 use std::{
     error::Error,
     fs,
@@ -55,8 +48,8 @@ const EDITOR_KEPT_COPIED: &str =
 pub(super) type CopyResult = Result<(), Box<dyn Error + Send + Sync>>;
 
 impl MainWindow {
-    /// Where every capture enters the app, whichever way it was taken. Until it is stored,
-    /// Windows' shutdown can store it instead (`closing`), without the clipboard.
+    /// Until it is stored, Windows' shutdown can store it instead (`closing`), without the
+    /// clipboard.
     pub fn add_capture(&mut self, image: RgbaImage, mode: CaptureMode, cx: &mut Context<Self>) {
         let taken_at = platform::local_now();
         // A capture just after midnight mustn't wait for the next check to land in the new day.
@@ -91,12 +84,10 @@ impl MainWindow {
             if let Ok(card) = stored {
                 edits_kept = this
                     .update(cx, |this, cx| {
-                        // "Open editor after capture" (DESIGN.md §5), once the card exists. A
-                        // delayed capture minimized Toru for its countdown, and the editor is no
-                        // use in the taskbar, so the window comes back. An editor with
-                        // annotations on its picture, which a shortcut's capture would otherwise
-                        // replace, stays and the new capture waits in the gallery, which the
-                        // toast below says.
+                        // A delayed capture minimized Toru for its countdown, and the editor is
+                        // no use in the taskbar, so the window comes back. An editor with
+                        // annotations, which the new picture would replace, stays, and the
+                        // capture waits in the gallery.
                         let id = this.show_card(card, cx).filter(|_| open_editor);
                         let edits_kept = id.is_some() && this.editor_has_edits(cx);
                         if let Some(id) = id {
@@ -136,10 +127,9 @@ impl MainWindow {
         });
     }
 
-    /// Captures the chosen display. Toru's own windows are taken out of what captures see for the
-    /// moment it takes, without moving, so nothing flickers and there's nothing to bring back.
-    /// `display` is a shortcut's own display (DESIGN.md §3); `None` captures the one the
-    /// toolbar's picker shows.
+    /// Toru's own windows are taken out of what captures see for the moment, without moving, so
+    /// nothing flickers. `display` is a shortcut's own display (DESIGN.md §3); `None` captures
+    /// the one the toolbar's picker shows.
     pub(super) fn capture_full_screen(
         &mut self,
         display: Option<DisplayId>,
@@ -188,8 +178,7 @@ impl MainWindow {
         .detach();
     }
 
-    /// A card's Copy: the full image, read back from where it is kept, on the clipboard. Where
-    /// that is gets asked when the job runs, since a Save queued ahead of it moves the image.
+    /// The image's path is asked for when the job runs, since a Save queued ahead of it moves it.
     pub(super) fn copy_card(&mut self, card: usize, capture: CaptureId, cx: &mut Context<Self>) {
         let store = self.store.clone();
         self.enqueue(cx, async move |this, cx| {
@@ -214,7 +203,6 @@ impl MainWindow {
         });
     }
 
-    /// Takes a typed name to the store, which refuses anything invalid or already used.
     pub(super) fn rename_capture(
         &mut self,
         capture: CaptureId,
@@ -268,7 +256,6 @@ impl MainWindow {
         }
     }
 
-    /// Queues a change to the store that only needs mentioning if it fails.
     pub(super) fn write_store(
         &mut self,
         failure: impl Into<SharedString>,
@@ -300,9 +287,8 @@ impl MainWindow {
         self.report_failure(REGION_FAILED, cx);
     }
 
-    /// Says something went wrong. A toast only lasts two seconds and would run out unseen with
-    /// Toru minimized or behind another window, so there the message waits for Toru to come
-    /// back, and the taskbar button flashes to say something is waiting.
+    /// A toast would run out unseen with Toru minimized or behind another window, so there the
+    /// message waits for Toru to come back, and the taskbar button flashes.
     pub(super) fn report_failure(
         &mut self,
         failure: impl Into<SharedString>,
@@ -332,8 +318,9 @@ impl MainWindow {
         })
     }
 
-    /// Runs `job` once everything queued before it has finished. Quitting waits for the queue
-    /// to run dry (`closing`).
+    /// Everything that writes runs on this one queue, so names are chosen one at a time (two
+    /// captures can't get the same `_2`) and clipboard writes can't overlap and mix formats
+    /// (`docs/spikes.md` §1.4). Quitting waits for it to run dry.
     pub(super) fn enqueue(
         &mut self,
         cx: &mut Context<Self>,
@@ -350,7 +337,7 @@ impl MainWindow {
         }));
     }
 
-    /// Adds the card to the session group and returns its id, or `None` if the window has gone.
+    /// `None` if the window has gone.
     fn show_card(&mut self, card: NewCard, cx: &mut Context<Self>) -> Option<usize> {
         let gallery = self.gallery.clone();
         self.window
@@ -361,8 +348,7 @@ impl MainWindow {
     }
 }
 
-/// What went wrong with a capture, once it has been stored, auto-saved if the setting says so and,
-/// if `copied` isn't `None`, copied. An auto-save only runs on a stored capture.
+/// An auto-save only runs on a stored capture.
 fn capture_failure(stored: bool, auto_saved: bool, copied: Option<bool>) -> Option<&'static str> {
     match (stored, auto_saved, copied) {
         (false, _, Some(false)) => Some(STORE_AND_COPY_FAILED),
@@ -373,9 +359,7 @@ fn capture_failure(stored: bool, auto_saved: bool, copied: Option<bool>) -> Opti
     }
 }
 
-/// The one toast for a capture that went well, if it needs one: that it was copied, and that it
-/// waits in the gallery because the editor's edits were kept. Both in one toast, since a second
-/// would replace the first before it could be read.
+/// One toast for both, since a second would replace the first before it could be read.
 fn capture_message(
     edits_kept: bool,
     copied: bool,
@@ -389,8 +373,8 @@ fn capture_message(
     }
 }
 
-/// What a capture's failure toast says. With the editor's edits kept, the capture is waiting in
-/// the gallery, and as the failure takes the place of that toast it says so too.
+/// With the editor's edits kept, this takes the place of the toast saying the capture waits in
+/// the gallery, so it says so too.
 fn failure_message(failure: &'static str, edits_kept: bool) -> SharedString {
     if edits_kept {
         format!("Capture added to the gallery, but: {failure} Your edits here are kept.").into()
@@ -399,7 +383,6 @@ fn failure_message(failure: &'static str, edits_kept: bool) -> SharedString {
     }
 }
 
-/// The one toast for everything that failed while nobody could see it.
 fn missed_failures_message(missed: &[SharedString]) -> Option<SharedString> {
     match missed {
         [] => None,
@@ -408,7 +391,7 @@ fn missed_failures_message(missed: &[SharedString]) -> Option<SharedString> {
     }
 }
 
-/// A capture on its way into the store, held for the quit handler until the queue starts it.
+/// Held for the quit handler until the queue starts it.
 struct NewCapture {
     image: RgbaImage,
     shot: Shot,
@@ -417,7 +400,6 @@ struct NewCapture {
 }
 
 impl NewCapture {
-    /// Names, stores and, if the setting says so, auto-saves the capture, handing the image back.
     fn store(
         self,
         store: &Store,
@@ -445,11 +427,10 @@ struct Shot {
     thumbnail_width: u32,
 }
 
-/// Where the Auto-save setting sends a new capture. No folder means Windows can't say where
-/// Pictures is, which fails like any other unreachable folder.
 struct AutoSave {
+    /// `None`: Windows can't say where Pictures is, which fails like any unreachable folder.
     folder: Option<PathBuf>,
-    /// The user picked this folder; see `check_chosen_folder`.
+    /// The user picked this folder (`check_chosen_folder`).
     chosen: bool,
     format: SaveFormat,
 }
@@ -464,7 +445,6 @@ pub(super) fn check_chosen_folder(folder: &Path, chosen: bool) -> StoreResult<()
     Ok(())
 }
 
-/// Saves a capture the moment it is stored. On failure the capture stays stored and unsaved.
 fn auto_save_card(store: &Store, card: &mut NewCard, target: AutoSave) -> StoreResult<()> {
     let folder = target
         .folder
@@ -477,8 +457,7 @@ fn auto_save_card(store: &Store, card: &mut NewCard, target: AutoSave) -> StoreR
     Ok(())
 }
 
-/// What to tell the user about a name the store turned down, shown on the card. `None` for a
-/// failure that has nothing to do with the name.
+/// `None` for a failure that has nothing to do with the name.
 fn refusal(error: &StoreError) -> Option<String> {
     match error {
         StoreError::InvalidName(NameError::Empty) => Some("Type a name.".to_string()),
@@ -488,8 +467,8 @@ fn refusal(error: &StoreError) -> Option<String> {
     }
 }
 
-/// Names the capture and stores it. Must only run from the queue, or once it has stopped at
-/// Windows' shutdown, so that the name it picks can't be taken before the capture is in the store.
+/// Must only run from the queue, or once it has stopped at Windows' shutdown, so that the name
+/// it picks can't be taken before the capture is in the store.
 fn store_capture(
     store: &Store,
     session: SessionId,
@@ -628,8 +607,6 @@ pub(super) mod tests {
         assert_eq!(capture_failure(true, false, Some(false)), Some(COPY_FAILED));
     }
 
-    /// The editor keeping its edits and the copy are said in one toast, so neither replaces the
-    /// other before it can be read.
     #[test]
     fn a_kept_editor_and_a_copy_share_one_toast() {
         let copied = "Copied to clipboard";
@@ -642,7 +619,6 @@ pub(super) mod tests {
         assert_eq!(capture_message(false, false, copied), None);
     }
 
-    /// A failure that replaces the gallery toast still says where the capture went.
     #[test]
     fn a_failure_with_kept_edits_still_mentions_the_gallery() {
         assert_eq!(failure_message(COPY_FAILED, false), COPY_FAILED);

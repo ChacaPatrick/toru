@@ -1,26 +1,14 @@
-//! What a release says about itself to a running Toru (`docs/PLAN.md` 11.2 and 11.3): its
-//! version, where its installer is, and its patch notes. The release workflow publishes this as
-//! `toru-update.txt`, UTF-8 text:
-//!
-//! ```text
-//! version: 0.2.0
-//! installer: https://github.com/ChacaPatrick/toru/releases/download/v0.2.0/Toru-0.2.0-setup.exe
-//!
-//! ## Fixed
-//! - A line of the notes
-//! ```
-//!
-//! The header is `key: value` lines up to the first blank line, and everything after it is the
-//! notes. Keys this version doesn't know are skipped, so a later release can add some.
+//! The manifest each release publishes as `toru-update.txt` (`docs/PLAN.md` 11.2 and 11.3):
+//! `key: value` lines up to the first blank line, then the patch notes. Unknown keys are skipped,
+//! so a later release can add some.
 
 use std::fmt;
 
-/// A version as releases number them: `x.y.z`, compared number by number.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Version(pub [u32; 3]);
 
 impl Version {
-    /// Three numbers of digits only, split by dots. Anything else isn't a version.
+    /// Exactly `x.y.z`, digits only.
     pub fn parse(text: &str) -> Option<Version> {
         let mut parts = text.split('.');
         let mut numbers = [0; 3];
@@ -45,14 +33,12 @@ impl fmt::Display for Version {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
     pub version: Version,
-    /// The installer's URL.
     pub installer: String,
-    /// The patch notes, without the blank lines around them. May be empty.
+    /// May be empty.
     pub notes: String,
 }
 
 impl Manifest {
-    /// `None` when the version or the installer is missing or the version isn't one.
     pub fn parse(text: &str) -> Option<Manifest> {
         // Some editors put a byte order mark first, which would hide the first key.
         let mut lines = text.trim_start_matches('\u{feff}').lines();
@@ -79,7 +65,6 @@ impl Manifest {
     }
 }
 
-/// A line of the patch notes, as it is shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoteLine<'a> {
     Heading(&'a str),
@@ -87,7 +72,7 @@ pub enum NoteLine<'a> {
     Text(&'a str),
 }
 
-/// The notes line by line, without the blank ones: `## ` starts a heading and `- ` a bullet.
+/// Skips blank lines. `## ` starts a heading and `- ` a bullet.
 pub fn note_lines(notes: &str) -> Vec<NoteLine<'_>> {
     notes
         .lines()

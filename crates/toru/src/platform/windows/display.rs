@@ -10,7 +10,7 @@ struct Rect {
     bottom: i32,
 }
 
-/// `MONITORINFOEXW`: `MONITORINFO` and the adapter's device name, `\\.\DISPLAY1`.
+/// `MONITORINFOEXW`. `device` is the adapter's name, `\\.\DISPLAY1`.
 #[repr(C)]
 struct MonitorInfo {
     size: u32,
@@ -62,8 +62,7 @@ unsafe extern "system" {
     ) -> i32;
 }
 
-/// The display's size in physical pixels, which is what a capture of it has. GPUI's
-/// `DisplayId` is the `HMONITOR`, and `GetMonitorInfoW` answers in physical pixels for a
+/// GPUI's `DisplayId` is the `HMONITOR`, and `GetMonitorInfoW` answers in physical pixels for a
 /// per-monitor-DPI-aware process, which GPUI's are.
 pub fn display_pixels(display: &dyn PlatformDisplay) -> Option<(u32, u32)> {
     let info = monitor_info(display)?;
@@ -79,13 +78,12 @@ fn monitor_info(display: &dyn PlatformDisplay) -> Option<MonitorInfo> {
     (unsafe { GetMonitorInfoW(monitor, &mut info) } != 0).then_some(info)
 }
 
-/// The monitor's device interface path, as `EnumDisplayDevices` gives it with
-/// `EDD_GET_DEVICE_INTERFACE_NAME`: `\\?\DISPLAY#GSM5B09#5&2d9b2c1f&0&UID4352#{...}`. It
-/// names the monitor's make and model and the port it is on, so it is the same after a
-/// restart or an unplugging, and a different monitor on the same port gets its own; the
-/// same monitor moved to another port counts as new. GPUI's `uuid` hashes only the adapter
-/// name, `\\.\DISPLAY2`, which whichever monitor is plugged in there inherits. `None` for a
-/// monitor Windows can't name, as a remote desktop's.
+/// The monitor's device interface path, `\\?\DISPLAY#GSM5B09#5&2d9b2c1f&0&UID4352#{...}`. It
+/// names the monitor's make and model and the port it is on, so it is the same after a restart
+/// or an unplugging, and a different monitor on the same port gets its own; the same monitor
+/// moved to another port counts as new. GPUI's `uuid` hashes only the adapter name,
+/// `\\.\DISPLAY2`, which whichever monitor is plugged in there inherits. `None` for a monitor
+/// Windows can't name, as a remote desktop's.
 pub fn display_key(display: &dyn PlatformDisplay) -> Option<String> {
     let info = monitor_info(display)?;
     let mut device = DisplayDevice {
