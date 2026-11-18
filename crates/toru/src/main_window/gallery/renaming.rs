@@ -5,7 +5,7 @@ use toru_core::store::CaptureId;
 use super::Gallery;
 
 impl Gallery {
-    /// The store took the name. Returns whether the capture is saved, as its file keeps its name.
+    /// Returns whether the capture is saved, as its file keeps its name.
     pub fn accept_name(
         &mut self,
         capture: CaptureId,
@@ -22,8 +22,8 @@ impl Gallery {
         saved
     }
 
-    /// Says on the card why the store turned the name down. If the user has already left the
-    /// field there is nothing more to type, so the name goes back at once.
+    /// If the user has already left the field there is nothing more to type, so the name goes
+    /// back at once.
     pub fn refuse_name(
         &mut self,
         capture: CaptureId,
@@ -59,7 +59,6 @@ impl Gallery {
         }
     }
 
-    /// Why the card with the name field `name` has its name refused, if it does.
     pub fn name_error_of(&self, name: &Entity<InputState>) -> Option<SharedString> {
         self.groups
             .iter()

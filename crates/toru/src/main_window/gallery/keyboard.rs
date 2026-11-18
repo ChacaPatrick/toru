@@ -5,16 +5,14 @@ use super::{Gallery, PILL_TOP};
 use crate::ui::JUMP_HEIGHT;
 
 impl Gallery {
-    /// The gallery's own focus, which Tab leaves for the current card.
     pub fn focus_handle(&self) -> FocusHandle {
         self.focus.focus().clone()
     }
 
-    /// Where the main window sends focus when the element holding it inside the gallery stops
-    /// being drawn. If cards were taken away in the frame just drawn, as by a delete, it is the
-    /// current card, which is then the one beside them, so the arrow keys carry on from there.
-    /// Otherwise it is the gallery itself, from where Tab reaches the current card: a name field
-    /// the user scrolls out of the list must not pull the list back to a card.
+    /// For when the element holding focus inside the gallery stops being drawn. If cards were
+    /// taken away in the frame just drawn, as by a delete, it is the current card, now the one
+    /// beside them. Otherwise it is the gallery itself: a name field the user scrolls out of the
+    /// list must not pull the list back to a card.
     pub fn focus_to_restore(&self) -> FocusHandle {
         let drawn = self
             .shown()
@@ -26,7 +24,6 @@ impl Gallery {
             .map_or_else(|| self.focus_handle(), |card| card.focus.clone())
     }
 
-    /// Focuses the card of `capture`, scrolling to it if need be, when the editor closes on it.
     /// A card a search or a collapsed group keeps out of the list is left alone.
     pub fn focus_capture(
         &mut self,
@@ -43,7 +40,6 @@ impl Gallery {
         }
     }
 
-    /// Makes `id` the card Tab enters the grid at.
     pub(in crate::main_window) fn set_current(&mut self, id: usize, cx: &mut Context<Self>) {
         if self.current != Some(id) {
             self.current = Some(id);
@@ -60,9 +56,8 @@ impl Gallery {
             .map(|c| c.id)
     }
 
-    /// Arrow keys, Home, End, Enter and, in select mode, Space while a card itself has focus. A
-    /// card's controls keep their own keys: the name field needs its arrows. Esc and Ctrl+A are
-    /// the main window's, so they work from anywhere in it.
+    /// A card's controls keep their own keys: the name field needs its arrows. Esc and Ctrl+A
+    /// are the main window's, so they work from anywhere in it.
     pub(super) fn key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -102,8 +97,8 @@ impl Gallery {
         self.focus_card(target.1, target.0, window, cx);
     }
 
-    /// Focuses card `id`, in `row`, scrolling the list just enough to build it when the row isn't
-    /// among those rendered; `FocusInView` then brings its ring fully into view.
+    /// Scrolls just enough to build the row when it isn't rendered; `FocusInView` then brings the
+    /// card's ring fully into view.
     fn focus_card(&mut self, id: usize, row: usize, window: &mut Window, cx: &mut Context<Self>) {
         if !self.rendered.contains(&row) {
             self.scroll.scroll_to_item(row, ScrollStrategy::Top);
@@ -116,9 +111,8 @@ impl Gallery {
     }
 }
 
-/// The part of the list's `bounds` nothing floats over: below the return pill while it shows,
-/// and above the bulk bar, `bar` tall with its margin, while it does. A focused control is
-/// scrolled into this, so its ring isn't hidden under either.
+/// Below the return pill and above the bulk bar (`bar`, with its margin) while they show, so a
+/// focused control scrolled into this isn't hidden under either.
 pub(super) fn uncovered(
     mut bounds: Bounds<Pixels>,
     pill: bool,
@@ -136,10 +130,8 @@ pub(super) fn uncovered(
     bounds
 }
 
-/// Where `key` moves the grid's focus from the card at `at` in `shown`, the listed cards in
-/// reading order, each with its row: the neighbour for Left and Right, the same column a row
-/// up or down, or that row's last card if it is shorter, and the first or last card for Home
-/// and End. A move off either end stays put. `None` for a key that isn't the grid's.
+/// Up and Down keep the column, or take a shorter row's last card. A move off either end stays
+/// put. `None` for a key that isn't the grid's.
 fn key_target(shown: &[(usize, usize)], at: usize, key: &str) -> Option<usize> {
     let last = shown.len() - 1;
     let row = shown[at].0;
@@ -194,8 +186,7 @@ mod tests {
         assert_eq!(uncovered(tiny, true, Some(px(72.))).size.height, px(0.));
     }
 
-    /// The listed cards of groups of these sizes laid out `columns` across, as `shown` gives
-    /// them: each with its row, where a header takes a row before each group's cards.
+    /// As `shown` gives them, where a header takes a row before each group's cards.
     fn grid(groups: &[usize], columns: usize) -> Vec<(usize, usize)> {
         let mut shown = Vec::new();
         let (mut row, mut id) = (0, 0);
@@ -211,7 +202,6 @@ mod tests {
         shown
     }
 
-    /// The id of the card `keys` lead to from card `from`.
     fn walk(shown: &[(usize, usize)], from: usize, keys: &[&str]) -> usize {
         let at = keys.iter().fold(from, |at, key| {
             key_target(shown, at, key).expect("a grid key")
@@ -263,7 +253,6 @@ mod tests {
         assert_eq!(walk(&shown, 8, &["down"]), 8);
         assert_eq!(key_target(&shown, 0, "tab"), None);
         assert_eq!(key_target(&shown, 0, "space"), None);
-        // One card alone goes nowhere.
         let alone = grid(&[1], 3);
         for key in ["left", "right", "up", "down", "home", "end"] {
             assert_eq!(key_target(&alone, 0, key), Some(0));

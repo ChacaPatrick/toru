@@ -1,12 +1,8 @@
-//! `.jump`: the return pill that brings the gallery back to "This session". It wears the toast's
-//! colours and border on a pill shape, with the up arrow before the look's `jump` string. It lies
-//! over the gallery, so a press on it must not reach the card beneath (`block_mouse_except_scroll`
-//! stops that and still lets the wheel scroll the list), and assistive technology's click goes
-//! through `on_a11y_action` rather than a simulated press (`docs/spikes.md` §1.5).
+//! `.jump`: the return pill to "This session".
 
 use gpui::{AccessibleAction, App, ElementId, Role, SharedString, Window, div, prelude::*, px};
 
-use super::{Handler, Icon, RingFocus, focus_marks, keyed_focus};
+use super::{Icon, PressHandler, RingFocus, focus_marks, keyed_focus};
 use crate::theme::{ActiveTheme, ThemedText, contrast, hover_tint};
 
 pub const HEIGHT: f32 = 36.;
@@ -15,7 +11,7 @@ pub const HEIGHT: f32 = 36.;
 pub struct Jump {
     id: ElementId,
     label: SharedString,
-    on_click: Option<Handler>,
+    on_click: Option<PressHandler>,
 }
 
 impl Jump {
@@ -46,6 +42,8 @@ impl RenderOnce for Jump {
             .role(Role::Button)
             .aria_label(self.label.clone())
             .track_ring_focus(&focus)
+            // It lies over the gallery: a press must not reach the card beneath, but the wheel
+            // still scrolls the list.
             .block_mouse_except_scroll()
             .relative()
             .flex_none()
@@ -67,6 +65,7 @@ impl RenderOnce for Jump {
             .when_some(self.on_click, |this, handler| {
                 let for_a11y = handler.clone();
                 this.on_click(move |_, window, cx| handler(window, cx))
+                    // Rather than a simulated press (`docs/spikes.md` §1.5).
                     .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
                         for_a11y(window, cx)
                     })

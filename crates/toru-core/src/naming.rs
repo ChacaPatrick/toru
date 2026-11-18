@@ -1,5 +1,3 @@
-//! Capture names: the name pattern, `_2`/`_3` numbering and Windows file name rules.
-
 use std::collections::HashSet;
 
 use crate::time::LocalDate;
@@ -21,8 +19,8 @@ pub enum NameError {
     UnknownToken(String),
 }
 
-/// Returns the first name from the pattern that isn't in `taken`: the expanded pattern itself, then
-/// `_2`, `_3` and so on. Names are compared the way Windows compares file names.
+/// The expanded pattern, then `_2`, `_3` and so on. Names compare the way Windows compares file
+/// names.
 pub fn next_free_name(pattern: &str, date: LocalDate, taken: &[&str]) -> String {
     let taken: HashSet<String> = taken.iter().map(|name| fold_case(name)).collect();
     let base = expand_pattern(pattern, date);
@@ -35,7 +33,6 @@ pub fn next_free_name(pattern: &str, date: LocalDate, taken: &[&str]) -> String 
     candidate
 }
 
-/// Checks that `name` can be a file name on Windows.
 pub fn validate_name(name: &str) -> Result<(), NameError> {
     if name.is_empty() {
         return Err(NameError::Empty);
@@ -61,11 +58,9 @@ pub fn validate_name(name: &str) -> Result<(), NameError> {
     Ok(())
 }
 
-/// Checks that every token is known and that the pattern expands to a valid file name.
 pub fn validate_pattern(pattern: &str) -> Result<(), NameError> {
-    // An unknown token is rejected rather than kept as text. Braces are legal in file names, so a
-    // typo like `{yy}` would otherwise go unnoticed until files are saved with it in their names.
-    // A brace with no partner isn't a token, so it stays as ordinary text.
+    // Braces are legal in file names, so an unknown token kept as text would hide a typo like
+    // `{yy}`. A brace with no partner isn't a token and stays as text.
     let mut rest = pattern;
     while let Some((_, after_open)) = rest.split_once('{') {
         let Some((token, after_close)) = after_open.split_once('}') else {

@@ -43,8 +43,7 @@ unsafe extern "system" fn set_affinity(hwnd: isize, affinity: isize) -> i32 {
     1
 }
 
-/// Takes this thread's windows out of what captures see, or puts them back. They stay on
-/// screen and in place. GPUI opens all of them on this thread.
+/// The windows stay on screen and in place. GPUI opens all of them on this thread.
 pub fn exclude_windows_from_capture(exclude: bool) {
     let affinity = if exclude {
         WDA_EXCLUDEFROMCAPTURE
@@ -57,19 +56,17 @@ pub fn exclude_windows_from_capture(exclude: bool) {
     }
 }
 
-/// The full `HWND` from the low 32 bits `xcap` keeps as a window id: handles are 32-bit
-/// values sign-extended to 64, so the top half is the bottom half's sign.
+/// `xcap` keeps the low 32 bits as a window id. Handles are 32-bit values sign-extended to 64.
 pub fn hwnd_from_id(id: u32) -> isize {
     id as i32 as isize
 }
 
-/// Whether the user can see and click the window `xcap` lists as `id`, so it is worth
-/// picking. `xcap` lists every visible top-level window, including click-through ones
+/// `xcap` lists every visible top-level window, including click-through ones
 /// (`WS_EX_TRANSPARENT`): a layered, click-through, topmost window the size of the desktop,
-/// which some apps keep for drawing over everything, would be the only thing under the
-/// pointer on that screen. A layered window set fully transparent is invisible too. Layered
-/// windows drawn per pixel aren't told apart: there's no cheap way, and they are rare on top
-/// of real windows.
+/// which some apps keep for drawing over everything, would be the only thing under the pointer
+/// on that screen. A layered window set fully transparent is invisible too. Layered windows
+/// drawn per pixel aren't told apart: there's no cheap way, and they are rare on top of real
+/// windows.
 pub fn is_window_pickable(id: u32) -> bool {
     let hwnd = hwnd_from_id(id);
     // SAFETY: a plain user32 call on a handle; for a handle that has gone it answers 0.
@@ -114,8 +111,8 @@ unsafe extern "system" fn find_overlay(hwnd: isize, param: isize) -> i32 {
     i32::from(!overlay)
 }
 
-/// Gives an open overlay the foreground, and so the keyboard. Any one will do, since Esc on
-/// any of them closes them all. After a delayed capture another app holds the foreground and
+/// Any open overlay will do, since Esc on any of them closes them all. After a delayed capture
+/// another app holds the foreground and
 /// Windows refuses to hand it over to a background process, unless that process shares the
 /// foreground thread's input for the moment it asks. `activate_window` gets there by pressing
 /// Alt (`docs/spikes.md` §1.2), which would reach the app being captured.

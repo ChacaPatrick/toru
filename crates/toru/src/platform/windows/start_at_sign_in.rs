@@ -5,7 +5,6 @@ use super::registry::{
     RRF_RT_REG_BINARY, delete_user_value, read_user_data, read_user_value, write_user_value,
 };
 
-/// Where Windows looks for what to start when the user signs in.
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 /// Where Windows' Startup apps page (Settings and Task Manager) marks a `RUN_KEY` value of
 /// the same name enabled or disabled, leaving the value itself in place.
@@ -15,33 +14,29 @@ const APPROVED_KEY: &str =
 /// starts" writes the first, and its uninstaller removes both (`installer/toru.iss`).
 const RUN_VALUE: &str = "Toru";
 
-/// The command Windows runs at sign-in: this exe, started in the tray (`main::start_hidden`).
 pub(super) fn run_command(exe: &Path) -> String {
     format!("\"{}\" --tray", exe.display())
 }
 
-/// The exe a Run command starts, when it is quoted as `run_command` writes it.
+/// Only when it is quoted as `run_command` writes it.
 pub(super) fn run_command_exe(command: &str) -> Option<PathBuf> {
     let (exe, _) = command.strip_prefix('"')?.split_once('"')?;
     Some(PathBuf::from(exe))
 }
 
-/// Whether an `APPROVED_KEY` value says the Startup apps page turned the entry off: its
-/// first byte is 2 (or 6) while enabled and 3 (or 7) while disabled, followed by when.
+/// The first byte is 2 (or 6) while enabled and 3 (or 7) while disabled, followed by when.
 pub(super) fn approved_says_disabled(data: &[u8]) -> bool {
     data.first().is_some_and(|flags| flags & 1 != 0)
 }
 
-/// Whether Windows starts the Toru that `run_key` names at sign-in: the value is there and
-/// the Startup apps page hasn't turned it off under `approved_key`.
 pub(super) fn starts_at_sign_in(run_key: &str, approved_key: &str) -> bool {
     read_user_value(run_key, RUN_VALUE).is_some()
         && !read_user_data(approved_key, RUN_VALUE, RRF_RT_REG_BINARY)
             .is_some_and(|data| approved_says_disabled(&data))
 }
 
-/// Has Windows start `exe` in the tray at sign-in, or stop. Either way the Startup apps
-/// page's mark goes, so turning on isn't still blocked by an earlier "disabled" there.
+/// Either way the Startup apps page's mark goes, so turning on isn't still blocked by an earlier
+/// "disabled" there.
 pub(super) fn set_start_at_sign_in(
     run_key: &str,
     approved_key: &str,
@@ -56,9 +51,9 @@ pub(super) fn set_start_at_sign_in(
     delete_user_value(approved_key, RUN_VALUE)
 }
 
-/// Points the Run value at `exe` when the exe it names is gone, as after Toru was moved or
-/// reinstalled elsewhere. One naming another copy that still exists, such as a development
-/// build, is left to the user's switch.
+/// Only when the exe the Run value names is gone, as after Toru was moved or reinstalled
+/// elsewhere. One naming another copy that still exists, such as a development build, is left
+/// to the user's switch.
 pub(super) fn repoint_start_at_sign_in(run_key: &str, exe: &Path) {
     let stale = read_user_value(run_key, RUN_VALUE)
         .and_then(|command| run_command_exe(&command))
@@ -68,17 +63,15 @@ pub(super) fn repoint_start_at_sign_in(run_key: &str, exe: &Path) {
     }
 }
 
-/// Whether Windows starts Toru when the user signs in, whichever copy of Toru it names.
+/// Whichever copy of Toru the Run value names.
 pub fn starts_with_windows() -> bool {
     starts_at_sign_in(RUN_KEY, APPROVED_KEY)
 }
 
-/// Has Windows start this copy of Toru, in the tray, when the user signs in, or stop doing so.
 pub fn set_starts_with_windows(on: bool) -> io::Result<()> {
     set_start_at_sign_in(RUN_KEY, APPROVED_KEY, on, &std::env::current_exe()?)
 }
 
-/// `repoint_start_at_sign_in` for this exe, at start-up.
 pub fn repoint_start_with_windows() {
     if let Ok(exe) = std::env::current_exe() {
         repoint_start_at_sign_in(RUN_KEY, &exe);
@@ -157,7 +150,6 @@ mod tests {
         let exe = std::env::current_exe().unwrap();
         let read = || read_user_value(&run, "Toru");
 
-        // Nothing there: nothing written.
         repoint_start_at_sign_in(&run, &exe);
         assert_eq!(read(), None);
         // Another copy that exists, here the test's own folder standing in for one.
@@ -165,7 +157,6 @@ mod tests {
         write_user_value(&run, "Toru", &other).unwrap();
         repoint_start_at_sign_in(&run, &exe);
         assert_eq!(read(), Some(other));
-        // A copy that's gone.
         let gone = unique_dir("gone").join("toru.exe");
         write_user_value(&run, "Toru", &run_command(&gone)).unwrap();
         repoint_start_at_sign_in(&run, &exe);

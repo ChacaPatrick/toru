@@ -11,8 +11,7 @@ use super::{Editor, chrome, panel};
 const PIXELS_PER_LINE: f32 = 20.;
 
 impl Editor {
-    /// The part of the whole picture the canvas shows: the crop, or all of it while the Crop
-    /// tool is out so the rectangle can be drawn anywhere on it.
+    /// All of the picture while the Crop tool is out, so the rectangle can be drawn anywhere.
     pub(super) fn shown(&self) -> IntRect {
         if self.tool == Tool::Crop {
             self.document.whole()
@@ -21,21 +20,19 @@ impl Editor {
         }
     }
 
-    /// `shown` in picture pixels, as the marks are held within it.
     pub(super) fn shown_bounds(&self) -> Bounds<f32> {
         bounds_of(self.shown())
     }
 
-    /// The shown picture's logical size at 100%: one picture pixel per device pixel, so it is
-    /// sharp on screen and the same size as the capture was.
+    /// The logical size at 100%: one picture pixel per device pixel, so it is sharp on screen
+    /// and the same size as the capture was.
     pub(super) fn picture(&self) -> Size<f32> {
         self.shown_bounds().size.map(|v| v / self.scale)
     }
 
-    /// The canvas area the picture is fitted into: inside the pill, the corners and, on both
-    /// sides so it stays centred, the panel.
+    /// Clear of the panel on both sides, so the picture stays centred.
     fn fit_area(&self) -> Bounds<f32> {
-        let edge = chrome::EDGE;
+        let edge = chrome::CHROME_INSET;
         let side = panel::LEFT + panel::WIDTH + edge;
         let top = edge + chrome::PILL_HEIGHT + edge;
         let bottom = edge + chrome::CORNER_HEIGHT + edge;
@@ -53,8 +50,6 @@ impl Editor {
         self.canvas.size.map(f32::from)
     }
 
-    /// The viewport for the canvas as it is now: fitted again while at Fit, else kept on the
-    /// canvas.
     pub(super) fn laid_out(&self) -> Viewport {
         if self.fitted {
             Viewport::fit(self.picture(), self.fit_area())
@@ -69,7 +64,6 @@ impl Editor {
         cx.notify();
     }
 
-    /// Zooms around the canvas centre, as the buttons do.
     pub(super) fn zoom_to(&mut self, zoom: f32, cx: &mut Context<Self>) {
         let canvas = self.canvas_size();
         let centre = point(canvas.width / 2., canvas.height / 2.);
@@ -89,7 +83,6 @@ impl Editor {
         cx.notify();
     }
 
-    /// Zooms around the pointer.
     pub(super) fn wheel(&mut self, event: &ScrollEvent, cx: &mut Context<Self>) {
         let lines = match event.delta {
             ScrollDelta::Lines(lines) => lines.y,
@@ -124,10 +117,8 @@ impl Editor {
         )
     }
 
-    /// Called with the canvas's bounds each frame: the first frame, a resize and a move to a
-    /// display of another scale each lay the picture out again. The chrome built for this frame
-    /// read the old viewport, so the next frame is asked for; the picture itself paints at the
-    /// new one.
+    /// The chrome built for this frame read the old viewport, so the next frame is asked for; the
+    /// picture itself paints at the new one.
     pub(super) fn canvas_laid_out(&mut self, bounds: Bounds<Pixels>, window: &mut Window) {
         let scale = window.scale_factor();
         if bounds.size == self.canvas.size && scale == self.scale {
@@ -144,15 +135,13 @@ impl Editor {
         }
     }
 
-    /// Whether a frame has measured the canvas yet. Until one has, the viewport is provisional,
-    /// so the chrome that reads it waits for the next frame rather than show a zoom the picture
-    /// isn't at.
+    /// Until a frame has measured the canvas, the viewport is provisional, so the chrome that
+    /// reads it waits rather than show a zoom the picture isn't at.
     pub(super) fn measured(&self) -> bool {
         self.canvas.size.width > px(0.)
     }
 }
 
-/// `rect` in picture pixels, as the marks are held within it.
 fn bounds_of(rect: IntRect) -> Bounds<f32> {
     Bounds::new(
         point(rect.x() as f32, rect.y() as f32),

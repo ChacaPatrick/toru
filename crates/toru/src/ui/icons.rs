@@ -1,5 +1,4 @@
-//! The mockups' line icons, with the stroke from the theme's `Icons`. Each is the body of a
-//! 24-unit SVG from `design/build-mockups.py`; GPUI rasterises the markup as a mask and tints it.
+//! The mockups' line icons: 24-unit SVG bodies from `design/build-mockups.py`.
 
 use gpui::{Hsla, Pixels, Svg, prelude::*, px, svg};
 
@@ -145,8 +144,7 @@ impl Icon {
         self.render_at(theme, color, self.size())
     }
 
-    /// The icon at `size` instead of the mockups' size, with its lines as heavy on screen as
-    /// they are there, so a small one beside small type doesn't thin out.
+    /// Keeps the lines as heavy on screen as at the mockups' size, so a small icon doesn't thin out.
     pub fn render_at(self, theme: &Theme, color: Hsla, size: Pixels) -> Svg {
         let icons = &theme.icons;
         let stroke = f32::from(icons.stroke) * (self.size() / size);

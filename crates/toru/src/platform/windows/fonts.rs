@@ -37,12 +37,11 @@ unsafe extern "system" {
     fn GetUserDefaultLocaleName(name: *mut u16, length: i32) -> i32;
 }
 
-/// The system fonts that draw what the editor's bundled fonts lack, in the order they are
-/// tried, each with the CJK language it is for: Segoe UI for Latin, Greek and Cyrillic, its
-/// symbols and emoji (the emoji's plain outlines), then Chinese, Japanese and Korean, which
-/// `editor::text` puts in the user's order, then the Indic scripts. A file this Windows
-/// doesn't have, such as Meiryo where the Japanese fonts aren't installed, is skipped when it
-/// is read.
+/// What the editor's bundled fonts lack, in the order tried: Segoe UI for Latin, Greek and
+/// Cyrillic, its symbols and emoji (the emoji's plain outlines), then Chinese, Japanese and
+/// Korean, which `editor::text` puts in the user's order, then the Indic scripts. A file this
+/// Windows doesn't have, such as Meiryo where the Japanese fonts aren't installed, is skipped
+/// when it is read.
 pub fn fallback_fonts() -> Vec<(PathBuf, Option<Cjk>)> {
     const FILES: [(&str, Option<Cjk>); 9] = [
         ("segoeui.ttf", None),
@@ -63,7 +62,7 @@ pub fn fallback_fonts() -> Vec<(PathBuf, Option<Cjk>)> {
         .collect()
 }
 
-/// The file's bytes, mapped read-only for the app's life rather than read: only the pages
+/// Mapped read-only for the app's life rather than read: only the pages
 /// that are looked at are loaded, and they are the system's cached copy of the file, which
 /// it can drop and read again. While mapped, the file can't be shortened, and deleting or
 /// replacing it (as Windows Update does) leaves the mapped bytes as they were. An

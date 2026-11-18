@@ -1,11 +1,4 @@
-//! `.bottom` (DESIGN.md §2): this session's counts, then Clear unsaved, Copy all and Save all,
-//! which skips what is already saved. Select mode's bulk bar (4.5) takes this bar's place while
-//! anything is selected.
-//!
-//! The bar is about this session only, whatever history is listed above it, so the summary
-//! starts by saying so, and each button is disabled while this session gives it nothing to do.
-//! The bar is one row at every window width: the note about Save all is left off when it has
-//! no room.
+//! `.bottom` (DESIGN.md §2).
 
 use gpui::{Context, Div, Window, div, prelude::*, px};
 
@@ -14,12 +7,10 @@ use crate::theme::{ActiveTheme, ThemedText};
 use crate::ui::{Button, Readable};
 
 const PADDING_X: f32 = 18.;
-/// Between the summary and the buttons.
-const GAP: f32 = 12.;
+const SUMMARY_GAP: f32 = 12.;
 const BUTTON_GAP: f32 = 8.;
 const SAVE_ALL_NOTE: &str = " — Save all skips anything already saved.";
 
-/// "This session: 3 captures · 1 saved · 2 unsaved", or that there is nothing yet.
 fn summary(count: usize, saved: usize) -> String {
     if count == 0 {
         return "This session: no captures yet".to_string();
@@ -50,9 +41,8 @@ pub fn bottom_bar(this: &MainWindow, window: &Window, cx: &Context<MainWindow>) 
         .fold(px(BUTTON_GAP * 2.), |sum, button| {
             sum + button.width(theme, window)
         });
-    let room = window.viewport_size().width - px(PADDING_X * 2. + GAP) - buttons;
+    let room = window.viewport_size().width - px(PADDING_X * 2. + SUMMARY_GAP) - buttons;
     let mut summary = summary(count, saved);
-    // The note explains Save all, so it shows only while there is something to save and room.
     let with_note = format!("{summary}{SAVE_ALL_NOTE}");
     if unsaved > 0 && hint.text_width(&with_note, theme, window) <= room {
         summary = with_note;
@@ -63,7 +53,7 @@ pub fn bottom_bar(this: &MainWindow, window: &Window, cx: &Context<MainWindow>) 
         .flex()
         .items_center()
         .justify_between()
-        .gap(px(GAP))
+        .gap(px(SUMMARY_GAP))
         .px(px(PADDING_X))
         .py(px(12.))
         .bg(c.surface_2)

@@ -30,8 +30,8 @@ unsafe extern "system" {
     fn CloseHandle(handle: isize) -> i32;
 }
 
-/// The named event a second launch signals, one per data folder so two Torus on different
-/// folders (the owner's and a test's) don't reach each other.
+/// One per data folder, so two Torus on different folders (the owner's and a test's) don't
+/// reach each other.
 fn show_event_name(data_dir: &Path) -> Vec<u16> {
     let key = fs::canonicalize(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());
     let mut hasher = DefaultHasher::new();
@@ -39,8 +39,8 @@ fn show_event_name(data_dir: &Path) -> Vec<u16> {
     wide(&format!("Local\\Toru.Show.{:016x}", hasher.finish()))
 }
 
-/// Creates the event a second launch signals, and runs `on_show` on a background thread
-/// each time it is signalled, for the life of the process.
+/// Runs `on_show` on a background thread each time a second launch signals, for the life of
+/// the process.
 pub fn watch_for_show(data_dir: &Path, on_show: impl Fn() + Send + 'static) {
     let name = show_event_name(data_dir);
     // SAFETY: the name is NUL-terminated. An auto-reset event, so each signal is one show.
@@ -56,9 +56,8 @@ pub fn watch_for_show(data_dir: &Path, on_show: impl Fn() + Send + 'static) {
     });
 }
 
-/// Tells the Toru already running on `data_dir` to show its window, and lets it take the
-/// foreground, since this process was just launched by the user. `false` if none is
-/// listening.
+/// Lets the running Toru take the foreground, since this process was just launched by the user.
+/// `false` if none is listening.
 pub fn signal_running_instance(data_dir: &Path) -> bool {
     let name = show_event_name(data_dir);
     // SAFETY: the name is NUL-terminated, and the handle is closed once used.

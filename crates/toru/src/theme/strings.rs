@@ -1,4 +1,4 @@
-/// The strings whose tone changes with the look. Dates go where the caller puts them.
+/// The strings whose tone changes with the look.
 pub struct Strings {
     /// Around the day being fetched: "Fetching " + date + " …".
     pub loading: (&'static str, &'static str),
@@ -6,13 +6,11 @@ pub struct Strings {
     pub back_to_session: &'static str,
     /// Before the day in a history group header.
     pub earlier: &'static str,
-    /// The header of today's captures from sessions that have ended.
     pub earlier_today: &'static str,
     pub session: &'static str,
     pub day_date: DayDate,
 }
 
-/// How a day group writes its date.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DayDate {
     /// "Tue, Nov 4"

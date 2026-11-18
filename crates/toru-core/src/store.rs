@@ -1,10 +1,9 @@
-//! Captures on disk: image files in a temp folder and their records in SQLite.
+//! Captures on disk: image files in a temp folder, records in SQLite.
 //!
-//! A row only ever exists with its files complete. Adding writes the files under temporary names,
-//! then renames them to their final names inside the row's transaction and commits last; removing
-//! deletes the row first and the files after. A crash can therefore only leave files without a row,
-//! and `Store::open` deletes those. Because of that sweep, a `Store` holds an exclusive lock on a
-//! file in the app-data folder for as long as it is open.
+//! A row only exists with its files complete: adding writes the files under temporary names and
+//! renames them inside the row's transaction, committing last; removing deletes the row first. So
+//! a crash can only leave files without a row, which `Store::open` sweeps, and because of that
+//! sweep a `Store` holds an exclusive lock in the app-data folder for as long as it is open.
 
 mod add;
 mod copy_folders;
@@ -64,7 +63,7 @@ pub struct Store {
 }
 
 impl Store {
-    /// Starts a new session. Its ID is never reused, even across restarts.
+    /// IDs are never reused, even across restarts.
     pub fn new_session(&self) -> Result<SessionId> {
         let db = self.db();
         db.execute("INSERT INTO sessions DEFAULT VALUES", [])?;

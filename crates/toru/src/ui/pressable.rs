@@ -1,10 +1,5 @@
-//! A pressable tile: the editor's `.tool`, `.opt`, `.sw` and `.corner button` are all a box of
-//! the caller's colours, border and size with something in it, so one control draws them. It is
-//! a button, or one radio button of a `Choices` group, with a hover tint, the §7 focus ring and
-//! an assistive-technology click.
-//!
-//! `Choices` lays out a row of pressables as one tab stop: focus sits on the chosen one and the
-//! arrow keys move the choice and the focus together, as `Segmented` does.
+//! The editor's `.tool`, `.opt`, `.sw` and `.corner button`: a box of the caller's colours,
+//! border and size with something in it.
 
 use std::{rc::Rc, sync::Arc};
 
@@ -13,7 +8,7 @@ use gpui::{
     SharedString, StyleRefinement, Toggled, Window, div, prelude::*, px,
 };
 
-use super::{Handler, RingFocus, arrow_target, focus_marks, keyed_focus, refined};
+use super::{PressHandler, RingFocus, arrow_target, focus_marks, keyed_focus, refined};
 use crate::theme::{ActiveTheme, Border, Theme, contrast, hover_tint};
 
 #[derive(IntoElement)]
@@ -24,22 +19,20 @@ pub struct Pressable {
     text: Hsla,
     border: Border,
     radius: Pixels,
-    /// Whether hovering tints the box; a colour swatch keeps its colour.
+    /// Off for a colour swatch, which keeps its colour.
     hover: bool,
-    /// `Some` for a radio button of a `Choices` group: whether it is the chosen one.
+    /// `Some` for a radio button of a `Choices` group.
     chosen: Option<bool>,
     focus: Option<FocusHandle>,
-    on_click: Option<Handler>,
+    on_click: Option<PressHandler>,
     children: Vec<AnyElement>,
     style: StyleRefinement,
-    /// How far the pressable area reaches past the visible box on every side, so a box the
-    /// mockups draw under §7's 32px can still be hit at 32px. It takes no room in the layout.
+    /// How far the pressable area reaches past the visible box, so a box the mockups draw under
+    /// §7's 32px can still be hit at 32px. It takes no room in the layout.
     hit_margin: Pixels,
 }
 
 impl Pressable {
-    /// A square or sized box with no border or background, in `text`; set the rest with the
-    /// builder methods and the size with `Styled`.
     pub fn new(id: impl Into<ElementId>, aria_label: impl Into<SharedString>, text: Hsla) -> Self {
         Pressable {
             id: id.into(),
@@ -88,7 +81,6 @@ impl Pressable {
         self
     }
 
-    /// Use `focus` instead of the pressable's own handle.
     pub fn track_focus(mut self, focus: &FocusHandle) -> Self {
         self.focus = Some(focus.clone());
         self
@@ -123,13 +115,11 @@ impl RenderOnce for Pressable {
         let radius = self.radius;
         let handler = self.on_click;
         let for_a11y = handler.clone();
-        // The tint goes over the box's own fill. The chosen one of a group isn't tinted at all:
-        // the mockups give `.tool.on` and `.opt.on` no hover, and a tint of its text over its
-        // fill would take some pairs under §7's 4.5:1.
+        // The chosen one of a group isn't tinted: the mockups give `.tool.on` and `.opt.on` no
+        // hover, and a tint of its text over its fill would take some pairs under §7's 4.5:1.
         let hovered = (self.hover && self.chosen != Some(true)).then(|| hover_bg(self.bg, text));
-        // The visible box, in the caller's style. The `hit` wrapper around it takes the press,
-        // the focus and the hover, reaching `hit_margin` past the box on every side and giving
-        // that back as a negative margin, so the box sits in the layout as if alone.
+        // The wrapper below takes the press, focus and hover, reaching `hit_margin` past the box
+        // and giving it back as a negative margin, so the box sits in the layout as if alone.
         let tile = div()
             .relative()
             .flex_none()
@@ -185,11 +175,9 @@ impl RenderOnce for Pressable {
     }
 }
 
-/// The hover group a pressable's wrapper and box share.
+/// Shared by a pressable's wrapper and box.
 const HIT_GROUP: &str = "pressable";
 
-/// The hovered background: `text`'s tint laid over `bg` when the box has one, else the tint
-/// alone, which the surface shows through.
 fn hover_bg(bg: Option<Hsla>, text: Hsla) -> Hsla {
     match bg {
         Some(bg) => contrast::over(hover_tint(text), bg),
@@ -203,8 +191,7 @@ mod tests {
     use crate::theme::contrast::ratio;
     use toru_core::settings::{BUILT_IN_PALETTES, Look};
 
-    /// DESIGN.md §7: an unchosen tool, option or corner button stays readable under the pointer
-    /// in every palette. (The chosen one isn't tinted.)
+    /// DESIGN.md §7. The chosen one isn't tinted.
     #[test]
     fn a_hovered_box_keeps_its_contrast() {
         let failures: Vec<String> = [Look::Japandi, Look::PixelArt, Look::NeoBrutalism]
@@ -237,9 +224,8 @@ mod tests {
 type ChangeHandler = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 type ItemBuilder = Box<dyn Fn(usize, bool, &Theme) -> Pressable>;
 
-/// A row of pressables of which one is chosen, as one tab stop. `item` builds the pressable at
-/// an index given whether it is the chosen one and the theme; the group adds its focus and
-/// radio role.
+/// One tab stop: focus sits on the chosen pressable and the arrow keys move choice and focus
+/// together, as `Segmented` does. The group adds each item's focus and radio role.
 #[derive(IntoElement)]
 pub struct Choices {
     id: ElementId,
@@ -252,7 +238,6 @@ pub struct Choices {
 }
 
 impl Choices {
-    /// `label` names the group, such as "Stroke"; `chosen` is below `count`.
     pub fn new(
         id: impl Into<ElementId>,
         label: impl Into<SharedString>,

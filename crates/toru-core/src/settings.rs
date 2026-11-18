@@ -1,8 +1,3 @@
-//! Everything the user can set, and how each setting is written as text for `Store`.
-//!
-//! Loading starts from the defaults and applies whatever is stored, so a missing key or a value
-//! that doesn't parse leaves that one setting at its default and can't stop the app from starting.
-
 use std::path::{Path, PathBuf};
 
 use crate::capture::CaptureMode;
@@ -74,13 +69,12 @@ impl OnClose {
 /// How long unsaved captures are kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Retention {
-    /// One of `RETENTION_PRESET_DAYS` or a custom count. Zero isn't valid and loads as the default.
+    /// Never zero.
     Days(u32),
     Never,
 }
 
 impl Retention {
-    /// The count for `Store::delete_unsaved_older_than`, or `None` if nothing should be deleted.
     pub fn days(self) -> Option<u32> {
         match self {
             Retention::Days(days) => Some(days),
@@ -185,9 +179,8 @@ impl PaletteChoice {
     }
 }
 
-/// A shortcut that captures one display full screen (DESIGN.md §3). The display is named by the
-/// stable id the platform gives it, so the shortcut keeps its place while that display is
-/// unplugged and works again when it is back.
+/// Captures one display full screen (DESIGN.md §3). `display` is the platform's stable id, so the
+/// shortcut keeps its place while that display is unplugged and works again when it is back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisplayShortcut {
     pub display: String,
@@ -217,11 +210,10 @@ fn display_shortcuts_from_text(text: &str) -> Vec<DisplayShortcut> {
         .collect()
 }
 
-/// The palette choices one look remembers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LookAppearance {
     pub palette: PaletteChoice,
-    /// The custom slot's colours. Opaque until Phase 9 defines what's inside.
+    /// The custom slot's colours, opaque to core: the app's theme parses them.
     pub custom_palette: String,
     pub custom_background: Option<PathBuf>,
 }
@@ -243,12 +235,11 @@ pub struct Settings {
     pub auto_save: bool,
     pub keep_in_tray: bool,
     pub open_editor_after_capture: bool,
-    // `None` means no shortcut is bound. Phase 6.2 parses the text.
     pub region_shortcut: Option<String>,
     pub window_shortcut: Option<String>,
     pub full_screen_shortcut: Option<String>,
     pub delayed_shortcut: Option<String>,
-    /// Full-screen shortcuts for particular displays, at most one per display.
+    /// At most one per display.
     pub display_shortcuts: Vec<DisplayShortcut>,
     /// `None` until the app supplies the user's Pictures folder, which core can't know.
     pub save_folder: Option<PathBuf>,
@@ -380,7 +371,8 @@ impl Settings {
         Ok(values)
     }
 
-    /// Overwrites the setting `key` with `value` if it parses. Unknown keys are ignored.
+    /// A value that doesn't parse leaves that one setting at its default, so a damaged store can't
+    /// stop the app from starting. Unknown keys are ignored.
     pub(crate) fn apply_stored(&mut self, key: &str, value: &str) {
         match key {
             "show_previous" => set(&mut self.show_previous, value.parse().ok()),

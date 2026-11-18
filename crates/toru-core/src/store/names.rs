@@ -6,7 +6,6 @@ use crate::naming::{fold_case, validate_name};
 use crate::time::LocalDate;
 
 impl Store {
-    /// The names of the captures taken on `date`, for `next_free_name`.
     pub fn names_on(&self, date: LocalDate) -> Result<Vec<String>> {
         let db = self.db();
         let mut statement = db.prepare("SELECT name FROM captures WHERE taken_date = ?1")?;
@@ -16,9 +15,8 @@ impl Store {
         Ok(names)
     }
 
-    /// Changes the capture's name in the record, if it can be a file name and no other capture
-    /// from that day has it. A saved file keeps its own name: it is the user's, and may have been
-    /// moved or be in use.
+    /// Only the record changes. A saved file keeps its own name: it is the user's, and may have
+    /// been moved or be in use.
     pub fn rename(&self, id: CaptureId, name: &str) -> Result<()> {
         validate_name(name)?;
         // One lock around the check and the change, so two renames can't both take a name.

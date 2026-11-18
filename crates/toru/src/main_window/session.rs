@@ -6,8 +6,8 @@ use crate::platform;
 use crate::ui::Toast;
 
 impl MainWindow {
-    /// Ends the session and starts another if the date is no longer the session's. It goes on the
-    /// queue so that captures already on their way land in the session they were taken in.
+    /// On the queue, so that captures already on their way land in the session they were taken
+    /// in.
     pub(super) fn check_day(&mut self, now: LocalDateTime, cx: &mut Context<Self>) {
         if now.date == self.day {
             return;
@@ -52,10 +52,7 @@ impl MainWindow {
 const NEW_SESSION_FAILED: &str = "Couldn't start a new session";
 
 impl MainWindow {
-    /// The toolbar's New session: this session ends and its captures go to the groups below,
-    /// where the retention setting reaches any unsaved ones; On close only asks about the session
-    /// running when the app exits. On the queue, so a capture still being stored lands in the
-    /// session it was taken in, by the same path as the midnight reset (`start_session`).
+    /// On the queue, so a capture still being stored lands in the session it was taken in.
     pub(super) fn start_new_session(&mut self, cx: &mut Context<Self>) {
         let store = self.store.clone();
         self.enqueue(cx, async move |this, cx| {

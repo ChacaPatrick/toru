@@ -7,28 +7,26 @@ use gpui::{
 
 use crate::theme::Theme;
 
-/// The windows whose last press was a key rather than a mouse button, where focus shows the ring.
+/// Windows whose last press was a key, where focus shows the ring, as with CSS `:focus-visible`.
+/// GPUI's own `last_input_was_keyboard` won't do: it drops on a mere mouse move.
 #[derive(Default)]
 struct KeyboardFocus(HashSet<WindowId>);
 
 impl Global for KeyboardFocus {}
 
-/// The windows where a mouse button is held down right now. Focus taken during a press came
-/// from the press, so `FocusInView` leaves it where it is.
+/// Focus taken during a press came from the press, so `FocusInView` leaves it where it is.
 #[derive(Default)]
 struct MouseHeld(HashSet<WindowId>);
 
 impl Global for MouseHeld {}
 
-/// Which focused control last noted its place and where its ring's outer edge is, so a scrolling
-/// container can bring the control, ring and all, into view (`FocusInView`).
+/// The focused control and its ring's outer edge, for `FocusInView`.
 #[derive(Default)]
 pub(super) struct FocusRing(pub(super) Option<(FocusHandle, Bounds<Pixels>)>);
 
 impl Global for FocusRing {}
 
-/// Records where the focused control's ring is or would be and, when the focus has moved since
-/// the last note, asks for another frame so the control's container can scroll to it.
+/// A new focus asks for another frame, so its container can scroll to it then.
 pub(super) fn note_focus_ring(bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
     let Some(focused) = window.focused(cx) else {
         return;
@@ -59,10 +57,8 @@ pub(super) fn set_keyboard_focus(on: bool, window: &mut Window, cx: &mut App) {
     }
 }
 
-/// `track_focus` for a control that shows the ring. Focus that assistive technology asks for
-/// shows it as a key press does: a screen reader's own navigation keys, voice control and a
-/// switch reach the app as a request to focus a control, never as a key, so without this their
-/// users would not see where focus is.
+/// Focus that assistive technology asks for shows the ring as a key press does: a screen reader's
+/// navigation keys, voice control and switches reach the app as focus requests, never as keys.
 pub trait RingFocus: StatefulInteractiveElement {
     fn track_ring_focus(self, focus: &FocusHandle) -> Self {
         let requested = focus.clone();
@@ -91,12 +87,8 @@ pub(super) fn set_mouse_held(on: bool, window: &Window, cx: &mut App) {
     }
 }
 
-/// What a control draws for focus: a zero-paint note of where it is whenever it is focused, so a
-/// scrolling container can bring it into view (`FocusInView`); a zero-size watcher that notes a
-/// mouse press anywhere in the window, which turns the ring off and, until the release, marks
-/// any focus taken as the press's own; and the ring when `focused` and the last press was a key.
-/// Every control draws the watcher, so the rules hold whatever view is the window's root. Public
-/// for the gallery's cards, which are focusable themselves.
+/// The focus note, a watcher for mouse presses anywhere in the window, and the ring after a key
+/// press. Every control draws the watcher, so the rules hold whatever view is the window's root.
 pub fn focus_marks(
     focused: bool,
     theme: &Theme,
@@ -116,8 +108,7 @@ pub fn focus_marks(
     )
 }
 
-/// `focus_marks` with the ring in `ring`: the bulk bar's controls use `bulk_focus`, since the
-/// bar's own colour can swallow `focus`.
+/// For the bulk bar, whose colour can swallow `focus`.
 pub fn focus_marks_in(
     focused: bool,
     ring: Hsla,
@@ -156,18 +147,16 @@ pub fn focus_marks_in(
     marks
 }
 
-/// The ring's 3px width and how far its outer edge sits outside the control (DESIGN.md §7).
+/// DESIGN.md §7. `RING_GAP` is how far the ring's outer edge sits outside the control.
 pub(super) const RING_WIDTH: f32 = 3.;
 pub(super) const RING_GAP: f32 = RING_WIDTH * 2.;
 
-/// Where an absolute child reaching `offset` outside a control sits: such children are placed
-/// from inside the control's `border`, so it is added back.
+/// Absolute children are placed from inside the control's `border`, so it is added back.
 pub(super) fn ring_inset(offset: f32, border: Pixels) -> Pixels {
     px(-offset) - border
 }
 
-/// The size of the outer ring, which is what must be in view, noted where it was drawn
-/// (`FocusInView`) without painting anything.
+/// Notes the outer ring's bounds, which is what must be in view, without painting.
 pub(super) fn focus_note(border: Pixels) -> AnyElement {
     let outer = ring_inset(RING_GAP, border);
     canvas(
@@ -182,9 +171,7 @@ pub(super) fn focus_note(border: Pixels) -> AnyElement {
     .into_any_element()
 }
 
-/// The ring and its halo, for a `relative()` control whose corners are rounded by `radius` and
-/// whose own border is `border` wide. `focus_marks` adds the note; a text field, which always
-/// shows its ring, draws these alone.
+/// For a `relative()` control. Without the note, for a text field, which always shows its ring.
 pub(super) fn focus_ring(theme: &Theme, radius: Pixels, border: Pixels) -> [AnyElement; 2] {
     focus_ring_in(theme.colors.focus, theme, radius, border)
 }
@@ -201,14 +188,11 @@ pub(super) fn focus_ring_in(
     ]
 }
 
-/// A selected card's outline (`.card.sel`): the accent where the focus ring goes, with no halo.
-/// A focused card draws its ring over it.
+/// `.card.sel`: the accent where the focus ring goes. A focused card draws its ring over it.
 pub fn selection_ring(theme: &Theme, radius: Pixels, border: Pixels) -> AnyElement {
     ring(RING_GAP, theme.colors.accent, radius, border)
 }
 
-/// A 3px line whose outer edge is `offset` outside a control with `border`, following its
-/// rounding, as a CSS outline does. Square looks stay square.
 pub(super) fn ring(offset: f32, color: Hsla, radius: Pixels, border: Pixels) -> AnyElement {
     let inset = ring_inset(offset, border);
     div()

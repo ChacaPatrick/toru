@@ -1,32 +1,15 @@
 use gpui::{Background, BoxShadow, Hsla, Pixels, px};
 
-/// A background that may be flat, a two-stop gradient, or one of the patterned fills the other
-/// looks use for thumbnails and the editor canvas.
 #[derive(Clone)]
 pub enum Fill {
     Solid(Hsla),
-    Gradient {
-        angle: f32,
-        from: Hsla,
-        to: Hsla,
-    },
-    /// Two colours alternating in squares of `cell`.
-    Checker {
-        a: Hsla,
-        b: Hsla,
-        cell: Pixels,
-    },
-    /// `line` drawn every `cell` over `bg`.
-    Grid {
-        bg: Hsla,
-        line: Hsla,
-        cell: Pixels,
-    },
+    Gradient { angle: f32, from: Hsla, to: Hsla },
+    Checker { a: Hsla, b: Hsla, cell: Pixels },
+    Grid { bg: Hsla, line: Hsla, cell: Pixels },
 }
 
 impl Fill {
-    /// What GPUI can paint directly. Patterns return their base colour; `ui::fill` paints them
-    /// in full.
+    /// Patterns return their base colour; `ui::fill` paints them in full.
     pub fn background(&self) -> Background {
         match *self {
             Fill::Solid(color) => color.into(),
@@ -84,7 +67,7 @@ pub struct Borders {
     pub load: Border,
     pub earlier_rule: Border,
     pub thumb: Border,
-    /// Between the window controls: the hair rule, except where a look pins it.
+    /// Between the window controls.
     pub title_divider: Border,
 }
 
@@ -94,7 +77,7 @@ pub struct Radii {
     pub md: Pixels,
     pub lg: Pixels,
     pub pill: Pixels,
-    /// The title bar dot: a circle in soft looks, square in the hard ones.
+    /// The title bar dot.
     pub dot: Pixels,
 }
 
@@ -107,14 +90,13 @@ pub struct Shadows {
     pub shot: Vec<BoxShadow>,
 }
 
-/// The control sizes a look changes. Everything else is the same in every look's CSS and is set
-/// where the control is drawn.
+/// Only the sizes a look changes; the rest are the same in every look's CSS and set where the
+/// control is drawn.
 pub struct Sizes {
-    /// The horizontal padding of `.btn.sm`.
+    /// `.btn.sm`'s horizontal padding.
     pub button_sm_padding: Pixels,
-    /// The horizontal padding of a thumbnail's caption tag.
     pub tag_padding_x: Pixels,
-    /// A look that draws each window control as a filled square of this size instead of a glyph.
+    /// Some: each window control is a filled square of this size instead of a glyph.
     pub window_control_square: Option<Pixels>,
 }
 

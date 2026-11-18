@@ -1,7 +1,4 @@
-//! `.check`: the selection box at a card's top-left corner in select mode, 26px square on the
-//! surface, filled with the accent and showing a check mark when on. It is drawn inside a box the
-//! minimum target in size (DESIGN.md §7), which takes the press and the focus. The press passes
-//! its modifiers on, since a Shift-click selects a range.
+//! `.check`: drawn inside a `MIN_TARGET` box (DESIGN.md §7), which takes the press and the focus.
 
 use std::rc::Rc;
 
@@ -28,7 +25,6 @@ pub struct Checkbox {
 }
 
 impl Checkbox {
-    /// `label` is what the box is called, read out with its state.
     pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>, on: bool) -> Checkbox {
         Checkbox {
             id: id.into(),
@@ -40,19 +36,18 @@ impl Checkbox {
         }
     }
 
-    /// Whether Tab reaches the box; see `Button::tab_stop`.
     pub fn tab_stop(mut self, tab_stop: bool) -> Checkbox {
         self.tab_stop = tab_stop;
         self
     }
 
-    /// Use `focus` instead of the box's own handle, to focus it from elsewhere.
     pub fn track_focus(mut self, focus: &FocusHandle) -> Checkbox {
         self.focus = Some(focus.clone());
         self
     }
 
-    /// A press, with the modifiers held. Assistive technology's toggle comes with none.
+    /// Gets the modifiers, since a Shift-click selects a range. Assistive technology's toggle
+    /// comes with none.
     pub fn on_press(
         mut self,
         handler: impl Fn(Modifiers, &mut Window, &mut App) + 'static,
@@ -118,7 +113,7 @@ impl RenderOnce for Checkbox {
             .when_some(self.on_press, |this, handler| {
                 let for_a11y = handler.clone();
                 this.on_click(move |event, window, cx| {
-                    // The box is the target, not the card beneath it.
+                    // Not the card's press too.
                     cx.stop_propagation();
                     handler(event.modifiers(), window, cx)
                 })

@@ -1,5 +1,3 @@
-//! The capture record and its thumbnail caption.
-
 use std::path::PathBuf;
 
 use crate::time::{LocalDate, LocalDateTime};
@@ -36,7 +34,7 @@ impl Capture {
         self.saved_path.is_some()
     }
 
-    /// The thumbnail caption. The date only appears for a capture from a day other than `today`.
+    /// The date only appears for a capture from a day other than `today`.
     pub fn caption(&self, today: LocalDate) -> String {
         let date = self.taken_at.date;
         let time = self.taken_at.clock();

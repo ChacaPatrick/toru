@@ -11,11 +11,9 @@ use super::freeze::{Captured, Frozen, freeze};
 use super::{MonitorFrame, Overlay, TopWindow};
 use crate::platform;
 
-/// What the overlay hands back: the cropped region or window, and which it was.
 pub type OnCapture = Rc<dyn Fn(RgbaImage, CaptureMode, &mut App)>;
 
-/// One capture in progress, from capturing the monitors to handing over the image. Only one runs
-/// at a time.
+/// Only one runs at a time.
 pub(super) struct Session {
     mode: CaptureMode,
     pub(super) overlays: Vec<WindowHandle<Overlay>>,
@@ -28,10 +26,8 @@ pub(super) struct Session {
 
 impl Global for Session {}
 
-/// Starts a Region or Window capture: takes Toru's windows out of what captures see, captures
-/// every monitor, covers each one with an overlay and gives one of them the foreground, since
-/// another app holds it after a delayed capture. `on_capture` runs on the main thread with the
-/// image once the user confirms, and `on_failed` if no overlay could be opened.
+/// One overlay is given the foreground, since another app holds it after a delayed capture.
+/// `on_capture` runs on the main thread once the user confirms.
 pub fn start(
     mode: CaptureMode,
     cx: &mut App,
@@ -71,8 +67,7 @@ pub fn start(
     .detach();
 }
 
-/// Opens an overlay on each captured monitor GPUI also knows. With nothing to show, the capture
-/// has failed.
+/// Only on captured monitors GPUI also knows.
 fn open_overlays(frozen: Frozen, cx: &mut App) {
     let Some(mode) = cx.try_global::<Session>().map(|session| session.mode) else {
         return;
@@ -113,7 +108,6 @@ fn open_overlays(frozen: Frozen, cx: &mut App) {
     }
 }
 
-/// What every overlay of one capture shares.
 pub(super) struct Shared {
     mode: CaptureMode,
     frames: Rc<[MonitorFrame]>,
@@ -159,9 +153,8 @@ fn open_overlay(
     .ok()
 }
 
-/// Ends the capture: closes every overlay and, with an image, hands it over. Windows only leave
-/// the screen when the message loop next runs, so anything slow with the image belongs to the
-/// receiver, off the main thread. Dropping the session also drops its window-closed watcher.
+/// Windows only leave the screen when the message loop next runs, so anything slow with the image
+/// belongs to the receiver, off the main thread.
 pub(super) fn finish(image: Option<RgbaImage>, cx: &mut App) {
     if !cx.has_global::<Session>() {
         return;

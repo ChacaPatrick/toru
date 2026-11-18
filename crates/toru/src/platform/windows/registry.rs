@@ -35,7 +35,7 @@ unsafe extern "system" {
     fn RegDeleteKeyW(key: isize, subkey: *const u16) -> i32;
 }
 
-/// Removes the key `HKEY_CURRENT_USER\subkey` a test made, which has no subkeys.
+/// The key must have no subkeys.
 #[cfg(test)]
 pub(super) fn delete_user_key(subkey: &str) {
     let subkey = wide(subkey);
@@ -43,8 +43,6 @@ pub(super) fn delete_user_key(subkey: &str) {
     unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, subkey.as_ptr()) };
 }
 
-/// The data of the value `value` under `HKEY_CURRENT_USER\subkey`, if there is one of a
-/// type `flags` allows.
 pub(super) fn read_user_data(subkey: &str, value: &str, flags: u32) -> Option<Vec<u8>> {
     let (subkey, value) = (wide(subkey), wide(value));
     let mut buffer = vec![0u8; 2048];
@@ -67,7 +65,6 @@ pub(super) fn read_user_data(subkey: &str, value: &str, flags: u32) -> Option<Ve
     })
 }
 
-/// The text of the string value `value` under `HKEY_CURRENT_USER\subkey`, if there is one.
 pub(super) fn read_user_value(subkey: &str, value: &str) -> Option<String> {
     let data = read_user_data(subkey, value, RRF_RT_REG_SZ)?;
     let text: Vec<u16> = data
@@ -80,8 +77,7 @@ pub(super) fn read_user_value(subkey: &str, value: &str) -> Option<String> {
     Some(String::from_utf16_lossy(&text))
 }
 
-/// Writes `data` as the value `value` of type `kind` under `HKEY_CURRENT_USER\subkey`,
-/// creating the key if need be.
+/// Creates the key if need be.
 pub(super) fn write_user_data(subkey: &str, value: &str, kind: u32, data: &[u8]) -> io::Result<()> {
     let (subkey, value) = (wide(subkey), wide(value));
     // SAFETY: both names are NUL-terminated, and the data's size in bytes is passed along.
@@ -102,7 +98,6 @@ pub(super) fn write_user_data(subkey: &str, value: &str, kind: u32, data: &[u8])
     }
 }
 
-/// Writes `text` as the string value `value` under `HKEY_CURRENT_USER\subkey`.
 pub(super) fn write_user_value(subkey: &str, value: &str, text: &str) -> io::Result<()> {
     let data: Vec<u8> = wide(text)
         .iter()
@@ -111,8 +106,7 @@ pub(super) fn write_user_value(subkey: &str, value: &str, text: &str) -> io::Res
     write_user_data(subkey, value, REG_SZ, &data)
 }
 
-/// Removes the value `value` under `HKEY_CURRENT_USER\subkey`. One that isn't there is
-/// already gone.
+/// One that isn't there is already gone.
 pub(super) fn delete_user_value(subkey: &str, value: &str) -> io::Result<()> {
     let (subkey, value) = (wide(subkey), wide(value));
     // SAFETY: both names are NUL-terminated.

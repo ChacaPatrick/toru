@@ -8,8 +8,7 @@ pub(super) const HEAD_WIDTHS: f32 = 4.;
 
 pub(super) const HEAD_MIN: f32 = 12.;
 
-/// The long head is this much longer and this much narrower.
-pub(super) const LONG_HEAD: f32 = 1.6;
+pub(super) const LONG_HEAD_SCALE: f32 = 1.6;
 
 const HEAD_ANGLE: f32 = 0.52;
 
@@ -24,8 +23,7 @@ const CURL_LENGTH: f32 = 28.;
 pub(super) const ELLIPSE_SIDES: usize = 48;
 
 impl Annotation {
-    /// The mark as straight segments, each with whether it closes: what the sketchy style
-    /// wobbles and what the solid and dashed styles draw as they are.
+    /// Each with whether it closes.
     pub(super) fn polylines(&self) -> Vec<(Vec<Point<f32>>, bool)> {
         let b = self.bounds();
         match &self.shape {
@@ -47,7 +45,6 @@ impl Annotation {
     }
 }
 
-/// The ellipse inscribed in `b` as a polygon of `sides` sides.
 pub(super) fn ellipse(b: Bounds<f32>, sides: usize) -> Vec<Point<f32>> {
     let centre = b.center();
     let (rx, ry) = (b.size.width / 2., b.size.height / 2.);
@@ -59,7 +56,7 @@ pub(super) fn ellipse(b: Bounds<f32>, sides: usize) -> Vec<Point<f32>> {
         .collect()
 }
 
-/// An arrow from `from` to `to` as polylines: the shaft, then the open head at each pointed end.
+/// The shaft first, then the open head at each pointed end.
 fn arrow(from: Point<f32>, to: Point<f32>, head: Head, width: f32) -> Vec<(Vec<Point<f32>>, bool)> {
     let (dx, dy) = (to.x - from.x, to.y - from.y);
     let length = (dx * dx + dy * dy).sqrt();
@@ -70,7 +67,7 @@ fn arrow(from: Point<f32>, to: Point<f32>, head: Head, width: f32) -> Vec<(Vec<P
     let mut head_length = (width * HEAD_WIDTHS).max(HEAD_MIN);
     let mut angle = HEAD_ANGLE;
     if head == Head::Long {
-        head_length *= LONG_HEAD;
+        head_length *= LONG_HEAD_SCALE;
         angle = LONG_HEAD_ANGLE;
     }
     let head_length = head_length.min(length / 2.);
@@ -87,7 +84,6 @@ fn arrow(from: Point<f32>, to: Point<f32>, head: Head, width: f32) -> Vec<(Vec<P
     parts
 }
 
-/// The two strokes of an open arrow head at `tip`, pointing along `(ux, uy)`.
 fn chevron(tip: Point<f32>, (ux, uy): (f32, f32), length: f32, angle: f32) -> Vec<Point<f32>> {
     let wing = |a: f32| {
         let (sin, cos) = a.sin_cos();
@@ -99,8 +95,7 @@ fn chevron(tip: Point<f32>, (ux, uy): (f32, f32), length: f32, angle: f32) -> Ve
     vec![wing(angle), tip, wing(-angle)]
 }
 
-/// A curly arrow's shaft: a wave along the line, settling onto it at each end so the head sits
-/// where the pointer is.
+/// The wave settles onto the line at each end so the head sits where the pointer is.
 fn curl(from: Point<f32>, to: Point<f32>, (ux, uy): (f32, f32), length: f32) -> Vec<Point<f32>> {
     let steps = ((length / 3.).ceil() as usize).max(2);
     (0..=steps)

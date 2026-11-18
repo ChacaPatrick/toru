@@ -5,7 +5,6 @@ const SW_NORMAL: i32 = 1;
 const SW_SHOW: i32 = 5;
 const SW_RESTORE: i32 = 9;
 const WM_CLOSE: u32 = 0x0010;
-/// GPUI's window class on Windows.
 const GPUI_WINDOW_CLASS: &str = "Zed::Window";
 const WS_EX_APPWINDOW: u32 = 0x0004_0000;
 const MONITOR_DEFAULTTONULL: u32 = 0;
@@ -35,7 +34,6 @@ unsafe extern "system" {
     fn GetCurrentThreadId() -> u32;
 }
 
-/// `GetClassNameW`, as a `String`.
 fn class_name(hwnd: isize) -> String {
     let mut buffer = [0u16; 64];
     // SAFETY: the buffer is writable and its length is passed along.
@@ -65,8 +63,7 @@ unsafe extern "system" fn find_main(hwnd: isize, param: isize) -> i32 {
     i32::from(!matches)
 }
 
-/// The main window's handle: the one GPUI window of this thread's with an app window's
-/// style (GPUI opens all of them on this thread). A hidden or retitled window is found too.
+/// The one GPUI window of this thread's with an app window's style, even hidden or retitled.
 pub(super) fn main_window() -> Option<isize> {
     let mut found: isize = 0;
     // SAFETY: `found` outlives the enumeration, which runs to completion before returning.
@@ -80,15 +77,14 @@ pub(super) fn main_window() -> Option<isize> {
     (found != 0).then_some(found)
 }
 
-/// Whether the main window is hidden in the tray (`hide_main_window`), as against shown or
-/// minimized.
+/// Hidden in the tray (`hide_main_window`), as against minimized.
 pub fn main_window_hidden() -> bool {
     // SAFETY: a plain user32 call on a window of this thread's.
     main_window().is_some_and(|hwnd| unsafe { IsWindowVisible(hwnd) } == 0)
 }
 
-/// Takes the main window off the screen, the taskbar and Alt+Tab; the app keeps running in
-/// the tray. Posted rather than sent, since this runs inside the window's own close handling.
+/// Off the screen, the taskbar and Alt+Tab. Posted rather than sent, since this runs inside the
+/// window's own close handling.
 pub fn hide_main_window() {
     if let Some(hwnd) = main_window() {
         // SAFETY: a plain user32 call on a window of this thread's.
@@ -96,9 +92,8 @@ pub fn hide_main_window() {
     }
 }
 
-/// Shows the main window, restoring it if minimized, and brings it forward. Windows only
-/// lets the foreground move when the user asked for it, as a tray click or a second launch
-/// did; otherwise the taskbar button flashes instead, which is Windows' own answer.
+/// Windows only lets the foreground move when the user asked for it, as a tray click or a second
+/// launch did; otherwise the taskbar button flashes instead.
 pub fn show_main_window() {
     if let Some(hwnd) = main_window() {
         // SAFETY: plain user32 calls on a window of this thread's.
@@ -114,7 +109,7 @@ pub fn show_main_window() {
     }
 }
 
-/// Asks the main window to close the way its caption's X does, so the close goes through
+/// Closes the way the caption's X does, so the close goes through
 /// `Window::on_window_should_close`. GPUI's `remove_window` would skip that.
 pub fn request_close(_window: &mut Window) {
     if let Some(hwnd) = main_window() {
@@ -123,7 +118,6 @@ pub fn request_close(_window: &mut Window) {
     }
 }
 
-/// What `find_maximized` looks for and what it found.
 struct Search {
     monitor: isize,
     found: isize,
@@ -142,12 +136,11 @@ unsafe extern "system" fn find_maximized(hwnd: isize, param: isize) -> i32 {
     i32::from(!matches)
 }
 
-/// Takes `window` out of maximized. GPUI's `zoom_window` only maximizes, and the caption
-/// button's restore runs inside Windows' own click handling, which a click simulated by
-/// assistive technology never reaches. GPUI doesn't hand out the `HWND` without
-/// `raw-window-handle`, so the window is found among this thread's top-level windows (GPUI
-/// opens all of them on this thread) as the maximized one on `window`'s display: a display
-/// holds at most one maximized window of Toru's.
+/// GPUI's `zoom_window` only maximizes, and the caption button's restore runs inside Windows' own
+/// click handling, which a click simulated by assistive technology never reaches. GPUI doesn't
+/// hand out the `HWND` without `raw-window-handle`, so the window is found among this thread's
+/// top-level windows as the maximized one on `window`'s display: a display holds at most one
+/// maximized window of Toru's.
 pub fn restore_window(window: &Window, cx: &App) {
     let Some(display) = window.display(cx) else {
         return;

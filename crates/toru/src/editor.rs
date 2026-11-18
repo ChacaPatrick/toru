@@ -1,13 +1,4 @@
-//! The editor (DESIGN.md §5): a view that replaces the main window's body. The picture is a
-//! `Document` that `tiny-skia` renders to one bitmap, shown on the canvas at the `Viewport`'s
-//! zoom and position, under the floating tool pill, the context panel, the corners and the hint.
-//! While a mark is dragged, only the region around it is rendered again, as a small overlay
-//! on that bitmap, so a 4K picture isn't rebuilt and uploaded on every pointer move.
-//! The drawing tools of 8.2 put `Annotation`s on the document and Select moves and resizes them;
-//! 8.3 places text, typed in place, number badges and stickers. 8.4's Block is drawn the same
-//! way, its pixels computed by `block`; its Crop is a rectangle of the document that the canvas
-//! shows the whole picture around while it is adjusted; and its Eraser takes marks off. Each
-//! tool adds its behaviour on the canvas here and its groups to `panel`.
+//! DESIGN.md §5. Replaces the main window's body while open.
 
 pub mod annotation;
 pub mod block;
@@ -54,7 +45,7 @@ use typing::Typing;
 use viewport::Viewport;
 
 pub enum EditorEvent {
-    /// Back to session, with the picture if the card doesn't show it yet.
+    /// `None` when the card already shows the picture.
     Back(Option<Flattened>),
     Copy(Flattened),
     Save(Flattened),
@@ -65,51 +56,41 @@ pub enum EditorEvent {
 
 pub struct Editor {
     stored: CaptureId,
-    /// The card's name field, shared, so a rename here is the card's too.
+    /// Shared with the card, so a rename here is the card's too.
     name: Entity<InputState>,
-    /// Why the store refused the name being typed, shown in the top bar while it stands.
     name_error: Option<SharedString>,
     document: Document,
-    /// The document as last rendered, without the mark Select is dragging. `None` after an
-    /// edit, until the next frame rebuilds it.
+    /// Without the mark being dragged. `None` until the next frame renders it again.
     image: Option<Arc<RenderImage>>,
-    /// During a drag, the region of the picture around the mark as it is under the pointer,
-    /// laid over `image`. `None` after a pointer move, until the next frame rebuilds it.
+    /// During a drag only the region around the mark is rendered again, laid over `image`, so a
+    /// 4K picture isn't rebuilt and uploaded on every pointer move.
     overlay: Option<(IntRect, Arc<RenderImage>)>,
-    /// Pictures the canvas no longer shows, to be taken out of the GPU atlas at the next frame,
-    /// which is the first to have the window at hand.
+    /// Taken out of the GPU atlas at the next frame, the first to have the window at hand.
     stale_images: Vec<Arc<RenderImage>>,
     tool: Tool,
-    /// Each drawing tool's panel choices.
     options: Vec<(Tool, StrokeOptions)>,
-    /// The mark Select has picked, as its index in the document.
     selected: Option<usize>,
     typing: Option<Typing>,
-    /// The sticker tray's pictures, one per `Sticker::ALL`, drawn as `tray_key` says.
     tray: Vec<Arc<RenderImage>>,
     tray_key: Option<TrayKey>,
-    /// The Crop tool's rectangle, in whole-picture pixels, while there is one: held as a
-    /// rectangle mark so the handle, move and resize arithmetic is the marks'.
+    /// In whole-picture pixels; a rectangle mark, so the marks' handle arithmetic serves it.
     crop_draft: Option<Annotation>,
     viewport: Viewport,
-    /// The canvas's window bounds from the last frame, so zoom buttons can centre on it.
     canvas: Bounds<Pixels>,
     /// Device pixels per logical pixel at the last frame. 100% is one picture pixel per device
     /// pixel, so the picture's logical size depends on it.
     scale: f32,
-    /// The picture is at Fit, so it follows the canvas as the window resizes; a zoom ends that.
+    /// At Fit the picture follows the canvas as the window resizes; a zoom ends that.
     fitted: bool,
     drag: Option<Drag>,
     /// A slider drag has changed the selected mark: its later changes amend that undo step.
     live_edit: bool,
-    /// The root's focus, so the shortcut letters work wherever focus is inside the editor.
+    /// The root's, so the shortcut letters work wherever focus is inside the editor.
     focus: FocusHandle,
-    /// Back to session: focused when the editor opens.
-    back: FocusHandle,
-    /// The panel's Crop button, so Enter crops from it and the canvas but not from Cancel.
+    back_button: FocusHandle,
+    /// So Enter crops from the Crop button and the canvas but not from Cancel.
     crop_button: FocusHandle,
     panel_scroll: ScrollHandle,
-    /// Scrolls the panel to whichever of its controls takes keyboard focus.
     panel_focus: FocusInView,
     copied: Flash<()>,
 }
@@ -118,13 +99,11 @@ impl EventEmitter<EditorEvent> for Editor {}
 
 impl Focusable for Editor {
     fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.back.clone()
+        self.back_button.clone()
     }
 }
 
 impl Editor {
-    /// Opens the picture of the capture `stored` holds, with no annotations yet. `document` says
-    /// what the card and the saved file show.
     pub fn new(
         stored: CaptureId,
         name: Entity<InputState>,
@@ -160,7 +139,7 @@ impl Editor {
             drag: None,
             live_edit: false,
             focus: cx.focus_handle(),
-            back: cx.focus_handle().tab_stop(true),
+            back_button: cx.focus_handle().tab_stop(true),
             crop_button: cx.focus_handle().tab_stop(true),
             panel_scroll: ScrollHandle::new(),
             panel_focus: FocusInView::new(cx),
@@ -168,9 +147,8 @@ impl Editor {
         }
     }
 
-    /// The `demo` start-up argument: the Editor mockup's marks on the picture, placed as the
-    /// tools would place them, with a second text left being typed, so the editor can be looked
-    /// at without clicking. Each sits where the mockup has it, in a picture `1440 × 900` big.
+    /// The `demo` start-up argument: the Editor mockup's marks where the mockup has them on its
+    /// `1440 × 900` picture, with a second text left being typed.
     pub fn add_demo_marks(&mut self, cx: &mut Context<Self>) {
         // Large text and a hand pointing up and left, so they read at the mockup's zoom.
         for (tool, options) in &mut self.options {
@@ -200,13 +178,10 @@ impl Editor {
         self.start_typing(None, typing, cx);
     }
 
-    /// "Toru — editing screenshot_11_07_2026_3", for the title bar.
     pub fn title(&self, cx: &App) -> SharedString {
         format!("Toru — editing {}", self.name.read(cx).value()).into()
     }
 
-    /// Takes every picture this editor put in the GPU atlas back out. The main window calls it
-    /// when the editor closes; replaced pictures go at the next frame.
     pub fn release_images(&mut self, window: &mut Window) {
         let overlay = self.overlay.take().map(|(_, image)| image);
         for image in self
@@ -220,18 +195,14 @@ impl Editor {
         }
     }
 
-    /// Which capture is being edited.
     pub fn stored(&self) -> CaptureId {
         self.stored
     }
 
-    /// The card's name field.
     pub fn name_field(&self) -> Entity<InputState> {
         self.name.clone()
     }
 
-    /// Whether the picture has annotations, or text is being typed, which closing the editor
-    /// would lose.
     pub fn is_edited(&self) -> bool {
         self.document.is_edited()
             || self.typing.as_ref().is_some_and(|typing| {
@@ -242,8 +213,7 @@ impl Editor {
             })
     }
 
-    /// Why the store refused the name in the field, or `None` once it takes one. The main window
-    /// keeps this in step with the card's.
+    /// The main window keeps this in step with the card's.
     pub fn set_name_error(&mut self, error: Option<SharedString>, cx: &mut Context<Self>) {
         if self.name_error != error {
             self.name_error = error;
@@ -251,7 +221,6 @@ impl Editor {
         }
     }
 
-    /// "1440×900 · edited · not saved".
     fn status(&self) -> String {
         let mut parts = vec![format!(
             "{}×{}",
@@ -269,9 +238,6 @@ impl Editor {
         parts.join(" · ")
     }
 
-    /// Switches tools. Into or out of Crop the canvas changes what it shows, the whole picture
-    /// or the crop, and is laid out again; leaving Crop drops the rectangle unless `apply_crop`
-    /// took it first.
     fn set_tool(&mut self, tool: Tool, cx: &mut Context<Self>) {
         self.finish_typing(cx);
         let was_cropping = self.tool == Tool::Crop;
@@ -287,8 +253,7 @@ impl Editor {
         cx.notify();
     }
 
-    /// After the canvas changes what it shows, the whole picture or the crop: it is laid out
-    /// again at Fit, so the new picture sits centred at a zoom that fits, and rendered again.
+    /// For when the canvas switches between showing the whole picture and the crop.
     fn shown_changed(&mut self, cx: &mut Context<Self>) {
         self.fitted = true;
         if self.measured() {
@@ -297,7 +262,6 @@ impl Editor {
         self.document_changed(cx);
     }
 
-    /// The hint chip's text: what the tool does, or how to finish the text being typed.
     pub fn hint(&self) -> &'static str {
         if self.typing.is_some() {
             Tool::TYPING_HINT
@@ -314,29 +278,22 @@ impl Editor {
         }
     }
 
-    /// The selected mark, if Select has one.
     fn selection(&self) -> Option<(usize, &Annotation)> {
         let index = self.selected?;
         Some((index, self.document.annotations().get(index)?))
     }
 
-    /// After any change to the document: the canvas's picture is rendered again at the next
-    /// frame, and so is the drag's region.
     fn document_changed(&mut self, cx: &mut Context<Self>) {
         self.stale_images.extend(self.image.take());
         self.preview_changed(cx);
     }
 
-    /// After a pointer move during a drag: only the region around the mark is rendered again.
     fn preview_changed(&mut self, cx: &mut Context<Self>) {
         self.stale_images
             .extend(self.overlay.take().map(|(_, image)| image));
         cx.notify();
     }
 
-    /// Undo, redo, Reset and Delete wait while the canvas is being dragged: the drag holds the
-    /// index of the mark it found, which they would move from under it. Text being typed goes
-    /// on the document first, so the step they take is the one the user sees.
     fn undo(&mut self, cx: &mut Context<Self>) {
         self.step_history(Document::undo, cx);
     }
@@ -349,12 +306,11 @@ impl Editor {
         self.step_history(Document::reset, cx);
     }
 
-    /// Undo, redo or Reset: typing ends, then `step` the document and, if it did anything,
-    /// drop the selection. A step that changes the crop changes what the canvas shows, so it is
-    /// laid out again, and while the Crop tool is out its rectangle follows, so Enter can't
-    /// bring back a crop that was just undone or reset.
     fn step_history(&mut self, step: fn(&mut Document) -> bool, cx: &mut Context<Self>) {
+        // Text being typed goes on the document first, so the step taken is the one the user sees.
         self.finish_typing(cx);
+        // The drag holds the index of the mark it found, which a step (or Delete) would move from
+        // under it.
         if self.drag.is_some() {
             return;
         }
@@ -363,6 +319,7 @@ impl Editor {
             return;
         }
         self.select(None, cx);
+        // So Enter can't bring back a crop that was just undone or reset.
         if self.tool == Tool::Crop && self.document.crop() != crop {
             self.crop_draft = self.document_crop_draft();
         }
@@ -373,7 +330,6 @@ impl Editor {
         }
     }
 
-    /// Delete: takes the selected mark off, as one undo step.
     fn delete_selected(&mut self, cx: &mut Context<Self>) {
         if self.drag.is_some() {
             return;
@@ -407,7 +363,7 @@ impl Render for Editor {
         let chrome = self.measured().then(|| {
             let pill = div()
                 .absolute()
-                .top(px(chrome::EDGE))
+                .top(px(chrome::CHROME_INSET))
                 .left_0()
                 .right_0()
                 .flex()
@@ -442,7 +398,6 @@ impl Render for Editor {
     }
 }
 
-/// Runs `f` on the editor from a control's handler.
 fn on(
     cx: &Context<Editor>,
     f: impl Fn(&mut Editor, &mut Context<Editor>) + 'static,
@@ -451,7 +406,6 @@ fn on(
     move |_, cx| editor.update(cx, |this, cx| f(this, cx))
 }
 
-/// Runs `f` on the editor with a control's value, such as a chosen index.
 fn act<A: 'static>(
     cx: &Context<Editor>,
     f: impl Fn(&mut Editor, A, &mut Context<Editor>) + 'static,

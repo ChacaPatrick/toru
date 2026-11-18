@@ -1,6 +1,4 @@
-//! `.seg`: one choice among a few, such as the save format. It is one tab stop, like a radio
-//! group: focus sits on the chosen segment, the arrow keys move the choice and focus together, and
-//! each segment can also be clicked.
+//! `.seg`: one choice among a few, such as the save format.
 
 use std::{rc::Rc, sync::Arc};
 
@@ -24,7 +22,6 @@ pub struct Segmented {
 }
 
 impl Segmented {
-    /// `label` names the group, such as "Image format"; `selected` indexes `options`.
     pub fn new(
         id: impl Into<ElementId>,
         label: impl Into<SharedString>,

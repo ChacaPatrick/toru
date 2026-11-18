@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{fs, io};
 
-/// `GUID`.
 #[repr(C)]
 struct Guid(u32, u16, u16, [u8; 8]);
 
@@ -48,7 +47,7 @@ unsafe extern "system" {
     fn CoTaskMemFree(memory: *mut std::ffi::c_void);
 }
 
-/// Where the Pictures folder really is, which may have been moved or redirected to OneDrive.
+/// It may have been moved or redirected to OneDrive.
 fn pictures_folder() -> Option<PathBuf> {
     let mut text = std::ptr::null_mut();
     // SAFETY: `PICTURES` and `text` outlive the call.
@@ -72,8 +71,8 @@ pub fn default_save_folder() -> Option<PathBuf> {
     Some(pictures.join("Screenshots"))
 }
 
-/// Sends a file to the Recycle Bin, asking nothing and showing nothing. A missing file is
-/// `NotFound`, and anything but a file is refused, since the shell would take a whole folder.
+/// Asks nothing and shows nothing. A missing file is `NotFound`, and anything but a file is
+/// refused, since the shell would take a whole folder.
 /// On a drive with no Recycle Bin, a network share say, the shell deletes the file for good.
 pub fn recycle_file(path: &Path) -> io::Result<()> {
     if !fs::metadata(path)?.is_file() {
@@ -105,13 +104,12 @@ pub fn recycle_file(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Explorer's own syntax for opening a folder with a file selected.
 pub(super) fn select_argument(path: &Path) -> String {
     format!("/select,\"{}\"", path.display())
 }
 
-/// Opens Explorer on the file's folder with the file selected, or just on the folder if the
-/// file has gone, since `/select` on a missing file opens Documents instead.
+/// Just the folder if the file has gone, since `/select` on a missing file opens Documents
+/// instead.
 pub fn reveal_file(path: &Path) -> io::Result<()> {
     let mut explorer = Command::new("explorer");
     if path.is_file() {

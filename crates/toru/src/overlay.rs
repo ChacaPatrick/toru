@@ -1,18 +1,4 @@
-//! The capture overlay (DESIGN.md §6) for Region and Window, built the way `docs/spikes.md` §1.2
-//! proved: Toru's own windows are taken out of what captures see (§5.1), every monitor is
-//! captured into memory on a background thread, then one borderless topmost window per monitor
-//! shows its frozen frame, dimmed. In Region, a drag selects a region, with the size in physical
-//! pixels and a magnifier in a panel beside the pointer, and releasing or Enter confirms. In
-//! Window, the top-level windows are listed just before the screens freeze, the one under the
-//! pointer is lit up with its size and title, and a click or Enter captures it. Esc on any
-//! monitor closes them all, and so does an overlay closed any other way, such as Alt+F4. The
-//! image comes from the original frames, so what the user gets is what was on screen, not a
-//! readback of the overlay.
-//!
-//! Everything is in physical pixels and drawn at `physical / scale`, so edges land on device
-//! pixels at any scale factor. Each monitor's overlay draws in its own frame; the desktop
-//! coordinates monitors and windows share only enter for picking a window and stitching one that
-//! spans monitors.
+//! The capture overlay (DESIGN.md §6), as `docs/spikes.md` §1.2 proved; geometry in physical pixels.
 
 mod freeze;
 mod geometry;
@@ -36,8 +22,7 @@ use geometry::{Pt, Rect, Selection};
 pub use session::start;
 use session::{Session, finish};
 
-/// One monitor's overlay: its frozen frame, the drag or the picked window on it, and the pointer
-/// for the panel.
+/// One monitor's overlay.
 struct Overlay {
     mode: CaptureMode,
     /// This monitor on the desktop.
@@ -46,15 +31,15 @@ struct Overlay {
     image: Arc<RenderImage>,
     /// Every monitor's frame, for a window that reaches beyond this one.
     frames: Rc<[MonitorFrame]>,
-    /// The windows to pick from, topmost first. Empty in Region.
+    /// Topmost first. Empty in Region.
     windows: Rc<[TopWindow]>,
     focus: FocusHandle,
     /// The frame pixel under the pointer, once it has moved over this monitor.
     pointer: Option<Pt>,
-    /// The drag in progress, in Region. Releasing confirms it, so it never outlives the drag.
+    /// Releasing confirms it, so it never outlives the drag.
     selection: Option<Selection>,
-    /// The window under the pointer, in Window, as an index into `windows`. Every overlay holds
-    /// the same one, so a window spanning monitors lights up on each.
+    /// An index into `windows`. Every overlay holds the same one, so a window spanning monitors
+    /// lights up on each.
     picked: Option<usize>,
 }
 
@@ -63,7 +48,6 @@ impl Overlay {
         self.frame.dimensions()
     }
 
-    /// A window position as a pair of logical pixels.
     fn logical(position: Point<Pixels>) -> (f32, f32) {
         (f32::from(position.x), f32::from(position.y))
     }
@@ -76,7 +60,7 @@ impl Overlay {
         }
     }
 
-    /// The pointer has moved, perhaps while dragging, and perhaps past this monitor's edge.
+    /// Perhaps while dragging past this monitor's edge.
     fn moved(&mut self, position: Point<Pixels>, scale: f32, cx: &mut Context<Self>) {
         let position = Self::logical(position);
         let frame = self.frame_size();
@@ -97,8 +81,7 @@ impl Overlay {
         cx.notify();
     }
 
-    /// Makes `picked` the window under the pointer on every overlay, since it may stretch onto
-    /// other monitors, whose overlays light up their part of it.
+    /// On every overlay, since the window may stretch onto other monitors.
     fn pick(&mut self, picked: Option<usize>, cx: &mut Context<Self>) {
         if self.picked == picked {
             return;
@@ -121,8 +104,7 @@ impl Overlay {
         });
     }
 
-    /// The button came up, or Enter was pressed: captures what is selected or picked, if
-    /// anything; a bare click in Region, or Enter over bare desktop in Window, waits.
+    /// A bare click in Region, or Enter over bare desktop in Window, waits.
     fn confirm(&mut self, cx: &mut Context<Self>) {
         let image = match self.mode {
             CaptureMode::Region => self.crop_selection(cx),
@@ -157,8 +139,7 @@ impl Overlay {
         Some(crop)
     }
 
-    /// The picked window as the frozen monitors show it (`geometry::compose`): a window
-    /// spanning two monitors is stitched from both frames.
+    /// A window spanning two monitors is stitched from both frames.
     fn crop_picked(&self) -> Option<RgbaImage> {
         let window = self.windows.get(self.picked?)?;
         let monitors: Vec<(Rect, &RgbaImage)> = self
@@ -173,8 +154,7 @@ impl Overlay {
         cx.defer(|cx| finish(None, cx));
     }
 
-    /// The rect to light up on this monitor, in frame pixels: the drag, or the part of the
-    /// picked window that is on this monitor.
+    /// In frame pixels.
     fn lit(&self, frame: Rect) -> Option<Rect> {
         match self.mode {
             CaptureMode::Region => self.selection.map(Selection::rect),
@@ -188,18 +168,13 @@ impl Overlay {
         }
     }
 
-    /// The mouse layer. A plain div's listeners stop once the pointer leaves its hitbox, which
-    /// a drag does the moment it crosses onto the next monitor, although Windows keeps sending
-    /// moves and the release to the window that holds the mouse (`docs/spikes.md` §1.2; GPUI
-    /// calls `SetCapture` on the press). Capturing the pointer
-    /// on the press keeps GPUI's capture set until the button comes up, and the geometry clamps
-    /// positions past the edge to it.
+    /// A plain div's listeners stop once a drag crosses onto the next monitor, although Windows
+    /// keeps sending moves and the release to the window holding the mouse (`docs/spikes.md`
+    /// §1.2). Capturing the pointer on the press keeps them coming until the button comes up.
     ///
-    /// The capture is checked as `captured_hitbox().is_some()`, not through the hitbox's id:
-    /// GPUI hands out a fresh `HitboxId` on every redraw (`next_hitbox_id` is never reset), the
-    /// press redraws, and from then on the captured id is one no listener holds, so
-    /// `is_hovered` would be back to plain hit testing and fail past the edge. This layer is the
-    /// only thing in the window that captures, so any capture is this drag.
+    /// The capture is checked as `captured_hitbox().is_some()`, not by the hitbox's id: GPUI hands
+    /// out a fresh `HitboxId` on every redraw, so after the press redraws no listener holds the
+    /// captured id. This layer is the only thing in the window that captures.
     fn mouse_layer(&self, cx: &Context<Self>) -> impl IntoElement {
         let view = cx.entity();
         canvas(
@@ -242,7 +217,7 @@ impl Overlay {
     }
 }
 
-/// A div placed over frame pixels. Dividing by the scale keeps its edges on device pixels.
+/// Dividing by the scale keeps its edges on device pixels.
 fn place(rect: Rect, scale: f32) -> Div {
     let logical = |value: i32| px(value as f32 / scale);
     div()
@@ -253,8 +228,7 @@ fn place(rect: Rect, scale: f32) -> Div {
         .h(logical(rect.height))
 }
 
-/// A line around `rect`, `width` logical pixels thick, drawn `outside` logical pixels beyond the
-/// rect's edge so the pixels inside stay untouched.
+/// Drawn `outside` logical pixels beyond the rect's edge, so the pixels inside stay untouched.
 fn outline(rect: Rect, scale: f32, outside: Pixels, width: Pixels, color: Hsla) -> Div {
     let logical = |value: i32| px(value as f32 / scale);
     div()
@@ -284,10 +258,9 @@ impl Render for Overlay {
             Some(rect) => geometry::around(rect, frame_rect.width, frame_rect.height),
             None => vec![frame_rect],
         };
-        // The panel follows the pointer, so it belongs to the monitor the pointer is on. The
-        // platform never reports the pointer leaving through a mouse event here, but it does
-        // clear the window's hovered flag; a drag keeps the panel, since the pointer may be past
-        // this monitor's edge while the drag goes on.
+        // The panel belongs to the monitor the pointer is on. No mouse event reports the pointer
+        // leaving, but the window's hovered flag clears; a drag keeps the panel, since the
+        // pointer may be past this monitor's edge while the drag goes on.
         let panel = self
             .pointer
             .filter(|_| self.selection.is_some() || window.is_window_hovered())
@@ -315,7 +288,6 @@ impl Render for Overlay {
                     .object_fit(ObjectFit::Fill),
             )
             .children(dimmed.into_iter().map(|part| place(part, scale).bg(o.dim)))
-            // The halo sits just outside the edge, so the edge reads on light and dark alike.
             .children(
                 rect.filter(|rect| rect.width > 0 && rect.height > 0)
                     .map(|rect| {

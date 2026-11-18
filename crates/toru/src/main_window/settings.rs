@@ -1,15 +1,5 @@
-//! The settings column (DESIGN.md §2 with CLAUDE.md's overrides): Session, Capture (with Start
-//! with Windows, which has no mockup and sits by Keep running in the tray), Shortcuts,
-//! Save to, Name pattern, Format and On close, each group a label over its controls, as the
-//! mockups' `.settings` lays them out, then Delete unsaved after (`retention`), which has no
-//! mockup and follows On close since both are about unsaved captures, then Look and Palette
-//! (§8), which have no mockup and follow the Palettes boards, and last Updates (`updates`), which
-//! has no mockup either. Every control shows what is in `Settings` and every change
-//! goes through `MainWindow::change_settings`. The column scrolls on its own when the window is
-//! short, and follows keyboard focus so a focused control always shows with its ring. Its hide
-//! button, at the right of the first label, collapses it; the toolbar's gear brings it back.
-//! The Palette group's fourth row is the custom palette (`custom_palette`), with a button that
-//! opens its editor.
+//! The settings column (DESIGN.md §2 with CLAUDE.md's overrides). Groups without a mockup sit by
+//! their kin: Start with Windows by Keep running in the tray, Delete unsaved after by On close.
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -40,14 +30,13 @@ const GAP: f32 = 11.;
 const ROW_GAP: f32 = 10.;
 const FIELD_HEIGHT: f32 = 36.;
 pub(super) const PATTERN_HEIGHT: f32 = 34.;
-/// A label row is at least this tall. The hide button, centred on the first one, overhangs it
-/// equally above and below, so the label stays where the mockups have it and the ring above the
-/// button clears the column's top edge.
+/// The hide button, centred on the first label row, overhangs it equally above and below, so the
+/// label stays where the mockups have it and the ring above the button clears the column's top.
 const LABEL_ROW_HEIGHT: f32 = 16.;
 /// The least air between two click targets (DESIGN.md §7).
 const TARGET_GAP: f32 = 8.;
 
-/// The Palettes boards' `.swatches`: a strip of four, the width of its row.
+/// The Palettes boards' `.swatches`.
 const SWATCH_HEIGHT: f32 = 26.;
 const SWATCH_GAP: f32 = 6.;
 
@@ -310,9 +299,8 @@ pub fn settings_column(
 }
 
 impl MainWindow {
-    /// A change to the look or palette. The pickers show the active theme, which the start-up
-    /// arguments can set apart from the saved look, so `change` gets the theme's look and the
-    /// choice is saved under it; then every window takes the new theme.
+    /// The pickers show the active theme, which the start-up arguments can set apart from the
+    /// saved look, so the choice is saved under the theme's look.
     pub(super) fn change_appearance(
         &mut self,
         cx: &mut Context<Self>,
@@ -326,7 +314,6 @@ impl MainWindow {
         set_theme(Theme::from_settings(&self.settings), cx);
     }
 
-    /// Start with Windows, which lives in the registry rather than `Settings`.
     fn set_starts_with_windows(&mut self, on: bool, cx: &mut Context<Self>) {
         match platform::set_starts_with_windows(on) {
             Ok(()) => self.starts_with_windows = on,
@@ -336,8 +323,7 @@ impl MainWindow {
     }
 }
 
-/// The active look's palettes, each row its name over its four colours, then the custom one
-/// with the colours stored for it. The look's choice is remembered when another look is shown.
+/// The look's choice is remembered when another look is shown.
 fn palette_picker(theme: &Theme, settings: &Settings, cx: &Context<MainWindow>) -> RadioGroup {
     let palettes = Theme::palettes(theme.look);
     let custom = custom_palette(theme.look, settings.appearance(theme.look));
@@ -369,8 +355,7 @@ fn palette_picker(theme: &Theme, settings: &Settings, cx: &Context<MainWindow>) 
     }))
 }
 
-/// `.swatches`: a palette's colours in equal boxes across the row, each edged like an input so
-/// the ones matching the surface still show.
+/// `.swatches`, each edged like an input so the ones matching the surface still show.
 fn swatches(theme: &Theme, colors: &[Hsla; 4]) -> Div {
     let border = theme.borders.input;
     div()
@@ -387,7 +372,7 @@ fn swatches(theme: &Theme, colors: &[Hsla; 4]) -> Div {
         }))
 }
 
-/// A handler that takes the control's value, such as the chosen index, along to the view.
+/// `act`, with the control's value, such as the chosen index.
 pub(super) fn act_with<T: 'static>(
     cx: &Context<MainWindow>,
     f: impl Fn(&mut MainWindow, &mut Context<MainWindow>, T) + 'static,
@@ -396,7 +381,7 @@ pub(super) fn act_with<T: 'static>(
     move |value, _, cx| view.update(cx, |this, cx| f(this, cx, value))
 }
 
-/// `.group`: its label over its controls.
+/// `.group`.
 pub(super) fn group(theme: &Theme, label: &'static str) -> Div {
     div()
         .flex()
@@ -405,10 +390,9 @@ pub(super) fn group(theme: &Theme, label: &'static str) -> Div {
         .child(label_row(theme, label))
 }
 
-/// A group whose label row also holds a small button at the right, overhanging the row by the
-/// same amount above and below so the label stays where the mockups put it. The group's gap is
-/// less than that overhang plus §7's air, so the row makes up the difference below and the
-/// control under it starts clear of the button.
+/// The button overhangs the label row equally above and below so the label stays where the
+/// mockups put it. The group's gap is less than that overhang plus §7's air, so the row makes up
+/// the difference below.
 fn group_with(theme: &Theme, label: &'static str, button: Button) -> Div {
     let overhang = (BUTTON_SMALL_HEIGHT - LABEL_ROW_HEIGHT) / 2.;
     let clearance = (overhang + TARGET_GAP - GAP).max(0.);
@@ -440,8 +424,8 @@ fn label_row(theme: &Theme, label: &'static str) -> Div {
         )
 }
 
-/// `.row`: a setting's name with its switch at the right. Pressing the name toggles too, as a
-/// `<label for>` does, and the name is a target as tall as the switch's box (DESIGN.md §7).
+/// `.row`. Pressing the name toggles too, as a `<label for>` does, and the name is a target as
+/// tall as the switch's box (DESIGN.md §7).
 pub(super) fn toggle(
     cx: &Context<MainWindow>,
     id: &'static str,
@@ -455,7 +439,7 @@ pub(super) fn toggle(
     })
 }
 
-/// `toggle` for a setting kept outside `Settings`, which `set` changes itself.
+/// For a setting kept outside `Settings`, which `set` changes itself.
 fn toggle_with(
     cx: &Context<MainWindow>,
     id: &'static str,
@@ -473,9 +457,8 @@ fn toggle_with(
         .child(
             div()
                 .id(ElementId::NamedChild(Arc::new(id.into()), "label".into()))
-                // Wraps, as the PixelArt mockup's longer labels do, instead of pushing the
-                // switch out of the column or running into it. A column, so the text is as wide
-                // as the label's box and wraps there: as an item of a row it would keep its
+                // Wraps, as the PixelArt mockup's longer labels do. A column, so the text is as
+                // wide as the label's box and wraps there: as an item of a row it would keep its
                 // whole width and spill over the row's gap.
                 .flex_1()
                 .min_w_0()
@@ -495,8 +478,7 @@ fn toggle_with(
         )
 }
 
-/// A shortcut row: the keys, or "Not set", with what they capture at the right. A shortcut
-/// that isn't working says so in the text colour under its keys; the dialog says why.
+/// A shortcut that isn't working says so under its keys; the dialog says why.
 fn shortcut(theme: &Theme, planned: Option<&Planned>, action: &'static str) -> Stateful<Div> {
     let keys = planned
         .and_then(|row| row.text.as_deref())
@@ -538,7 +520,7 @@ pub(super) fn hint(theme: &Theme, text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
-/// `.field`: the save folder as one line of the field font, clipped at the right.
+/// `.field`.
 fn folder_field(theme: &Theme, folder: Option<PathBuf>) -> Stateful<Div> {
     let border = theme.borders.input;
     let path = folder.map_or_else(
@@ -564,9 +546,8 @@ fn folder_field(theme: &Theme, folder: Option<PathBuf>) -> Stateful<Div> {
         .child(path)
 }
 
-/// Under the pattern field: its hint, or, while the typed pattern is invalid, what is wrong, in
-/// the text colour so the words carry it (DESIGN.md §7). Both are one line in the same place, so
-/// nothing below moves when one replaces the other.
+/// An error is in the text colour so the words carry it (DESIGN.md §7). Hint and error are one
+/// line in the same place, so nothing below moves when one replaces the other.
 fn pattern_hint(theme: &Theme, error: Option<&NameError>) -> Stateful<Div> {
     let (text, color) = match error {
         Some(error) => (pattern_message(error), theme.colors.text),
@@ -585,7 +566,7 @@ fn pattern_hint(theme: &Theme, error: Option<&NameError>) -> Stateful<Div> {
         .text_ellipsis()
 }
 
-/// What is wrong with a pattern, short enough for one line of the column in every look.
+/// Short enough for one line of the column in every look.
 pub fn pattern_message(error: &NameError) -> String {
     match error {
         NameError::Empty => "Type a name pattern.".to_string(),
@@ -600,13 +581,12 @@ pub fn pattern_message(error: &NameError) -> String {
     }
 }
 
-/// A row of the Shortcuts list, read as one line.
 fn shortcut_row_text(keys: &str, action: &str, broken: bool) -> String {
     let broken = if broken { ", not working" } else { "" };
     format!("{keys} — {action}{broken}")
 }
 
-/// "Ctrl+Shift+W" as the mockups space it: "Ctrl + Shift + W".
+/// Spaced as the mockups do.
 pub fn shortcut_text(keys: &str) -> String {
     keys.replace('+', " + ")
 }

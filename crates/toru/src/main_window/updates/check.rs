@@ -11,12 +11,10 @@ use crate::platform;
 const MANIFEST_URL: &str =
     "https://github.com/ChacaPatrick/toru/releases/latest/download/toru-update.txt";
 
-/// The version this build is.
 pub fn current_version() -> Version {
     Version::parse(env!("CARGO_PKG_VERSION")).expect("the package version is x.y.z")
 }
 
-/// Where the manifest is read from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Source {
     url: String,
@@ -35,7 +33,6 @@ pub(super) fn source(named: Option<String>, release: bool) -> Option<Source> {
     }
 }
 
-/// Whether an installer may be fetched from `url`: only over HTTPS, or from a file in a test.
 fn installer_allowed(url: &str, test: bool) -> bool {
     url.starts_with("https://") || (test && url.starts_with("file://"))
 }
@@ -44,7 +41,7 @@ fn installer_name(version: Version) -> String {
     format!("Toru-{version}-setup.exe")
 }
 
-/// An update whose installer is downloaded and waiting.
+/// Its installer is downloaded and waiting.
 #[derive(Debug, PartialEq, Eq)]
 pub(in crate::main_window) struct Update {
     pub(super) version: Version,
@@ -58,9 +55,7 @@ pub(super) enum Checked {
     Ready(Update),
 }
 
-/// Reads the manifest and, if it names a version newer than `current`, downloads its installer
-/// into `folder` unless it is there already. The download gets its name only once it is whole.
-/// Blocks, so it runs off the main thread.
+/// The download gets its name only once it is whole. Blocks, so it runs off the main thread.
 pub(super) fn check(source: &Source, current: Version, folder: &Path) -> io::Result<Checked> {
     let manifest = Manifest::parse(&platform::fetch_text(&source.url)?)
         .ok_or_else(|| io::Error::other("not an update manifest"))?;
@@ -86,8 +81,8 @@ pub(super) fn check(source: &Source, current: Version, folder: &Path) -> io::Res
     }))
 }
 
-/// Removes every file in the updates folder but `keep`: installers for other versions, the one
-/// just installed among them, and downloads cut short. One still in use stays until next time.
+/// Takes the one just installed and downloads cut short too. One still in use stays until next
+/// time.
 fn keep_only(folder: &Path, keep: Option<&Path>) {
     let Ok(entries) = fs::read_dir(folder) else {
         return;
@@ -174,7 +169,6 @@ mod tests {
             format!("file:///{}", path.replace(' ', "%20"))
         }
 
-        /// A manifest for `version` in `dir`, whose installer is a file beside it.
         fn publish(dir: &Path, version: &str) -> Source {
             let installer = dir.join("published-setup.exe");
             fs::write(&installer, format!("setup {version}")).unwrap();

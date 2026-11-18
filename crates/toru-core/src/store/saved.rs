@@ -8,16 +8,15 @@ use super::{CaptureId, Result, Store, StoreError};
 use crate::naming::fold_case;
 
 impl Store {
-    /// Records that the capture was saved to `path`, a file that must already exist. The temp copy
-    /// of the full image is then removed, so saved captures don't pile up in the temp folder
-    /// forever. The thumbnail stays for the gallery. If the picture hides some of the capture,
-    /// the kept original goes too, so what was hidden is gone.
+    /// `path` must already exist. The temp copy of the full image goes, so saved captures don't
+    /// pile up in the temp folder; the thumbnail stays for the gallery. If the picture hides some
+    /// of the capture, the kept original goes too.
     pub fn mark_saved(&self, id: CaptureId, path: &Path) -> Result<()> {
         self.record_saved(id, path, None)
     }
 
-    /// `mark_saved`, with `redacted` saying whether the saved picture hides some of the capture,
-    /// or `None` if it is the capture's picture as stored.
+    /// `redacted`: whether the saved picture hides some of the capture, or `None` if it is the
+    /// capture's picture as stored.
     pub(crate) fn record_saved(
         &self,
         id: CaptureId,

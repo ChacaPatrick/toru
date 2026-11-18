@@ -6,7 +6,6 @@ use gpui::Keystroke;
 use super::keys::{key_from_name, key_name, stands_alone};
 use crate::platform::HeldModifiers;
 
-/// A key combination: any of the four modifiers and one key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Shortcut {
     pub control: bool,
@@ -16,10 +15,9 @@ pub struct Shortcut {
     pub key: Code,
 }
 
-/// Why a key press or a stored string isn't a shortcut.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShortcutError {
-    /// Not a key a shortcut can use, named as the user typed or pressed it.
+    /// Named as the user typed or pressed it.
     UnknownKey(String),
     /// Modifiers with no key, or two keys.
     NotOneKey,
@@ -49,7 +47,7 @@ impl Shortcut {
         })
     }
 
-    /// A stored string: modifiers and one key joined by `+`, in any order and case.
+    /// Modifiers and one key joined by `+`, in any order and case.
     pub fn parse(text: &str) -> Result<Shortcut, ShortcutError> {
         let (mut control, mut alt, mut shift, mut win) = (false, false, false, false);
         let mut key = None;
@@ -77,15 +75,13 @@ impl Shortcut {
         )
     }
 
-    /// The key found down while recording (`platform::pressed_key`) with the modifiers held
-    /// along with it.
     pub fn from_held(key: Code, held: HeldModifiers) -> Result<Shortcut, ShortcutError> {
         Shortcut::new(held.control, held.alt, held.shift, held.win, key)
     }
 
-    /// A key pressed while recording, by the name GPUI gives it, where the platform can't say
-    /// which key is down. GPUI names a key by what it types, so Shift+1 arrives as "!" and is
-    /// refused; a modifier pressed alone arrives as no keystroke at all.
+    /// For where the platform can't say which key is down. GPUI names a key by what it types, so
+    /// Shift+1 arrives as "!" and is refused; a modifier pressed alone arrives as no keystroke at
+    /// all.
     pub fn from_keystroke(keystroke: &Keystroke) -> Result<Shortcut, ShortcutError> {
         let m = keystroke.modifiers;
         let key = key_from_name(&keystroke.key)
@@ -133,7 +129,6 @@ impl fmt::Display for Shortcut {
     }
 }
 
-/// Why a key press was not recorded.
 pub fn refusal_text(error: &ShortcutError) -> String {
     match error {
         ShortcutError::UnknownKey(key) => format!("“{key}” can't be a shortcut key."),

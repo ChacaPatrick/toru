@@ -1,5 +1,4 @@
-//! The tools of DESIGN.md §5, in the pill's order and groups, each with its shortcut letter,
-//! icon and hint, the shape a drawing tool leaves and the options its panel holds.
+//! The tools of DESIGN.md §5.
 
 use super::annotation::{Kind, Shape};
 pub use super::block::BlockKind;
@@ -25,7 +24,6 @@ pub enum Tool {
     Eraser,
 }
 
-/// The pill's groups, separated by a rule.
 pub const GROUPS: [&[Tool]; 5] = [
     &[Tool::Select, Tool::Pan],
     &[Tool::Crop, Tool::Block],
@@ -41,7 +39,6 @@ pub const GROUPS: [&[Tool]; 5] = [
 ];
 
 impl Tool {
-    /// Every tool, in pill order.
     pub fn all() -> impl Iterator<Item = Tool> {
         GROUPS.iter().flat_map(|group| group.iter().copied())
     }
@@ -65,7 +62,6 @@ impl Tool {
         }
     }
 
-    /// The shortcut letter, as drawn on the tool.
     pub fn key(self) -> &'static str {
         match self {
             Tool::Select => "V",
@@ -85,7 +81,6 @@ impl Tool {
         }
     }
 
-    /// The tool a bare key press picks, from the keystroke's lowercase key.
     pub fn for_key(key: &str) -> Option<Tool> {
         Tool::all().find(|tool| tool.key().eq_ignore_ascii_case(key))
     }
@@ -109,8 +104,6 @@ impl Tool {
         }
     }
 
-    /// The shape the tool drags out, or `None` for a tool that doesn't draw one. The Arrow
-    /// takes its head and the Block its kind from `options`.
     pub fn shape(self, options: &StrokeOptions) -> Option<Shape> {
         Some(match self {
             Tool::Block => Shape::Block(options.block),
@@ -124,8 +117,6 @@ impl Tool {
         })
     }
 
-    /// The kind of mark the tool leaves, dragged out or placed, or `None` for a tool that
-    /// leaves none.
     pub fn kind(self) -> Option<Kind> {
         Some(match self {
             Tool::Block => Kind::Block,
@@ -142,12 +133,10 @@ impl Tool {
         })
     }
 
-    /// "Select (V)", as assistive technology reads the tool.
     pub fn aria_label(self) -> String {
         format!("{} ({})", self.label(), self.key())
     }
 
-    /// The hint chip's text while the tool is active.
     pub fn hint(self) -> &'static str {
         match self {
             Tool::Select => {
@@ -173,7 +162,6 @@ impl Tool {
         }
     }
 
-    /// The hint while text is being typed.
     pub const TYPING_HINT: &'static str =
         "Type · Enter for a new line · Esc or click away to finish";
 }
@@ -196,7 +184,7 @@ impl Width {
         }
     }
 
-    /// The stroke in picture pixels, which is also the height of its bar in the panel.
+    /// In picture pixels; also the height of its bar in the panel.
     pub fn pixels(self) -> f32 {
         match self {
             Width::Thin => 1.,
@@ -208,13 +196,9 @@ impl Width {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Head {
-    /// →
     Single,
-    /// ↔
     Double,
-    /// ⟶
     Long,
-    /// ↝
     Curly,
 }
 
@@ -259,8 +243,7 @@ impl LineStyle {
     }
 }
 
-/// A text annotation's size, as a multiple of the look's `anno_text` size: the mockup's text is
-/// the smallest.
+/// A multiple of the look's `anno_text` size; the mockup's text is the smallest.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TextSize {
     Small,
@@ -286,7 +269,6 @@ impl TextSize {
         }
     }
 
-    /// The short label on the option.
     pub fn glyph(self) -> &'static str {
         match self {
             TextSize::Small => "S",
@@ -305,12 +287,12 @@ impl TextSize {
         }
     }
 
-    /// The text size in picture pixels in `theme`'s look.
+    /// In picture pixels.
     pub fn pixels(self, theme: &Theme) -> f32 {
         f32::from(theme.type_scale.anno_text.size) * self.scale()
     }
 
-    /// The preset nearest to a text `pixels` big, for showing a text that was resized by hand.
+    /// For a text that was resized by hand.
     pub fn nearest(pixels: f32, theme: &Theme) -> TextSize {
         TextSize::ALL
             .into_iter()
@@ -323,7 +305,6 @@ impl TextSize {
     }
 }
 
-/// The context panel's groups. Each tool shows the ones it needs, in this order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Group {
     Stroke,
@@ -334,7 +315,6 @@ pub enum Group {
     Size,
     Sticker,
     Opacity,
-    /// Blur / Pixelate / Solid.
     Block,
     /// A Solid block's colour, from the stroke swatches.
     Fill,
@@ -357,10 +337,7 @@ impl Group {
     }
 }
 
-/// The panel's groups for a kind of mark: the Arrow's full set from the mockup, the other lines
-/// and boxes without the head, the pens without a line style, which freehand doesn't need, text
-/// with its font and size, a badge with its colour, the stickers' tray, and a block's kind with
-/// its colour, which the panel shows only while the block is solid.
+/// Freehand doesn't need a line style.
 pub fn groups(kind: Kind) -> &'static [Group] {
     match kind {
         Kind::Block => &[Group::Block, Group::Fill],
@@ -381,8 +358,6 @@ pub fn groups(kind: Kind) -> &'static [Group] {
     }
 }
 
-/// A tool's panel choices, kept per tool while the editor is open, and what a mark on the
-/// picture is drawn with. Each tool reads the fields its groups show.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct StrokeOptions {
     /// Index into `Colors::stroke_swatches`.
@@ -390,7 +365,7 @@ pub struct StrokeOptions {
     pub width: Width,
     pub head: Head,
     pub style: LineStyle,
-    /// Text: which of the look's two bundled families.
+    /// Which of the look's two bundled families text is set in.
     pub font: Family,
     pub size: TextSize,
     pub sticker: Sticker,
@@ -405,10 +380,8 @@ impl StrokeOptions {
     const YELLOW: usize = 3;
     const ANNO: usize = 2;
 
-    /// The mockups' chosen options: ink, medium, a single head, solid, fully opaque, and a
-    /// blurring block. The highlighter starts yellow and half-strength, so the text under it
-    /// stays readable; text and badges start in the annotation colour, text in the look's
-    /// `anno_text` face at the mockup's size.
+    /// The mockups' chosen options. The highlighter starts half-strength, so the text under it
+    /// stays readable.
     pub fn for_kind(kind: Kind, theme: &Theme) -> StrokeOptions {
         let mut options = StrokeOptions {
             stroke: 0,

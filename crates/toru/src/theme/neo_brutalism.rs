@@ -1,6 +1,3 @@
-//! The NeoBrutalism look, copied from the "NeoBrutalism" entry of `design/tokens.json`: black
-//! 3px borders, hard black shadows, flat blocks of colour and uppercase labels.
-
 use gpui::FontWeight;
 use toru_core::settings::Look;
 
@@ -42,13 +39,10 @@ pub fn theme(palette: usize) -> Theme {
             c.title_bg = hex(0xff9f1c);
             c.thumb = Fill::Solid(hex(0xc6ff5c));
             c.toast_bg = hex(0xc6ff5c);
-            // tokens.json puts white text on the blue (#4d7cff): 3.7:1 on the primary button, and
-            // 1.3:1 and 1.9:1 where `.chip.saved` and `.bulk button.main` keep their mint and
-            // yellow. Black, as the other two palettes use, is 5.6:1 or better on all three. The
-            // blue selected card (#4d7cff) drops the hint text to 3.4:1; a pale tint of the same
-            // blue keeps it at 10.6:1 behind the 3px outline, and is light enough for the blue
-            // focus ring to hold 3.1:1 on it, as on the name field of a selected card (DESIGN.md
-            // §7).
+            // tokens.json puts white text on the blue: 3.7:1 on the primary button, 1.3:1 and
+            // 1.9:1 on `.chip.saved`'s mint and `.bulk button.main`'s yellow. Black is 5.6:1 or
+            // better on all three. The blue selected card drops the hint text to 3.4:1; a pale
+            // tint keeps it at 10.6:1 and the blue focus ring at 3.1:1 (DESIGN.md §7).
             c.accent_text = hex(0x000000);
             c.surface_sel = hex(0xe3ebff);
             c.chip_saved_text = c.accent_text;
@@ -91,18 +85,17 @@ pub fn theme(palette: usize) -> Theme {
             c.bulk_text = hex(0x000000);
             c.bulk_sep = hex(0x999999);
             c.load_bg = hex(0x1e1e1e);
-            // The look's `extra_css` fixes these at the light palettes' black and cream, which
-            // vanish here: `.label{color:#000}` on #121212 is 1.1:1, `.card.dim{background:
-            // #f3efe4}` would make earlier cards cream, and `.sw.on{outline-color:#000}` is a
-            // black outline on a black panel. They follow the text, the background and the accent
-            // instead. `--surface-sel:#d4ff00` under the white text is 1.1:1; a deep tint of the
-            // acid keeps the selected card readable at 13:1 (DESIGN.md §7).
+            // The look's `extra_css` pins these to the light palettes' black and cream, which
+            // vanish here: `.label{color:#000}` is 1.1:1, `.card.dim{background:#f3efe4}` makes
+            // earlier cards cream, `.sw.on{outline-color:#000}` is black on a black panel.
+            // `--surface-sel:#d4ff00` under white text is 1.1:1; a deep tint of the acid gives
+            // 13:1 (DESIGN.md §7).
             c.label = c.text;
             c.earlier_card_bg = c.bg;
             c.swatch_on = c.accent;
             c.surface_sel = hex(0x2c3300);
-            // `.seg button.on{background:#000}` is 1.3:1 on this palette's #1e1e1e track, with white
-            // text either way, so a chosen segment couldn't be told apart. It uses the acid instead.
+            // `.seg button.on{background:#000}` is 1.3:1 on this palette's #1e1e1e track, so a
+            // chosen segment couldn't be told apart.
             c.on_bg = hex(0xd4ff00);
             c.on_text = hex(0x000000);
             b.accent = Border::solid(3., white);
@@ -134,24 +127,16 @@ pub fn theme(palette: usize) -> Theme {
                 shadow[0].color = white;
             }
         }
-        // Cream / yellow / mint / coral is the base as it stands.
         _ => return theme,
     }
     follow_cream(&mut theme);
     theme
 }
 
-/// The look's `extra_css` writes the first palette's mint and yellow into the on-states and the
-/// bulk bar's main button, and its yellow and coral into the second and third cards' thumbs,
-/// which left them on a blue or an acid window. Each takes the colour of its own palette that
-/// holds the same place in the first: there a switched-on toggle and a saved chip are the
-/// toast's mint, the bulk bar's main button and the capture overlay's edge are the primary
-/// button's yellow, and the thumbs go through the palette's swatches, the third (which every
-/// palette's `--thumb` is) and then the second and the fourth.
-///
-/// The blue focus ring and crosshair, the editor's graph paper and the black lines `extra_css`
-/// pins belong to no palette, and the sticker is drawn on the picture, not on the window. Those
-/// stay the look's.
+/// The look's `extra_css` writes the first palette's mint, yellow and coral into the on-states,
+/// the bulk bar's main button and the other cards' thumbs, which left them on a blue or an acid
+/// window, so each takes its own palette's colour in the same place. The blue focus ring and
+/// crosshair, the graph paper and the pinned black lines belong to no palette and stay the look's.
 fn follow_cream(theme: &mut Theme) {
     let swatches = palettes()[theme.palette].swatches;
     let c = &mut theme.colors;
@@ -162,8 +147,7 @@ fn follow_cream(theme: &mut Theme) {
     theme.overlay.edge.color = c.accent_bg;
 }
 
-/// NeoBrutalism in the user's own colours: the derived colours, with the look's heavy borders
-/// and hard shadows in the text colour, as the Black / acid / white palette draws them in white.
+/// Borders and shadows take the text colour, as Black / acid / white draws them in its white.
 pub fn custom(palette: &CustomPalette) -> Theme {
     let mut theme = base();
     theme.palette = CUSTOM_PALETTE;
@@ -243,8 +227,7 @@ fn base() -> Theme {
             chip_text: black,
             toggle_off: white,
             toggle_knob: black,
-            // The on-states are pinned in the look's `extra_css`, so they don't follow the accent;
-            // the other palettes take theirs in `follow_cream`.
+            // Pinned in the look's `extra_css`, so they don't follow the accent.
             toggle_on: hex(0x7cf5c2),
             toggle_on_knob: black,
             on_bg: black,
@@ -369,8 +352,6 @@ fn base() -> Theme {
             session: "THIS SESSION",
             day_date: DayDate::LongUpper,
         },
-        // The look's yellow block in a black 3px line; the dark palette turns the halo and loupe
-        // white with its other borders.
         overlay: Overlay {
             dim: hex_alpha(0x000000, 0.6),
             edge: Border::solid(3., hex(0xffde59)),
@@ -378,7 +359,6 @@ fn base() -> Theme {
             loupe: Border::solid(3., black),
             crosshair: hex(0x4d7cff),
         },
-        // A blunt statement set left beside a block of thumbnail colour, in the dashed frame.
         empty: EmptyState {
             title: "Nothing yet.",
             ornament: Ornament::Block,
@@ -436,9 +416,6 @@ mod tests {
         assert_token(&tokens, "session", theme.strings.session);
     }
 
-    /// `extra_css` pins these for the whole look. The ones it pins to black, the blue focus ring
-    /// and the thumb's outline hold in every palette; the ones it pins to the first palette's
-    /// mint, yellow and coral hold there, and follow each other palette's own colours.
     #[test]
     fn extra_css_on_states_hold_in_every_palette() {
         let tokens = entry().base();
@@ -496,7 +473,6 @@ mod tests {
         assert_token(&section, "--accent-bg", &css_hex(paper.colors.accent_bg));
         assert_token(&section, "--title-bg", &css_hex(paper.colors.title_bg));
         assert_token(&section, "--toast-bg", &css_hex(paper.colors.toast_bg));
-        // Paper keeps the base surface, text, borders and shadows.
         assert_eq!(css_hex(paper.colors.surface), "#ffffff");
         assert_eq!(css_hex(paper.colors.text), "#000000");
         assert_eq!(css_border(paper.borders.card), "3px solid #000000");
@@ -536,8 +512,6 @@ mod tests {
         }
     }
 
-    /// Where the theme leaves tokens.json on purpose, for DESIGN.md §7 contrast. Each departure is
-    /// recorded against the token it replaces, so a change to either side shows up here.
     #[test]
     fn deliberate_departures_from_tokens() {
         let entry = entry();
@@ -564,7 +538,6 @@ mod tests {
         assert_eq!(css_hex(c.label), css_hex(c.text));
         assert_eq!(css_hex(c.earlier_card_bg), css_hex(c.bg));
         assert_eq!(css_hex(c.swatch_on), css_hex(c.accent));
-        // The light palettes keep the pinned values.
         for index in 0..2 {
             let c = theme(index).colors;
             assert_eq!(css_hex(c.label), "#000000");

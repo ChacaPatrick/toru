@@ -5,14 +5,13 @@ use gpui::{Hsla, Rgba};
 
 use super::{Border, Palette};
 
-/// One look's entry in `design/tokens.json`, as text.
 pub struct Entry {
     text: String,
     palette_names: Vec<String>,
 }
 
 impl Entry {
-    /// `look` is the entry's key; `next_look` the key after it, or `None` for the last entry.
+    /// `next_look` is `None` for the last entry.
     pub fn new(look: &str, next_look: Option<&str>, palettes: &[Palette]) -> Entry {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/tokens.json");
         let text = std::fs::read_to_string(path).expect("design/tokens.json is readable");
@@ -29,12 +28,11 @@ impl Entry {
         }
     }
 
-    /// The entry's base values, up to the palette overrides.
+    /// Up to the palette overrides.
     pub fn base(&self) -> String {
         self.text[..self.text.find("\"palettes\"").unwrap()].to_string()
     }
 
-    /// One palette's overrides, from its name to the next palette's.
     pub fn palette(&self, index: usize) -> String {
         let start = self.text.find(&self.palette_names[index]).unwrap();
         let end = self
@@ -58,7 +56,7 @@ pub fn css_hex(color: Hsla) -> String {
     )
 }
 
-/// `"{w}px solid #rrggbb"`, as tokens.json writes a border.
+/// As tokens.json writes a border: `"{w}px solid #rrggbb"`.
 pub fn css_border(border: Border) -> String {
     let style = if border.dashed { "dashed" } else { "solid" };
     format!(

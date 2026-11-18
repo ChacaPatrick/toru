@@ -5,10 +5,7 @@ use super::tools::Tool;
 use super::typing::Typed;
 
 impl Editor {
-    /// The shortcuts of DESIGN.md §5: a tool's letter, Esc back to Select, Ctrl+Z / Ctrl+Y for
-    /// undo and redo, Delete on a selected mark, Enter to crop, and Enter on selected text to
-    /// edit it. Typing in the name field is left alone, but Esc still works there; text being
-    /// typed on the canvas has every key first.
+    /// The shortcuts of DESIGN.md §5.
     pub(super) fn key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -52,8 +49,7 @@ impl Editor {
             cx.stop_propagation();
             return;
         }
-        // Enter crops from the canvas or the panel's Crop button only: on any other control
-        // it is that control's, so Cancel cancels and Back goes back.
+        // On any other control Enter is that control's, so Cancel cancels and Back goes back.
         if keystroke.key == "enter"
             && self.tool == Tool::Crop
             && (self.focus.is_focused(window) || self.crop_button.is_focused(window))

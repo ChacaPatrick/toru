@@ -1,5 +1,3 @@
-//! The Japandi look, copied from the "Japandi" entry of `design/tokens.json`.
-
 use gpui::{FontWeight, Hsla, px};
 use toru_core::settings::Look;
 
@@ -31,7 +29,6 @@ pub fn theme(palette: usize) -> Theme {
     let mut theme = base();
     theme.palette = palette;
     let c = &mut theme.colors;
-    // The line around a control, a little stronger than the hairline.
     let line = match palette {
         1 => {
             c.bg = hex(0xe9ebe6);
@@ -45,8 +42,7 @@ pub fn theme(palette: usize) -> Theme {
             c.thumb = gradient(135., 0xd7dccf, 0xbfc7b5);
             c.title_bg = hex(0xdfe3da);
             c.title_text = hex(0x23261f);
-            // tokens.json gives Stone & moss no value for these, which left them in Linen's
-            // beige: they take Linen's steps from this palette's own colours.
+            // tokens.json gives Stone & moss none of these, which left them in Linen's beige.
             c.surface_sel = step(c, SELECTED);
             c.input_bg = mix(c.surface, gpui::white(), INPUT);
             c.hair = step(c, HAIR);
@@ -71,7 +67,6 @@ pub fn theme(palette: usize) -> Theme {
             c.hair = hex(0x3d3a33);
             hex(0x4a463e)
         }
-        // Linen & walnut is the base as it stands.
         _ => return theme,
     };
     follow_linen(&mut theme, line);
@@ -87,57 +82,42 @@ pub fn theme(palette: usize) -> Theme {
     theme
 }
 
-/// The Palettes mockup draws Charcoal & clay's tag as Linen & walnut's light label, which stands
-/// 9:1 off this palette's dark thumbnail where its own surface would be 1.2:1. The label is kept
-/// as drawn. Its text is four levels darker than the mockup's `--tag-text` (#6b665c), which is
-/// 4.4:1 on the label over this thumbnail; #676258 holds 4.5:1 over any picture (DESIGN.md §7).
-///
-/// The mockup's toast is not kept: see `follow_linen`.
+/// The Palettes mockup draws Charcoal & clay's tag as Linen & walnut's light label, 9:1 off this
+/// dark thumbnail where its own surface would be 1.2:1. Its text is four levels darker than the
+/// mockup's #6b665c (4.4:1 there), to hold 4.5:1 over any picture (DESIGN.md §7).
 fn mockup_tag(c: &mut Colors) {
     c.tag_bg = hex_alpha(0xfaf7f1, 0.9);
     c.tag_text = hex(0x676258);
 }
 
-/// How far Linen & walnut's greys sit from its window towards its text: a selected card
-/// (`#ece4d6`), the toggle's track and the editor canvas (`#e9e1d3`, `#e8e1d4`), the hairline
-/// (`#d8cfbf`), the frame (`#cfc5b3`), the line around a control (`#cdc3b1`) and the toggle's
-/// edge (`#b9ad99`). Each lands within a few levels of Linen's warmer token.
+/// Linen & walnut's greys as steps from its window towards its text, each within a few levels of
+/// its token: selected card #ece4d6, toggle track and canvas #e9e1d3 and #e8e1d4, hairline
+/// #d8cfbf, frame #cfc5b3, control line #cdc3b1, toggle edge #b9ad99.
 const SELECTED: f32 = 0.03;
 const TRACK: f32 = 0.046;
 const HAIR: f32 = 0.144;
 const FRAME: f32 = 0.198;
 const LINE: f32 = 0.209;
 const TOGGLE_EDGE: f32 = 0.322;
-/// A field is the surface half-way to white (`#fffdf9` over `#faf7f1`), the title bar's dot is
-/// the window half-way to the accent (`#b5a48a`), and the bulk bar's separator is its ink a
-/// fifth of the way to its text (`#5a564e`).
+/// Field: surface half-way to white (#fffdf9). Dot: window half-way to the accent (#b5a48a). Bulk
+/// separator: its ink a fifth of the way to its text (#5a564e).
 const INPUT: f32 = 0.51;
 const DOT: f32 = 0.51;
 const BULK_SEP: f32 = 0.21;
 
-/// `amount` of the way from the window to the text: the same step in any palette, in that
-/// palette's own tint.
 fn step(c: &Colors, amount: f32) -> Hsla {
     mix(c.bg, c.text, amount)
 }
 
-/// tokens.json gives the other palettes no value for these, which left Linen & walnut's beige
-/// and walnut on a stone or charcoal window. Each takes the colour of its own palette that holds
-/// the same place in Linen's tokens: there a button is the surface under the text, a chip's and
-/// a tag's text are the muted colour, the tag is the surface at 90%, the toggle's knob and the
-/// primary button's edge are the accent, the toast and the bulk bar are the text colour under
-/// the surface colour, and the hairline draws the cards, menus and day rules. Linen's other
-/// greys are the same steps from the window to the text.
+/// tokens.json gives the other palettes no value for these, which left Linen & walnut's beige and
+/// walnut on a stone or charcoal window, so each takes its own colour that holds the same place in
+/// Linen's tokens.
 ///
-/// The Palettes mockup draws Charcoal & clay's toast in Linen's ink (#2b2a26) all the same. With
-/// no border and a shadow that doesn't show on a dark window, that toast is 1.2:1 against the
-/// window and 1.0:1 against a card, so its edge can't be seen; Linen's own stands 11.9:1 off its
-/// window. Charcoal & clay's toast and bulk bar keep this rule, which gives 13.4:1. Its tag
-/// follows the mockup instead: see `mockup_tag`.
+/// The Palettes mockup draws Charcoal & clay's toast in Linen's ink all the same, which is 1.2:1
+/// against its window, so its edge can't be seen; this rule gives 13.4:1.
 ///
-/// The soft shadows and the thumbnail's shade are faint translucent darks, which suit any
-/// palette; the annotation colour, the sticker and the capture overlay are drawn on the
-/// picture, not on the window. Those stay the look's.
+/// The shadows and thumbnail shade suit any palette, and the annotation colour, sticker and
+/// overlay are drawn on the picture, so those stay the look's.
 fn follow_linen(theme: &mut Theme, line: Hsla) {
     let c = &mut theme.colors;
     c.button_bg = c.surface;
@@ -178,14 +158,9 @@ fn follow_linen(theme: &mut Theme, line: Hsla) {
     b.toggle.color = step(c, TOGGLE_EDGE);
 }
 
-/// Japandi's CSS has no rule of its own for these, so they follow the palette's accent, muted and
-/// surface.
-///
 /// tokens.json fixes `--focus`, `--focus-halo` and the window control colour at the base palette's
-/// values, which fail DESIGN.md §7 on the other palettes (the focus ring is 1.2:1 on Charcoal & clay).
-/// So the focus ring follows the text, the halo the accent, and the controls the muted colour.
-/// The bulk bar is the ink of the text, where that ring is 1:1, so on it the ring is the bar's
-/// own light text.
+/// values, which fail DESIGN.md §7 on the others (the ring is 1.2:1 on Charcoal & clay). The bulk
+/// bar is the text colour, where the ring would be 1:1, so there it takes the bar's text.
 fn follow_palette(c: &mut Colors) {
     c.focus = c.text;
     c.bulk_focus = c.bulk_text;
@@ -199,8 +174,6 @@ fn follow_palette(c: &mut Colors) {
     c.earlier_card_bg = c.surface;
 }
 
-/// Japandi in the user's own colours: the derived colours, then this look's palette rules, with
-/// every hairline border in the derived hairline and every control edge in the stronger line.
 pub fn custom(palette: &CustomPalette) -> Theme {
     let mut theme = base();
     theme.palette = CUSTOM_PALETTE;
@@ -378,8 +351,7 @@ fn base() -> Theme {
             session: "This session",
             day_date: DayDate::Long,
         },
-        // Ink over the screen, a paper line with an ink halo around the selection, and the
-        // walnut accent for the crosshair, as the palettes' own inks and papers all read close.
+        // The same for every palette: their inks and papers all read close.
         overlay: Overlay {
             dim: hex_alpha(0x2b2a26, 0.55),
             edge: Border::solid(1., hex(0xfaf7f1)),
@@ -387,7 +359,6 @@ fn base() -> Theme {
             loupe: Border::solid(1., hex_alpha(0xfaf7f1, 0.3)),
             crosshair: hex(0xc4855a),
         },
-        // Unframed and centred with air around it: a serif line under a small round seal.
         empty: EmptyState {
             title: "Nothing captured yet",
             ornament: Ornament::Seal,
@@ -407,7 +378,6 @@ mod tests {
         Entry::new("Japandi", Some("Y2K"), &palettes())
     }
 
-    /// The entry's base values, up to the palette overrides.
     fn tokens() -> String {
         entry().base()
     }
@@ -478,7 +448,6 @@ mod tests {
             assert_token(&section, "--title-bg", &css_hex(theme.colors.title_bg));
             assert_eq!(css_hex(palette.swatches[0]), css_hex(theme.colors.bg));
             assert_eq!(css_hex(palette.swatches[2]), css_hex(theme.colors.accent));
-            // The CSS on-states are the accent, so a palette's accent must reach them.
             let c = &theme.colors;
             assert_eq!(css_hex(c.toggle_on), css_hex(c.accent_bg));
             assert_eq!(css_hex(c.toggle_on_knob), css_hex(c.accent_text));
@@ -515,7 +484,6 @@ mod tests {
         );
     }
 
-    /// Every colour `follow_linen` sets, by name, with the line it is given.
     fn followed(theme: &Theme) -> Vec<(&'static str, Hsla)> {
         let (c, b) = (&theme.colors, &theme.borders);
         let Fill::Solid(canvas) = c.canvas else {
@@ -557,11 +525,8 @@ mod tests {
         ]
     }
 
-    /// What the tokens leave unset in the other palettes is taken from each palette's own
-    /// colours the way Linen & walnut's tokens relate. Asked of Linen's colours, the rules give
-    /// its tokens back: exactly where a token repeats another of Linen's colours, and within a
-    /// few levels where it is one of Linen's warm greys, which the rules take as a step from the
-    /// window to the text.
+    /// Exact where a token repeats another of Linen's colours; within a few levels for its warm
+    /// greys, which the rules take as steps from the window to the text.
     #[test]
     fn the_rules_for_the_other_palettes_give_linen_its_own_tokens() {
         let linen = theme(0);
@@ -608,8 +573,6 @@ mod tests {
         }
     }
 
-    /// The other palettes show none of Linen & walnut's beige or walnut where the tokens give
-    /// them no value of their own.
     #[test]
     fn the_other_palettes_keep_none_of_linens_colours() {
         let linen: Vec<String> = followed(&theme(0))
@@ -646,8 +609,6 @@ mod tests {
         }
     }
 
-    /// Where the theme leaves tokens.json on purpose, for DESIGN.md §7 contrast. Each departure is
-    /// recorded against the token it replaces, so a change to either side shows up here.
     #[test]
     fn deliberate_departures_from_tokens() {
         let tokens = tokens();
@@ -677,8 +638,7 @@ mod tests {
         assert_eq!(css_hex(theme(2).colors.surface_sel), "#35322b");
     }
 
-    /// tokens.json gives Charcoal & clay no tag, toast or bulk bar of its own, so the Palettes
-    /// mockup draws its tag and toast with Linen & walnut's tokens.
+    /// The Palettes mockup draws these with Linen & walnut's tokens.
     fn linen_tokens_charcoal_leaves_unset() -> Colors {
         let section = palette_section(2);
         for token in ["--tag-", "--toast-", "--bulk-", "--pop-"] {
@@ -690,16 +650,12 @@ mod tests {
         assert_token(&tokens, "--toast-bg", "#2b2a26");
         assert_token(&tokens, "--toast-border", "0");
         assert_token(&tokens, "--bulk-bg", "#2b2a26");
-        // Linen & walnut's own tag text is darkened from the token (DESIGN.md §7); the mockup
-        // draws the token.
+        // Linen's own tag text is darkened from the token; the mockup draws the token.
         let mut linen = theme(0).colors;
         linen.tag_text = hex(0x6b665c);
         linen
     }
 
-    /// The mockup's light tag is kept on Charcoal & clay, where it stands off the dark thumbnail
-    /// as a control's edge must. Its text is the mockup's grey taken just far enough to read over
-    /// any picture, which the mockup's own does not on this palette's thumbnail.
     #[test]
     fn charcoal_keeps_the_mockups_tag() {
         let (linen, clay) = (linen_tokens_charcoal_leaves_unset(), theme(2).colors);
@@ -720,9 +676,6 @@ mod tests {
         }
     }
 
-    /// The mockup's toast is not kept: Linen's ink has no edge on Charcoal & clay's window or its
-    /// cards, where the toast, the return pill and the bulk bar float. The palette's own text
-    /// colour stands off both as far as Linen's ink does off Linen's.
     #[test]
     fn charcoal_does_not_keep_the_mockups_toast() {
         let (linen, clay) = (linen_tokens_charcoal_leaves_unset(), theme(2).colors);
@@ -735,7 +688,6 @@ mod tests {
         assert!(ratio(linen.toast_bg, linen.bg) >= 10.);
     }
 
-    /// Each slice stops at the next section, so a value copied from the wrong palette is caught.
     #[test]
     fn token_slices_stop_at_the_next_section() {
         let clay_bg = "\"--bg\": \"#1f1e1b\"";

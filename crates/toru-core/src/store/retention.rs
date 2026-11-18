@@ -3,8 +3,8 @@ use super::{CaptureId, Result, Store};
 use crate::time::LocalDate;
 
 impl Store {
-    /// The unsaved captures `delete_unsaved_older_than` would delete right now, so that a change
-    /// confirmed later can delete exactly these with `delete_unsaved`.
+    /// What `delete_unsaved_older_than` would delete right now, so that a change confirmed later
+    /// can delete exactly these with `delete_unsaved`.
     pub fn unsaved_older_than(&self, days: u32, today: LocalDate) -> Result<Vec<CaptureId>> {
         let db = self.db();
         let mut statement =
@@ -17,8 +17,7 @@ impl Store {
         Ok(ids)
     }
 
-    /// Deletes those of `ids` that are still unsaved, and their files. Returns the ids of the
-    /// captures that went.
+    /// Skips captures saved since. Returns the ids that went.
     pub fn delete_unsaved(&self, ids: &[CaptureId]) -> Result<Vec<CaptureId>> {
         let mut deleted = Vec::with_capacity(ids.len());
         for &id in ids {
@@ -30,8 +29,7 @@ impl Store {
         Ok(deleted)
     }
 
-    /// Deletes unsaved captures taken more than `days` days before `today`, and their files.
-    /// Returns the ids of the captures that went.
+    /// Taken more than `days` days before `today`. Returns the ids that went.
     pub fn delete_unsaved_older_than(&self, days: u32, today: LocalDate) -> Result<Vec<CaptureId>> {
         self.delete_rows(
             "DELETE FROM captures WHERE taken_date < ?1 AND saved_path IS NULL RETURNING id",

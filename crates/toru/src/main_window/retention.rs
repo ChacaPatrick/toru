@@ -1,17 +1,4 @@
-//! The Delete unsaved after setting (CLAUDE.md): how long unsaved captures stay in history, as a
-//! radio group of the preset day counts, Custom with a count of its own under it, and Never.
-//! Typing in the count chooses Custom and is checked as it goes; a count of at least 1 reaches the
-//! setting on Enter or when focus leaves the group, and anything else is named in the hint's place
-//! and never stored. The field's own blur doesn't commit, since clicking another row blurs it, and
-//! a dialog raised by that would cover the row and swallow the click. Shortening the period
-//! deletes captures for good, so a change that would delete anything right now asks first, saying
-//! how many, and Cancel leaves the setting as it was. The captures are counted on the capture
-//! queue, after any Save already asked for, and Delete deletes exactly the captures counted, by
-//! id, so the dialog is right however long it stays open.
-//!
-//! The cleanup itself, `Store::delete_unsaved_older_than`, runs on the capture queue off the main
-//! thread at launch and at each midnight reset, never with Never set. The gallery drops the cards
-//! that went. A failure is reported and the app carries on.
+//! The Delete unsaved after setting (CLAUDE.md).
 
 use gpui::{Context, Div, Entity, FocusHandle, Window, div, prelude::*, px};
 use gpui_kit::component::input::{InputEvent, InputState};
@@ -31,13 +18,11 @@ use crate::ui::{Dialog, RadioGroup, TextField};
 const CUSTOM_ROW: usize = RETENTION_PRESET_DAYS.len();
 const NEVER_ROW: usize = CUSTOM_ROW + 1;
 const DAYS_FIELD_WIDTH: f32 = 72.;
-/// Between the count field and "days".
 const DAYS_GAP: f32 = 8.;
 const HINT: &str = "Saved files are never deleted.";
 const CLEANUP_FAILED: &str = "Couldn't delete the older unsaved captures";
 const COUNT_FAILED: &str = "Couldn't check what that change would delete";
 
-/// What a row of the group stands for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Choice {
     Preset(u32),
@@ -53,8 +38,8 @@ pub fn choice_at(row: usize) -> Choice {
     }
 }
 
-/// Which row shows as chosen: Custom while the user has picked it, whatever count it holds, so a
-/// typed preset count or an invalid one doesn't jump the choice away; else the setting's own row.
+/// Custom while the user has picked it, whatever count it holds, so a typed preset count or an
+/// invalid one doesn't jump the choice away.
 pub fn selected_row(retention: Retention, custom_chosen: bool) -> usize {
     match retention {
         _ if custom_chosen => CUSTOM_ROW,
@@ -66,7 +51,6 @@ pub fn selected_row(retention: Retention, custom_chosen: bool) -> usize {
     }
 }
 
-/// The count as typed: a whole number of days, at least 1, or what is wrong with it.
 pub fn parse_days(text: &str) -> Result<u32, &'static str> {
     let text = text.trim();
     if text.is_empty() {
@@ -82,7 +66,6 @@ pub fn parse_days(text: &str) -> Result<u32, &'static str> {
     }
 }
 
-/// What the count field shows for a setting: its days, or nothing for Never.
 pub fn field_text(retention: Retention) -> String {
     retention
         .days()
@@ -90,7 +73,6 @@ pub fn field_text(retention: Retention) -> String {
         .unwrap_or_default()
 }
 
-/// The dialog's explanation, for `count` captures older than `days`.
 pub fn confirm_prompt(count: usize, days: u32) -> String {
     let (they, are) = if count == 1 {
         ("it", "is")
@@ -104,26 +86,22 @@ pub fn confirm_prompt(count: usize, days: u32) -> String {
     )
 }
 
-/// The control's state, beside the setting itself.
 pub struct RetentionControl {
-    /// The Custom count as typed.
     days: Entity<InputState>,
     /// Why the typed count isn't a setting, shown in the hint's place.
     error: Option<&'static str>,
-    /// The Custom row is chosen, whatever count it holds.
-    custom: bool,
+    custom_chosen: bool,
     /// Tracked by the group as a whole, so the typed count commits when focus leaves it.
     group: FocusHandle,
     /// Counts up with each change asked for, so the count of a change since superseded, such as
     /// a count committed by Enter just before another row is clicked, is let go.
     proposal: usize,
-    /// The change waiting in the dialog.
     prompt: Option<Prompt>,
 }
 
 struct Prompt {
     retention: Retention,
-    /// The unsaved captures the dialog says would go, which are what Delete deletes.
+    /// What the dialog says would go, and so what Delete deletes.
     captures: Vec<CaptureId>,
 }
 
@@ -133,6 +111,8 @@ impl RetentionControl {
         cx.subscribe(&days, |this, _, event: &InputEvent, cx| match event {
             InputEvent::Change => this.typed_days(cx),
             InputEvent::PressEnter { .. } => this.commit_days(cx),
+            // Clicking another row blurs the field, and a dialog raised by that would cover the
+            // row and swallow the click.
             InputEvent::Focus | InputEvent::Blur => {}
         })
         .detach();
@@ -142,28 +122,25 @@ impl RetentionControl {
         RetentionControl {
             days,
             error: None,
-            custom: retention.is_custom(),
+            custom_chosen: retention.is_custom(),
             group,
             proposal: 0,
             prompt: None,
         }
     }
 
-    /// Whether the dialog asking to delete older captures is open.
     pub fn asking(&self) -> bool {
         self.prompt.is_some()
     }
 }
 
 impl MainWindow {
-    /// A row of the group: a preset or Never takes effect, asking first if need be; Custom takes
-    /// the count in the field, if it is one.
     fn choose_retention(&mut self, row: usize, cx: &mut Context<Self>) {
         match choice_at(row) {
             Choice::Preset(days) => self.choose_fixed_retention(Retention::Days(days), cx),
             Choice::Never => self.choose_fixed_retention(Retention::Never, cx),
             Choice::Custom => {
-                self.retention.custom = true;
+                self.retention.custom_chosen = true;
                 self.commit_days(cx);
             }
         }
@@ -171,22 +148,22 @@ impl MainWindow {
     }
 
     fn choose_fixed_retention(&mut self, retention: Retention, cx: &mut Context<Self>) {
-        self.retention.custom = false;
+        self.retention.custom_chosen = false;
         self.retention.error = None;
         self.propose_retention(retention, cx);
     }
 
-    /// Typing in the field chooses Custom and checks the count; it takes effect on Enter or when
-    /// focus leaves the group, so a dialog can't come up halfway through a number.
+    /// The count takes effect on Enter or when focus leaves the group, so a dialog can't come up
+    /// halfway through a number.
     fn typed_days(&mut self, cx: &mut Context<Self>) {
-        self.retention.custom = true;
+        self.retention.custom_chosen = true;
         self.retention.error = parse_days(&self.retention.days.read(cx).value()).err();
         cx.notify();
     }
 
     /// Nothing to commit while the dialog is up: focus moving to it leaves the group too.
     fn commit_days(&mut self, cx: &mut Context<Self>) {
-        if !self.retention.custom || self.retention.prompt.is_some() {
+        if !self.retention.custom_chosen || self.retention.prompt.is_some() {
             return;
         }
         match parse_days(&self.retention.days.read(cx).value()) {
@@ -199,9 +176,7 @@ impl MainWindow {
         cx.notify();
     }
 
-    /// Puts the change to the store for what it would delete now, on the capture queue so a Save
-    /// asked for already is finished first: nothing, and it takes effect; something, and the
-    /// dialog asks first.
+    /// Counted on the capture queue, so a Save asked for already is finished first.
     fn propose_retention(&mut self, wanted: Retention, cx: &mut Context<Self>) {
         self.retention.proposal += 1;
         if wanted == self.settings.retention {
@@ -250,7 +225,7 @@ impl MainWindow {
         cx.notify();
     }
 
-    /// A change that deletes nothing right now. The midnight reset's cleanup takes the new
+    /// For a change that deletes nothing right now. The midnight reset's cleanup takes the new
     /// period from there.
     fn apply_retention(&mut self, retention: Retention, cx: &mut Context<Self>) {
         self.retention.prompt = None;
@@ -258,8 +233,8 @@ impl MainWindow {
         self.show_retention_field(cx);
     }
 
-    /// The dialog's Delete: the change takes effect and exactly the captures it named go, by id,
-    /// however long it stayed open. One saved in the meantime is left alone.
+    /// Exactly the captures the dialog named go, by id, however long it stayed open. One saved
+    /// in the meantime is left alone.
     fn delete_counted(&mut self, cx: &mut Context<Self>) {
         let Some(prompt) = self.retention.prompt.take() else {
             return;
@@ -270,17 +245,16 @@ impl MainWindow {
         self.delete_from_history(cx, move |store| store.delete_unsaved(&captures));
     }
 
-    /// Cancel, or a failed count: the control goes back to showing the stored setting.
     fn show_stored_retention(&mut self, cx: &mut Context<Self>) {
         self.retention.prompt = None;
-        self.retention.custom = self.settings.retention.is_custom();
+        self.retention.custom_chosen = self.settings.retention.is_custom();
         self.retention.error = None;
         self.show_retention_field(cx);
         cx.notify();
     }
 
-    /// Puts the stored setting's count in the field, so Custom starts from it. Deferred, since
-    /// the field's window can't be reached from inside one of its own handlers.
+    /// So Custom starts from the stored count. Deferred, since the field's window can't be
+    /// reached from inside one of its own handlers.
     fn show_retention_field(&mut self, cx: &mut Context<Self>) {
         let text = field_text(self.settings.retention);
         let (window, field) = (self.window, self.retention.days.clone());
@@ -297,7 +271,6 @@ impl MainWindow {
         });
     }
 
-    /// Deletes the unsaved captures past the retention period. Nothing happens with Never.
     pub fn clean_up_history(&mut self, cx: &mut Context<Self>) {
         let Some(days) = self.settings.retention.days() else {
             return;
@@ -308,8 +281,8 @@ impl MainWindow {
         });
     }
 
-    /// Runs `delete` on the store and takes the cards of what went out of the gallery. On the
-    /// queue, so a capture still being stored or a Save asked for already is finished first.
+    /// On the queue, so a capture still being stored or a Save asked for already is finished
+    /// first.
     fn delete_from_history(
         &mut self,
         cx: &mut Context<Self>,
@@ -330,8 +303,7 @@ impl MainWindow {
         });
     }
 
-    /// The dialog for a change that would delete captures now. Cancel is first, focused and
-    /// primary, so Enter and Esc both leave everything as it was.
+    /// Cancel is first, focused and primary, so Enter and Esc both leave everything as it was.
     pub(super) fn retention_dialog(&self, cx: &Context<Self>) -> Option<Dialog> {
         let prompt = self.retention.prompt.as_ref()?;
         let count = prompt.captures.len();
@@ -353,9 +325,6 @@ impl MainWindow {
     }
 }
 
-/// The group: the radio rows with the count field under Custom, then the hint, or, while the
-/// typed count isn't a setting, what is wrong with it, in the text colour so the words carry it
-/// (DESIGN.md §7).
 pub(super) fn retention_group(this: &MainWindow, cx: &Context<MainWindow>) -> Div {
     let theme = cx.theme();
     let control = &this.retention;
@@ -364,6 +333,7 @@ pub(super) fn retention_group(this: &MainWindow, cx: &Context<MainWindow>) -> Di
         .map(|&days| format!("{days} days"))
         .chain(["Custom".to_string(), "Never".to_string()]);
     let (text, color) = match control.error {
+        // In the text colour, so the words carry it (DESIGN.md §7).
         Some(message) => (message, theme.colors.text),
         None => (HINT, theme.colors.muted),
     };
@@ -374,7 +344,7 @@ pub(super) fn retention_group(this: &MainWindow, cx: &Context<MainWindow>) -> Di
                     "retention",
                     "Delete unsaved after",
                     options,
-                    selected_row(this.settings.retention, control.custom),
+                    selected_row(this.settings.retention, control.custom_chosen),
                 )
                 .description(text)
                 .detail(CUSTOM_ROW, days_field(&control.days).into_any_element())
@@ -384,7 +354,6 @@ pub(super) fn retention_group(this: &MainWindow, cx: &Context<MainWindow>) -> Di
         .child(hint(theme, text).text_color(color).mt(px(-4.)))
 }
 
-/// Under the Custom row: the count field and "days".
 fn days_field(days: &Entity<InputState>) -> Div {
     div()
         .flex()

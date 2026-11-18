@@ -10,15 +10,12 @@ use crate::editor::{Editor, EditorEvent, document::Document};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EditorStart {
     Plain,
-    /// With the sample marks of the Editor mockup placed on the picture.
+    /// With the Editor mockup's sample marks.
     Demo,
 }
 
 impl MainWindow {
-    /// Opens the card with `id` in the editor. Its picture is read back from where the store
-    /// keeps it, on the capture queue, since a Save queued ahead moves it; if it can't be read
-    /// the editor doesn't open and a toast says so, as Copy does. "Open editor after capture"
-    /// calls this with the new card's id.
+    /// The picture is read on the capture queue, since a Save queued ahead moves it.
     pub fn open_editor(&mut self, id: usize, cx: &mut Context<Self>) {
         let Some((name, stored)) = self
             .gallery
@@ -100,8 +97,7 @@ impl MainWindow {
         cx.notify();
     }
 
-    /// The `editor` start-up argument: straight into the editor on the newest card. History
-    /// loads after the window opens, so with no card yet the first to arrive is opened.
+    /// History loads after the window opens, so with no card yet the first to arrive is opened.
     pub fn open_newest_in_editor(&mut self, start: EditorStart, cx: &mut Context<Self>) {
         let newest = self
             .gallery
@@ -117,16 +113,14 @@ impl MainWindow {
         }
     }
 
-    /// Whether the editor is open with annotations that closing it would lose.
     pub(super) fn editor_has_edits(&self, cx: &App) -> bool {
         self.editor
             .as_ref()
             .is_some_and(|editor| editor.read(cx).is_edited())
     }
 
-    /// Back to session. Focus returns to the card that was in the editor, so the arrow keys
-    /// carry on from it, and the picture leaves the GPU. If that card is no longer listed,
-    /// `on_focus_lost` finds focus a place. A dialog open over the window keeps the focus.
+    /// Focus returns to the card that was in the editor; if that card is no longer listed,
+    /// `on_focus_lost` finds focus a place.
     pub(super) fn close_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = self.editor.take() {
             let stored = editor.update(cx, |editor, _| {

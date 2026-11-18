@@ -4,9 +4,8 @@ use gpui::{Hsla, RenderImage, Rgba};
 use tiny_skia::{Color, IntSize, Pixmap};
 use xcap::image::{Frame, RgbaImage};
 
-/// A `tiny-skia` bitmap as GPUI draws it. `tiny-skia` holds premultiplied RGBA and GPUI wants
-/// BGRA, so the channels are swapped on the way; the picture is opaque, so premultiplying
-/// changed nothing.
+/// `tiny-skia` holds premultiplied RGBA and GPUI wants BGRA, so the channels are swapped; the
+/// picture is opaque, so premultiplying changed nothing.
 pub fn render_image(pixmap: &Pixmap) -> Arc<RenderImage> {
     let mut data = pixmap.data().to_vec();
     for pixel in data.as_chunks_mut::<4>().0 {
@@ -17,21 +16,18 @@ pub fn render_image(pixmap: &Pixmap) -> Arc<RenderImage> {
     Arc::new(RenderImage::new([Frame::new(buffer)]))
 }
 
-/// A `tiny-skia` bitmap as an image to encode or copy. The picture is opaque, so premultiplying
-/// changed nothing.
+/// The picture is opaque, so premultiplying changed nothing.
 pub fn to_rgba(pixmap: &Pixmap) -> RgbaImage {
     RgbaImage::from_raw(pixmap.width(), pixmap.height(), pixmap.data().to_vec())
         .expect("a pixmap's data is width × height × 4 bytes")
 }
 
-/// A theme colour as `tiny-skia` takes it.
 pub fn skia_color(color: Hsla) -> Color {
     let Rgba { r, g, b, a } = color.into();
     Color::from_rgba(r, g, b, a).expect("GPUI colours are within 0..=1")
 }
 
-/// A capture's file as the document's base, or `None` if it can't be read. Screenshots are
-/// opaque, so the pixels are already what `tiny-skia`'s premultiplied form expects.
+/// Screenshots are opaque, so the pixels need no premultiplying for `tiny-skia`.
 pub fn load_picture(path: &Path) -> Option<Pixmap> {
     pixmap_from_rgba(xcap::image::open(path).ok()?.to_rgba8())
 }
@@ -55,7 +51,6 @@ mod tests {
         base.fill(Color::from_rgba8(10, 20, 30, 255));
         let image = render_image(&base);
         assert_eq!(image.size(0), gpui::size(1.into(), 1.into()));
-        // The frame's bytes are BGRA: blue first.
         let mut swapped = base.data().to_vec();
         swapped.swap(0, 2);
         assert_eq!(swapped, [30, 20, 10, 255]);

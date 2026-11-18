@@ -15,12 +15,12 @@ impl Store {
             .ok_or(StoreError::NotFound)
     }
 
-    /// The session's captures, newest first.
+    /// Newest first.
     pub fn session_captures(&self, session: SessionId) -> Result<Vec<StoredCapture>> {
         self.select("session = ?1", [session.0])
     }
 
-    /// Today's captures from every session but `current`, newest first.
+    /// From every session but `current`, newest first.
     pub fn earlier_today(
         &self,
         current: SessionId,
@@ -32,7 +32,6 @@ impl Store {
         )
     }
 
-    /// The most recent day with captures before `date`, if there is one.
     pub fn latest_day_before(&self, date: LocalDate) -> Result<Option<LocalDate>> {
         let day: Option<i64> = self.db().query_row(
             "SELECT MAX(taken_date) FROM captures WHERE taken_date < ?1",
@@ -42,7 +41,7 @@ impl Store {
         Ok(day.map(date_from_number))
     }
 
-    /// The captures taken on `date`, newest first.
+    /// Newest first.
     pub fn captures_on(&self, date: LocalDate) -> Result<Vec<StoredCapture>> {
         self.select("taken_date = ?1", [date_number(date)])
     }

@@ -5,8 +5,8 @@ unsafe extern "system" {
     fn SystemParametersInfoW(action: u32, param: u32, value: *mut i32, update: u32) -> i32;
 }
 
-/// Whether the user has asked for less motion: Settings > Accessibility > Visual effects >
-/// Animation effects is off. If Windows can't say, motion stays.
+/// Settings > Accessibility > Visual effects > Animation effects is off. If Windows can't say,
+/// motion stays.
 pub fn reduce_motion() -> bool {
     let mut animations: i32 = 1;
     // SAFETY: `SPI_GETCLIENTAREAANIMATION` writes one `BOOL` through the pointer, which

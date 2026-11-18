@@ -5,8 +5,7 @@ use toru_core::settings::{DisplayShortcut, Settings};
 use super::Shortcut;
 use super::shortcut::ShortcutError;
 
-/// What a shortcut does: one of the four capture actions, or Full screen of one display, named
-/// by the stable id the platform gives it (`PlatformDisplay::uuid`).
+/// `Display` is Full screen of one display, named by its stable id (`platform::display_key`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Binding {
     Region,
@@ -16,10 +15,9 @@ pub enum Binding {
     Display(String),
 }
 
-/// Why a shortcut isn't working, shown in text on its row.
+/// Shown in text on the shortcut's row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Problem {
-    /// The stored string isn't a shortcut.
     Unreadable(ShortcutError),
     /// Another row has the same keys and got them first.
     Duplicate(Binding),
@@ -31,8 +29,6 @@ pub enum Problem {
     Disconnected,
 }
 
-/// What a shortcut row knows: its action, the stored text, the shortcut that text parses to,
-/// and what is wrong, if anything.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Planned {
     pub binding: Binding,
@@ -48,9 +44,8 @@ pub struct Entry {
     pub connected: bool,
 }
 
-/// Reads every entry's text and marks the problems that need no registration: unreadable text,
-/// a duplicate of an earlier row, and a display that is away. Earlier rows win a clash, so the
-/// four actions, listed first, keep their keys over a display shortcut.
+/// Marks the problems that need no registration. Earlier rows win a clash, so the four actions,
+/// listed first, keep their keys over a display shortcut.
 pub fn plan(entries: Vec<Entry>) -> Vec<Planned> {
     let mut taken: HashMap<Shortcut, Binding> = HashMap::new();
     entries
@@ -83,7 +78,7 @@ pub fn plan(entries: Vec<Entry>) -> Vec<Planned> {
         .collect()
 }
 
-/// The stored text of each of the four actions and every display shortcut, in that order.
+/// The four actions, then every display shortcut, in that order.
 pub fn entries(settings: &Settings, connected: impl Fn(&str) -> bool) -> Vec<Entry> {
     let action = |binding, text: &Option<String>| Entry {
         binding,
@@ -104,8 +99,7 @@ pub fn entries(settings: &Settings, connected: impl Fn(&str) -> bool) -> Vec<Ent
     entries
 }
 
-/// Writes a binding's new shortcut, or none, to the settings. A display's keeps its place among
-/// the display shortcuts, so the rows don't reorder.
+/// A display's keeps its place among the display shortcuts, so the rows don't reorder.
 pub fn set(settings: &mut Settings, binding: &Binding, shortcut: Option<Shortcut>) {
     let text = shortcut.map(|shortcut| shortcut.to_string());
     match binding {
@@ -131,7 +125,7 @@ pub fn set(settings: &mut Settings, binding: &Binding, shortcut: Option<Shortcut
     }
 }
 
-/// The user's sentence for a problem. `name_of` gives a binding's name, as the row labels it.
+/// `name_of` gives a binding's name, as the row labels it.
 pub fn problem_text(problem: &Problem, name_of: impl Fn(&Binding) -> String) -> String {
     match problem {
         Problem::Unreadable(ShortcutError::UnknownKey(key)) => {

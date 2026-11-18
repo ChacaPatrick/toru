@@ -5,7 +5,6 @@ use crate::main_window::{MainWindow, act, settings::hint};
 use crate::theme::{ActiveTheme, ThemedText};
 use crate::ui::Button;
 
-/// The notice row: the toolbar's padding at the sides, and a small button's height plus this.
 const NOTICE_PADDING_X: f32 = 16.;
 
 const NOTICE_PADDING_Y: f32 = 8.;
@@ -14,8 +13,8 @@ const NOTICE_GAP: f32 = 10.;
 
 const NOTICE_BUTTON_GAP: f32 = 8.;
 
-/// The notice, while an update is downloaded and not put off: a row under the toolbar, in its
-/// colours, with the look's dot in the accent. Announced like a toast when it appears.
+/// A row in the toolbar's colours, so it covers nothing and the gallery only starts lower.
+/// Announced like a toast when it appears.
 pub(in crate::main_window) fn notice(this: &MainWindow, cx: &Context<MainWindow>) -> Option<Div> {
     let update = this
         .updates

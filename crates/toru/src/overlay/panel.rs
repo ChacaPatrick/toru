@@ -6,20 +6,16 @@ use super::loupe::{LOUPE_CELLS, LOUPE_ZOOM};
 use super::{Overlay, geometry};
 use crate::theme::{ActiveTheme, ThemedText};
 
-/// The panel's distance from the pointer and its inner padding, in logical pixels.
+/// From the pointer, in logical pixels, as are the other sizes here.
 const PANEL_GAP: f32 = 20.;
 
 const PANEL_PADDING: f32 = 10.;
 
-/// Between the magnifier and the text below it.
 const PANEL_SPACING: f32 = 8.;
 
-/// A window title longer than this is cut with an ellipsis, so the panel stays a panel.
 const TITLE_MAX_WIDTH: f32 = 360.;
 
 impl Overlay {
-    /// The panel beside the pointer: in Region the magnifier over the readout line and a hint,
-    /// in Window the picked window's size and title over the hint.
     pub(super) fn panel(
         &self,
         pointer: Pt,
@@ -82,7 +78,6 @@ impl Overlay {
             + hint_height
             + 2. * (PANEL_PADDING + border);
 
-        // The pointer and the frame in logical pixels, for placing the panel.
         let pointer_logical = (pointer.0 as f32 / scale, pointer.1 as f32 / scale);
         let frame_logical = (frame.width as f32 / scale, frame.height as f32 / scale);
         let (left, top) = geometry::panel_origin(

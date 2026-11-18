@@ -1,12 +1,7 @@
-//! The stickers (DESIGN.md §5): a pointing hand at eight angles, a check, a cross and a warning,
-//! each drawn as vector shapes of our own in the theme's `sticker` fill and `sticker_line`
-//! outline. A sticker is designed in a 24-unit box, as the mockups' icons are, and laid into
-//! whatever box the annotation has, so it scales without a bitmap.
-
 use gpui::Bounds;
 use tiny_skia::{Path, PathBuilder, Transform};
 
-/// The design box's side.
+/// The design box's side, as the mockups' icons have it.
 pub const UNITS: f32 = 24.;
 /// The outline around a sticker's body, in design units: the mockup's `stroke-width`.
 pub const OUTLINE: f32 = 1.2;
@@ -23,19 +18,14 @@ pub enum Sticker {
     Warning,
 }
 
-/// What a part of a sticker is drawn with.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Part {
-    /// Filled with the sticker colour and outlined in the line colour.
     Body,
-    /// Stroked in the line colour, `MARK` units wide.
     Mark,
-    /// Filled in the line colour.
     Dot,
 }
 
 impl Sticker {
-    /// Every sticker, in the tray's order.
     pub const ALL: [Sticker; 11] = [
         Sticker::Hand(0),
         Sticker::Hand(1),
@@ -66,7 +56,7 @@ impl Sticker {
         }
     }
 
-    /// The sticker's parts laid into `b`, in the order they are drawn.
+    /// In drawing order.
     pub fn parts(self, b: Bounds<f32>) -> Vec<(Path, Part)> {
         let scale = b.size.width / UNITS;
         let mut place = Transform::from_translate(b.origin.x, b.origin.y).pre_scale(scale, scale);
@@ -79,7 +69,6 @@ impl Sticker {
             .collect()
     }
 
-    /// The sticker in its design box.
     fn design(self) -> Vec<(Path, Part)> {
         match self {
             Sticker::Hand(_) => vec![(hand(), Part::Body)],
@@ -107,12 +96,10 @@ impl Sticker {
     }
 }
 
-/// The badge behind a check or cross.
 fn disc() -> Path {
     PathBuilder::from_circle(CENTRE, CENTRE, 10.4).expect("a positive radius")
 }
 
-/// A warning triangle with softened corners, apex up.
 fn triangle() -> Path {
     let mut p = PathBuilder::new();
     p.move_to(10.6, 3.2);
@@ -125,9 +112,7 @@ fn triangle() -> Path {
     p.finish().expect("a closed triangle")
 }
 
-/// A hand pointing up: the index finger raised from a fist, the other fingers curled over the
-/// knuckles on the right and the thumb folded against the left. Traced clockwise from the base
-/// of the finger.
+/// Pointing up, the index finger raised from a fist. Traced clockwise from the finger's base.
 fn hand() -> Path {
     let mut p = PathBuilder::new();
     p.move_to(8.3, 11.);

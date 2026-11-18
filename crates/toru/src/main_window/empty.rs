@@ -1,12 +1,5 @@
-//! The gallery's empty state: what a new user sees under "This session" before the first
-//! capture, in place of a blank area. It names the Region button and, when one is working, the
-//! Region shortcut, so the first screenshot is one press away. The mockups show no empty
-//! gallery, so each look draws it from its own parts (`theme::EmptyState`): Japandi a serif
-//! line under a round seal with air around it, Pixel art its loading row's dashed frame around
-//! the Region icon in the accent colour on a hard-edged tile with the look's block shadow,
-//! Neo-brutalism a blunt statement beside a block of thumbnail colour.
-//! It is muted text on the window or the placeholder fill, never a warning colour, so it reads
-//! as an invitation and not as an error.
+//! The gallery's empty state. The mockups show none, so each look draws it from its own parts
+//! (`theme::EmptyState`).
 
 use std::ops::Range;
 
@@ -16,23 +9,19 @@ use super::HINT_LEADING;
 use crate::theme::{Ornament, Theme, ThemedText};
 use crate::ui::{Icon, Readable, fill, shadowed};
 
-/// Above an unframed empty state, so it sits in the space rather than under the header's chin.
+/// So an unframed empty state sits in the space rather than under the header's chin.
 const UNFRAMED_TOP: f32 = 56.;
-/// Inside the frame.
 const FRAME_PADDING_X: f32 = 24.;
 const FRAME_PADDING_Y: f32 = 28.;
-/// Between the ornament and the words, and between the title and the instruction.
 const ORNAMENT_GAP: f32 = 16.;
 const TITLE_GAP: f32 = 8.;
-/// The instruction wraps at a comfortable line, which holds it whole in every look while no
-/// shortcut is named.
+/// Holds the instruction whole in every look while no shortcut is named.
 const TEXT_WIDTH: f32 = 440.;
-/// The seal, the tile and the block, and the icon in them.
 const ORNAMENT_SIZE: f32 = 56.;
-const ORNAMENT_ICON: f32 = 24.;
+const ORNAMENT_ICON_SIZE: f32 = 24.;
 
-/// The instruction, and where in it the names to pick out are: the Region button and the
-/// shortcut, which is `None` when no Region shortcut is set or working.
+/// Also returns where the names to pick out are. `shortcut` is `None` when no Region shortcut is
+/// set or working.
 fn instruction(shortcut: Option<&str>) -> (String, Vec<Range<usize>>) {
     const BUTTON: &str = "Region";
     let mut text = String::from("Press ");
@@ -52,7 +41,6 @@ fn instruction(shortcut: Option<&str>) -> (String, Vec<Range<usize>>) {
     (text, names)
 }
 
-/// The headline and the instruction as one sentence each, whatever the headline's own stop.
 fn spoken_text(title: &str, instruction: &str) -> String {
     format!("{}. {instruction}", title.trim_end_matches('.'))
 }
@@ -121,7 +109,11 @@ pub fn empty_state(shortcut: Option<&str>, theme: &Theme) -> Stateful<Div> {
 
 fn ornament(ornament: Ornament, theme: &Theme) -> Div {
     let c = &theme.colors;
-    let icon = |color| Icon::Region.render(theme, color).size(px(ORNAMENT_ICON));
+    let icon = |color| {
+        Icon::Region
+            .render(theme, color)
+            .size(px(ORNAMENT_ICON_SIZE))
+    };
     let tile = div()
         .relative()
         .flex_none()

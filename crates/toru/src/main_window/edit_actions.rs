@@ -1,6 +1,4 @@
-//! What the editor's top bar does to the capture (DESIGN.md §5): Copy, Save, Save as, and the
-//! edited picture going to the card on Back. The picture is flattened by the editor as the user
-//! asks; everything that touches the clipboard or a file goes on the capture queue.
+//! What the editor's top bar does to the capture (DESIGN.md §5).
 
 use std::path::Path;
 
@@ -29,8 +27,6 @@ const BLANKS_KEPT: &str = "Edits kept · some characters left blank";
 /// redaction off: the store refuses it, since the original is gone.
 const WOULD_REVEAL: &str = "Not kept: that would show what the saved picture hides.";
 
-/// What to say when a write failed: `otherwise`, unless the store refused it for showing what
-/// a saved redaction hid.
 fn failure_message(error: &StoreError, otherwise: &'static str) -> &'static str {
     match error {
         StoreError::WouldReveal => WOULD_REVEAL,
@@ -38,7 +34,7 @@ fn failure_message(error: &StoreError, otherwise: &'static str) -> &'static str 
     }
 }
 
-/// `message`, saying so when some text in the picture has characters no font could draw.
+/// Blanks are characters no font could draw.
 fn noting_blanks(message: impl Into<String>, blanks: bool) -> String {
     let message = message.into();
     if blanks {
@@ -109,8 +105,6 @@ impl MainWindow {
         });
     }
 
-    /// Save: the card's capture becomes the flattened picture, in the user's folder. A second
-    /// press before the first finishes does nothing, or it would write a second file.
     fn save_edited(
         &mut self,
         editor: WeakEntity<Editor>,
@@ -199,9 +193,9 @@ impl MainWindow {
         });
     }
 
-    /// Save as: the file picker runs on a thread of its own, so the window keeps drawing, and
-    /// off the queue, so a capture needn't wait for the user to choose. Only the write queues.
-    /// A copy of a picture that hides some of the capture deletes the original, as Save does.
+    /// The file picker runs off the queue, so a capture needn't wait for the user to choose;
+    /// only the write queues. A copy of a picture that hides some of the capture deletes the
+    /// original, as Save does.
     fn save_edited_as(
         &mut self,
         editor: WeakEntity<Editor>,
@@ -281,8 +275,8 @@ impl MainWindow {
         .detach();
     }
 
-    /// Quitting with the editor open: its edits go to the card as Back would put them, on the
-    /// queue, which quitting waits for. The editor stays open, in case quitting is cancelled.
+    /// On the queue, which quitting waits for. The editor stays open, in case quitting is
+    /// cancelled.
     pub(super) fn keep_open_edits(&mut self, cx: &mut Context<Self>) {
         let Some(editor) = self.editor.clone() else {
             return;
@@ -295,9 +289,8 @@ impl MainWindow {
         }
     }
 
-    /// Back: the card takes the edited picture, leaving any file the user saved as it is.
-    /// `None` for the original tells the store the edits were all taken off again. Until the
-    /// write starts, Windows' shutdown can write it instead (`closing`).
+    /// Leaves any file the user saved as it is. Until the write starts, Windows' shutdown can
+    /// write it instead (`closing`).
     fn keep_edits(&mut self, capture: CaptureId, flattened: Flattened, cx: &mut Context<Self>) {
         let store = self.store.clone();
         let thumbnail_width = self
@@ -346,7 +339,7 @@ impl MainWindow {
     }
 }
 
-/// Back's write, held for the quit handler until the queue starts it.
+/// Held for the quit handler until the queue starts it.
 struct KeptEdits {
     capture: CaptureId,
     flattened: Flattened,
@@ -366,8 +359,8 @@ impl WriteAtShutdown for KeptEdits {
     }
 }
 
-/// Save as's write: the name picked, with the extension of the format chosen in the menu. Toru
-/// never overwrites, so a name already taken gets a number even if the picker asked to replace.
+/// Toru never overwrites, so a name already taken gets a number even if the picker asked to
+/// replace.
 fn write_copy(
     picture: &xcap::image::RgbaImage,
     path: &Path,

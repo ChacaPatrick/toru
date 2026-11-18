@@ -4,19 +4,17 @@ use toru_core::capture::CaptureMode;
 use super::MainWindow;
 use crate::{overlay, platform};
 
-/// A display Full screen can capture, as the picker shows it.
 pub(super) struct Display {
     pub(super) id: DisplayId,
     /// What a per-display shortcut is stored under (`platform::display_key`): the monitor's own
     /// identity, which survives restarts and unplugging, where `id` doesn't.
     pub(super) key: String,
-    /// "Display 1 · 2560×1440": its number and its size in physical pixels, which a capture has.
+    /// The size in physical pixels, as a capture has it.
     pub(super) label: SharedString,
 }
 
 impl MainWindow {
-    /// The displays as they are right now, since monitors come and go while Toru runs, and the
-    /// index of the chosen one among them.
+    /// Read afresh, since monitors come and go while Toru runs. Also the index of the chosen one.
     pub(super) fn displays(&self, cx: &App) -> (Vec<Display>, usize) {
         let displays: Vec<Display> = cx
             .displays()
@@ -38,7 +36,6 @@ impl MainWindow {
         (displays, chosen)
     }
 
-    /// Takes a capture now, whichever way it was asked for, in place of any countdown.
     pub(super) fn capture(&mut self, mode: CaptureMode, cx: &mut Context<Self>) {
         self.cancel_countdown(cx);
         match mode {
@@ -47,7 +44,7 @@ impl MainWindow {
         }
     }
 
-    /// Opens the Region or Window overlay (DESIGN.md §6); its image arrives in `add_capture`.
+    /// DESIGN.md §6.
     fn capture_with_overlay(&mut self, mode: CaptureMode, cx: &mut Context<Self>) {
         let this = cx.entity();
         let failed = this.clone();

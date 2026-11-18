@@ -22,7 +22,7 @@ impl<T: 'static> Flash<T> {
         self.value.as_ref()
     }
 
-    /// Shows `value` for `duration`. `flash` finds this `Flash` in the view again when time is up.
+    /// `flash` finds this `Flash` in the view again when time is up.
     pub fn show<V: 'static>(
         &mut self,
         value: T,

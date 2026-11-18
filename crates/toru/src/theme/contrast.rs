@@ -1,5 +1,4 @@
-//! WCAG 2 contrast: the pairs every control draws, for the `DESIGN.md` §7 acceptance test over
-//! every look and palette and for the custom palette's contrast warning.
+//! WCAG 2 contrast, for DESIGN.md §7's acceptance test and the custom palette's warning.
 
 use gpui::{Hsla, Rgba, black, white};
 
@@ -44,7 +43,6 @@ pub fn ratio(a: Hsla, b: Hsla) -> f32 {
 pub const TEXT: f32 = 4.5;
 pub const RING: f32 = 3.0;
 
-/// A foreground laid over a background somewhere in the app, and the ratio it must reach.
 pub struct Pair {
     pub name: String,
     pub fg: Hsla,
@@ -58,7 +56,6 @@ impl Pair {
     }
 }
 
-/// The colours a `Fill` can show under something: each solid stop.
 fn stops(fill: &Fill) -> Vec<Hsla> {
     match *fill {
         Fill::Solid(color) => vec![color],
@@ -68,12 +65,8 @@ fn stops(fill: &Fill) -> Vec<Hsla> {
     }
 }
 
-/// Every text-on-background pair the controls draw, and the focus ring against everything it
-/// sits on: the window, the three surfaces, a selected card (its name field and chips) and the
-/// bulk bar. Translucent foregrounds and backgrounds are blended over what lies beneath them
-/// first. With a background photo, the window is also taken over a black and over a white
-/// picture: under the scrim its colour moves with the picture, channel by channel, so those two
-/// bound what any photo can do to it.
+/// With a background photo, the window is also taken over a black and a white picture: under the
+/// scrim its colour moves with the picture channel by channel, so those two bound any photo.
 pub fn pairs(theme: &Theme) -> Vec<Pair> {
     let c = &theme.colors;
     let mut pairs = Vec::new();
@@ -112,8 +105,6 @@ pub fn pairs(theme: &Theme) -> Vec<Pair> {
         text(&format!("text on {name}"), c.text, bg);
         text(&format!("muted on {name}"), c.muted, bg);
     }
-    // The empty state's headline and its instruction, on the window or in the placeholder frame
-    // over it.
     for (name, bg) in &windows {
         let frame = over(c.load_bg, *bg);
         text(&format!("empty state on {name}"), c.text, frame);
@@ -122,17 +113,15 @@ pub fn pairs(theme: &Theme) -> Vec<Pair> {
     // A disabled button is unfilled, so its label sits on the bar it is in.
     text("disabled button", c.muted, c.surface_2);
     text("label on bg", c.label, c.bg);
-    // The editor's context panel.
     text("label on surface", c.label, c.surface);
     text("label on surface_2", c.label, c.surface_2);
     text("button", c.button_text, c.button_bg);
-    // Only plain buttons carry a sub (`Display 1 ▾`, `5 s ▾`); the primary ones never do.
+    // Only plain buttons carry a sub (`Display 1 ▾`, `5 s ▾`), never primary ones.
     let sub = Hsla {
         a: SUB_OPACITY,
         ..c.button_text
     };
     text("button sub", over(sub, c.button_bg), c.button_bg);
-    // Hovered, a split sub shows the full text colour over a tint of it.
     text(
         "hovered button sub",
         c.button_text,
@@ -140,7 +129,6 @@ pub fn pairs(theme: &Theme) -> Vec<Pair> {
     );
     text("primary button", c.accent_text, c.accent_bg);
     text("chosen segment", c.on_text, c.on_bg);
-    // The editor's tool pill: a tool's shortcut letter, and the chosen tool's.
     text("tool key", tool_key_color(theme, false), c.surface);
     text("chosen tool key", tool_key_color(theme, true), c.on_bg);
     for (name, bg) in &surfaces[..4] {
@@ -182,8 +170,7 @@ pub fn pairs(theme: &Theme) -> Vec<Pair> {
             );
         }
     }
-    // A capture shows through a translucent tag. Black and white bound what any picture can do
-    // to it, as they do for the window over a photo.
+    // A capture shows through a translucent tag; black and white bound any picture.
     for (name, picture) in [("dark", black()), ("light", white())] {
         text(
             &format!("tag over a {name} picture"),
@@ -209,14 +196,11 @@ pub fn pairs(theme: &Theme) -> Vec<Pair> {
     pairs
 }
 
-/// What the built-in palettes hold besides `pairs`: the parts of a control that aren't text but
-/// say what state it is in or which one is chosen, each against what it is drawn on, at WCAG
-/// 1.4.11's 3:1 as for the focus ring, and text selected in a field. A custom palette isn't
-/// warned about these: its six colours don't set them one by one.
+/// Non-text parts that show a control's state (WCAG 1.4.11's 3:1), and selected text. Only the
+/// built-in palettes are held to these: a custom palette's six colours don't set them one by one.
 pub fn parts(theme: &Theme) -> Vec<Pair> {
     let c = &theme.colors;
     let mut parts = vec![
-        // A switch's knob says on or off by where it sits, and a radio's dot by being there.
         (
             "switch knob, off".to_string(),
             c.toggle_knob,
@@ -229,7 +213,6 @@ pub fn parts(theme: &Theme) -> Vec<Pair> {
             c.toggle_on,
             RING,
         ),
-        // The editor panel's slider and chosen swatch, and the empty state's tile.
         ("slider on surface".to_string(), c.accent, c.surface, RING),
         (
             "chosen swatch outline".to_string(),
@@ -237,9 +220,7 @@ pub fn parts(theme: &Theme) -> Vec<Pair> {
             c.surface,
             RING,
         ),
-        // Around a selected card, on the window.
         ("selected card outline".to_string(), c.accent, c.bg, RING),
-        // A field that isn't valid: its border against the field inside it.
         ("warning border".to_string(), c.warning, c.input_bg, RING),
         // Under the kit's selection tint (`gpui_kit_theme::sync_kit_theme`).
         (
@@ -264,7 +245,6 @@ pub fn parts(theme: &Theme) -> Vec<Pair> {
         .collect()
 }
 
-/// A pair that falls short of its ratio.
 #[derive(Debug)]
 pub struct Failure {
     pub name: String,
@@ -282,13 +262,10 @@ impl std::fmt::Display for Failure {
     }
 }
 
-/// Every pair in `theme` that misses DESIGN.md §7, in the order `pairs` lists them, for the
-/// custom palette editor to show.
 pub fn failures(theme: &Theme) -> Vec<Failure> {
     short(pairs(theme))
 }
 
-/// Those of `pairs` that fall short.
 fn short(pairs: Vec<Pair>) -> Vec<Failure> {
     pairs
         .into_iter()
@@ -307,8 +284,7 @@ mod tests {
     use crate::theme::css::hex;
     use toru_core::settings::{BUILT_IN_PALETTES, Look};
 
-    /// Every built-in palette. Only the custom palette can have a photo behind it; `custom`'s
-    /// tests cover that.
+    /// Only the custom palette can have a photo behind it; `custom`'s tests cover that.
     fn themes() -> impl Iterator<Item = Theme> {
         [Look::Japandi, Look::PixelArt, Look::NeoBrutalism]
             .into_iter()
@@ -323,8 +299,6 @@ mod tests {
         )
     }
 
-    /// With a photo behind the window, the pairs take in the window over a black and a white
-    /// picture, and name them.
     #[test]
     fn a_photo_adds_the_window_over_dark_and_light_pictures() {
         let mut theme = Theme::new(Look::Japandi, 0);
@@ -345,7 +319,6 @@ mod tests {
         assert!((ratio(hex(0x000000), hex(0xffffff)) - 21.).abs() < 0.01);
         assert!((ratio(hex(0x777777), hex(0xffffff)) - 4.48).abs() < 0.01);
         assert_eq!(ratio(hex(0x123456), hex(0x123456)), 1.);
-        // Half-transparent white over black is mid grey.
         let grey = Rgba::from(over(
             Hsla {
                 a: 0.5,

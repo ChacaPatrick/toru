@@ -1,5 +1,4 @@
-//! The editor's frame around the canvas (DESIGN.md §5): the top bar, the floating tool pill, the
-//! zoom and undo corners and the hint chip.
+//! The frame around the canvas: top bar, tool pill, corners and hint chip.
 
 use gpui::{
     AnyElement, Context, Div, Hsla, SharedString, Stateful, Window, div, prelude::*, px, relative,
@@ -11,15 +10,13 @@ use super::{Editor, act, on, tools::*};
 use crate::theme::{ActiveTheme, Theme, ThemedText, contrast};
 use crate::ui::{Button, Choices, Icon, Menu, Pressable, Readable, TextField, shadowed};
 
-/// The pill's top edge and the corners' distance from the canvas edges.
-pub const EDGE: f32 = 16.;
+pub const CHROME_INSET: f32 = 16.;
 const TOOL: f32 = 40.;
 const PILL_PADDING: f32 = 4.;
 const PILL_GAP: f32 = 2.;
 const SEPARATOR_HEIGHT: f32 = 28.;
 const SEPARATOR_MARGIN: f32 = 4.;
-/// `.tool .k`: the shortcut letter's distance from the tool's right and bottom edges, and how
-/// much of the tool's text colour it keeps.
+/// The mockups' `.tool .k`.
 const KEY_RIGHT: f32 = 4.;
 const KEY_BOTTOM: f32 = 2.;
 const KEY_OPACITY: f32 = 0.8;
@@ -31,9 +28,7 @@ const NAME_WIDTH: f32 = 240.;
 const ORIGINAL_REMOVED: &str =
     "The original was deleted when this was saved with blurred or hidden areas";
 
-/// The pill's height, for laying the picture out under it.
 pub const PILL_HEIGHT: f32 = TOOL + PILL_PADDING * 2.;
-/// A corner's height, for laying the picture out above it.
 pub const CORNER_HEIGHT: f32 = CORNER_BUTTON + CORNER_PADDING * 2.;
 
 pub fn top_bar(editor: &Editor, window: &Window, cx: &Context<Editor>) -> Div {
@@ -71,12 +66,11 @@ pub fn top_bar(editor: &Editor, window: &Window, cx: &Context<Editor>) -> Div {
         .child(
             Button::new("back", "Back to session")
                 .icon(Icon::Back)
-                .track_focus(&editor.back)
+                .track_focus(&editor.back_button)
                 .on_click(on(cx, |this, cx| this.back(cx))),
         )
         .child(TextField::new(&editor.name, "Screenshot name").w(px(NAME_WIDTH)))
-        // A refused name is said here in place of the status, right after its field, so the bar
-        // keeps its shape, as the card does.
+        // A refused name takes the status's place, so the bar keeps its shape, as the card does.
         .child(match &editor.name_error {
             Some(error) => status_text(theme, c.text)
                 .read_as_text(error)
@@ -104,7 +98,6 @@ pub fn top_bar(editor: &Editor, window: &Window, cx: &Context<Editor>) -> Div {
         .child(save_as)
 }
 
-/// Reset edits, unless saving a picture that hid some of the capture deleted the original.
 fn reset_button(editor: &Editor, cx: &Context<Editor>) -> Button {
     let reset = Button::new("reset", "Reset edits").on_click(on(cx, |this, cx| this.reset(cx)));
     if editor.document.can_reset() {
@@ -125,7 +118,6 @@ fn status_text(theme: &Theme, color: Hsla) -> Stateful<Div> {
         .whitespace_nowrap()
 }
 
-/// The tool pill, top-centre. It is one tab stop: the arrow keys move between tools.
 pub fn tool_pill(editor: &Editor, cx: &Context<Editor>) -> impl IntoElement {
     let theme = cx.theme();
     let tools: Vec<Tool> = Tool::all().collect();
@@ -133,7 +125,6 @@ pub fn tool_pill(editor: &Editor, cx: &Context<Editor>) -> impl IntoElement {
         .iter()
         .position(|tool| *tool == editor.tool)
         .unwrap_or(0);
-    // A rule before each group but the first; drawn as a left margin on the group's first tool.
     let starts_group: Vec<bool> = GROUPS
         .iter()
         .enumerate()
@@ -162,7 +153,6 @@ pub fn tool_pill(editor: &Editor, cx: &Context<Editor>) -> impl IntoElement {
         .child(choices)
 }
 
-/// `.tool`: the icon with its shortcut letter in the corner; the chosen one is filled.
 fn tool_button(
     theme: &Theme,
     tool: Tool,
@@ -211,9 +201,8 @@ fn tool_button(
     button
 }
 
-/// The shortcut letter's colour on a tool, chosen (`on`) or not. The mockups fade the letter to
-/// 80% of the tool's text; on the chosen tool's fill that falls short of §7's 4.5:1 in some
-/// palettes, so the chosen letter keeps the full `on_text`. The contrast test covers both.
+/// The mockups fade the letter to 80% of the tool's text; on the chosen tool's fill that falls
+/// short of §7's 4.5:1 in some palettes, so the chosen letter keeps the full `on_text`.
 pub fn tool_key_color(theme: &Theme, on: bool) -> Hsla {
     let c = &theme.colors;
     if on {
@@ -228,12 +217,11 @@ pub fn tool_key_color(theme: &Theme, on: bool) -> Hsla {
     )
 }
 
-/// Zoom (− / % / + / Fit), bottom-left.
 pub fn zoom_corner(editor: &Editor, cx: &Context<Editor>) -> Stateful<Div> {
     let theme = cx.theme();
     let percent: SharedString = format!("{}%", editor.viewport.percent()).into();
     corner(theme, "zoom")
-        .left(px(EDGE))
+        .left(px(CHROME_INSET))
         .child(
             corner_button(theme, "zoom-out", "Zoom out")
                 .child("−")
@@ -269,13 +257,12 @@ pub fn zoom_corner(editor: &Editor, cx: &Context<Editor>) -> Stateful<Div> {
         )
 }
 
-/// Undo and Redo, bottom-right.
 pub fn undo_corner(editor: &Editor, cx: &Context<Editor>) -> Stateful<Div> {
     let theme = cx.theme();
     let c = &theme.colors;
     let faded = |can: bool| if can { c.text } else { c.muted };
     corner(theme, "history")
-        .right(px(EDGE))
+        .right(px(CHROME_INSET))
         .child(
             corner_button(theme, "undo", "Undo")
                 .child(Icon::Undo.render(theme, faded(editor.document.can_undo())))
@@ -288,13 +275,12 @@ pub fn undo_corner(editor: &Editor, cx: &Context<Editor>) -> Stateful<Div> {
         )
 }
 
-/// `.corner`: a small pop surface holding borderless buttons.
 fn corner(theme: &Theme, id: &'static str) -> Stateful<Div> {
     let pop = theme.borders.pop;
     let corner = div().id(id).occlude();
     shadowed(corner, &theme.shadows.pop, theme.radii.md)
         .absolute()
-        .bottom(px(EDGE))
+        .bottom(px(CHROME_INSET))
         .flex()
         .items_center()
         .gap(px(PILL_GAP))
@@ -314,7 +300,6 @@ fn corner_button(theme: &Theme, id: &'static str, label: impl Into<SharedString>
         .type_style(theme, theme.type_scale.corner)
 }
 
-/// The hint chip, bottom-centre: what the active tool does.
 pub fn hint_chip(editor: &Editor, cx: &Context<Editor>) -> AnyElement {
     let theme = cx.theme();
     let pop = theme.borders.pop;

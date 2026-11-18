@@ -1,6 +1,3 @@
-//! The PixelArt look, copied from the "PixelArt" entry of `design/tokens.json`. Everything is
-//! square, bordered in near-black and lifted by a hard 4px shadow.
-
 use gpui::{FontWeight, Hsla};
 use toru_core::settings::Look;
 
@@ -54,10 +51,9 @@ pub fn theme(palette: usize) -> Theme {
             c.tag_text = hex(0x9bbc0f);
             c.toggle_off = hex(0x306230);
             c.toggle_knob = hex(0xe0f8d0);
-            // tokens.json uses the accent (#9bbc0f) for `--muted` too, which is 3.3:1 on the
-            // surface, where card hints sit. One step lighter on the Game Boy ramp reaches 4.7:1,
-            // and the lifted `--surface-sel` (#4a7a3a) is traded for `--surface-2` so hints on a
-            // selected card hold 6.6:1 (DESIGN.md §7).
+            // tokens.json's `--muted` is the accent, 3.3:1 on the surface where card hints sit.
+            // One step lighter on the Game Boy ramp gives 4.7:1, and `--surface-2` in place of
+            // `--surface-sel` (#4a7a3a) keeps hints on a selected card at 6.6:1 (DESIGN.md §7).
             c.muted = hex(0xc0dc3f);
             c.surface_sel = hex(0x1e4a1e);
             c.hair = hex(0x0a2a0a);
@@ -89,7 +85,6 @@ pub fn theme(palette: usize) -> Theme {
             c.hair = hex(0x140c04);
             theme.borders.accent.color = hex(0x140c04);
         }
-        // Night arcade is the base as it stands.
         _ => return theme,
     }
     follow_palette(&mut theme.colors);
@@ -98,8 +93,7 @@ pub fn theme(palette: usize) -> Theme {
     theme
 }
 
-/// PixelArt's CSS has no rule of its own for these, so they follow the palette's accent, muted
-/// and surface, as the base CSS does.
+/// PixelArt's CSS has no rule of its own for these, so they follow the base CSS.
 fn follow_palette(c: &mut Colors) {
     c.follow_accent();
     c.dot = c.accent;
@@ -107,25 +101,18 @@ fn follow_palette(c: &mut Colors) {
     c.earlier_card_bg = c.surface;
 }
 
-/// How far the editor canvas's two squares sit from the window towards the surface in Night
-/// arcade (`#24243d` and `#1f1f36`, between `#1b1b2f` and `#2a2a45`), and the card's inner bevel
-/// (`#1c1c30`) from the surface back towards the window.
+/// From Night arcade's tokens: the canvas squares #24243d and #1f1f36 between window #1b1b2f and
+/// surface #2a2a45, and the card's bevel #1c1c30 from the surface back towards the window.
 const CANVAS: (f32, f32) = (0.62, 0.2975);
 const BEVEL: f32 = 0.95;
-/// The ink's strength where it dims the screen behind the capture overlay.
 const DIM: f32 = 0.6;
 
-/// tokens.json gives the other palettes no value for these, which left them in Night arcade's
-/// navy and purple on a green or amber window. Each takes the colour of its own palette that
-/// holds the same place in Night arcade's tokens: there the chip's text is the button's, the
-/// window controls are the title's yellow, the bulk bar is ink under the text colour with the
-/// button fill between its groups, the placeholder frame and the rule above a day are dashed in
-/// the button fill, and the placeholder is filled like an input.
+/// tokens.json gives the other palettes no value for these, which left Night arcade's navy and
+/// purple on a green or amber window, so each takes its own colour that holds the same place in
+/// Night arcade's tokens.
 ///
-/// The focus ring stays the look's mint. It is drawn where a selected card's accent outline is,
-/// so it can't be a palette's accent, and it is checked against every palette's surfaces. The
-/// annotation pink, the sticker and the overlay's crosshair are drawn on the picture, not on
-/// the window, and stay the look's too.
+/// The focus ring stays the look's mint: it is drawn where a selected card's accent outline is,
+/// so it can't be a palette's accent.
 fn follow_night_arcade(theme: &mut Theme) {
     let c = &mut theme.colors;
     let ink = c.hair;
@@ -139,8 +126,8 @@ fn follow_night_arcade(theme: &mut Theme) {
         *a = mix(c.bg, c.surface, CANVAS.0);
         *b = mix(c.bg, c.surface, CANVAS.1);
     }
-    // Nothing draws the mockups' stand-in screenshot, whose colours these are; they keep to
-    // the palette all the same.
+    // Nothing draws the mockups' stand-in screenshot these are for; they follow the palette
+    // anyway.
     c.shot_bg = c.surface;
     c.shot_line = c.button_bg;
     c.shot_fill = c.surface_2;
@@ -151,9 +138,7 @@ fn follow_night_arcade(theme: &mut Theme) {
     theme.overlay.loupe.color = ink;
 }
 
-/// The look outlines everything in one ink, `colors.hair`, and drops its hard shadows in it.
-/// The card's inner bevel is its surface sunk towards the window, and the selection edge is the
-/// palette's accent on its ink, like the title bar.
+/// The look outlines everything, and drops its hard shadows, in one ink: `colors.hair`.
 fn outline(theme: &mut Theme) {
     let c = &theme.colors;
     let ink = c.hair;
@@ -184,19 +169,16 @@ fn outline(theme: &mut Theme) {
             shadow.color = ink;
         }
     }
-    // The button's bevel is black and white laid over its fill, so it suits any palette; the
-    // card's is a colour of its own.
+    // The button's bevel is translucent black and white, which suits any palette; the card's is
+    // a colour of its own.
     for shadow in s.card.iter_mut().filter(|shadow| shadow.inset) {
         shadow.color = mix(c.surface, c.bg, BEVEL);
     }
     theme.overlay.edge.color = c.accent_bg;
 }
 
-/// PixelArt in the user's own colours. The look outlines everything in one ink; here that ink
-/// is the text colour, so the outlines show on the user's surfaces whatever their tone, and the
-/// hard drop shadows follow it. The placeholder frame and the day rule are dashed in it too,
-/// since the user's surfaces may sit too close together to show a dash in one of them. The
-/// button's bevel keeps the look's own highlights.
+/// The ink is the text colour, so outlines show on the user's surfaces whatever their tone. The
+/// dashed frame and day rule take it too, as the user's surfaces may be too close to show a dash.
 pub fn custom(palette: &CustomPalette) -> Theme {
     let mut theme = base();
     theme.palette = CUSTOM_PALETTE;
@@ -339,17 +321,14 @@ fn base() -> Theme {
             day_count: body(17., FontWeight::NORMAL),
             button: body(17., FontWeight::NORMAL),
             button_sm: body(13., FontWeight::NORMAL),
-            // tokens.json sets every `.btn.primary` in the display face at 11px, beside which
-            // the body face's 17px and 13px labels look a size smaller: Press Start 2P's letters
-            // fill most of its em, VT323's about half. At 10px and 8px the two faces' x-heights
-            // match, so a row of buttons reads as one size; 8px is also the display face's own
-            // pixel grid, so the card's Save is crisp.
+            // tokens.json sets `.btn.primary` in the display face at 11px, which looks a size
+            // larger than the body face's labels beside it. At 10px and 8px the two faces'
+            // x-heights match, and 8px is the display face's own pixel grid.
             primary_button: display(10., FontWeight::NORMAL),
             primary_button_sm: display(8., FontWeight::NORMAL),
-            // tokens.json leaves the base CSS's 12px here, 11px on the bulk bar's counts and
-            // sets `.tool .k` to 8px. In VT323, whose letters are about half its em, those are
-            // too small to read, so the two body sizes go to the chip's 14px and the tool's
-            // letter to the display face at 8px, its own pixel grid.
+            // tokens.json's 12px here, 11px bulk counts and 8px `.tool .k` are too small to read
+            // in VT323, whose letters are about half its em. The body sizes take the chip's 14px
+            // and the tool's letter the display face at 8px, its pixel grid.
             button_sub: body(14., FontWeight::NORMAL),
             chip: body(14., FontWeight::NORMAL),
             tag: body(13., FontWeight::NORMAL),
@@ -380,9 +359,6 @@ fn base() -> Theme {
             session: "THIS SESSION",
             day_date: DayDate::ShortUpper,
         },
-        // Thick ink around everything, as the look's controls have; `theme` swaps in each
-        // palette's accent for the edge. The crosshair is the annotation pink, which no palette's
-        // screen is likely to be.
         overlay: Overlay {
             dim: hex_alpha(0x0d0d18, 0.6),
             edge: Border::solid(3., hex(0xffd23f)),
@@ -390,8 +366,6 @@ fn base() -> Theme {
             loupe: Border::solid(3., ink),
             crosshair: hex(0xff6b97),
         },
-        // The loading row's dashed frame around the Region icon on a tile, like an empty save
-        // slot showing what goes in it.
         empty: EmptyState {
             title: "NO SHOTS YET",
             ornament: Ornament::Tile,
@@ -502,7 +476,6 @@ mod tests {
         }
         for index in 0..3 {
             let c = theme(index).colors;
-            // The CSS on-states are the accent, so a palette's accent must reach them.
             assert_eq!(css_hex(c.toggle_on), css_hex(c.accent_bg));
             assert_eq!(css_hex(c.on_text), css_hex(c.accent_text));
             assert_eq!(css_hex(c.chip_saved_bg), css_hex(c.accent_bg));
@@ -513,7 +486,7 @@ mod tests {
             // Fixed in the tokens, whatever the palette.
             assert_eq!(css_hex(c.focus), "#4fe3a3");
             assert_eq!(css_hex(c.bulk_focus), "#4fe3a3");
-            // `.titlebar .win span{border-left:var(--hair)}`, and the squares in place of glyphs.
+            // `.titlebar .win span{border-left:var(--hair)}`
             let theme = theme(index);
             assert_eq!(
                 css_border(theme.borders.title_divider),
@@ -523,7 +496,6 @@ mod tests {
         }
     }
 
-    /// Every colour `follow_night_arcade` and `outline` set, by name.
     fn followed(theme: &Theme) -> Vec<(&'static str, String)> {
         let (c, b, s, o) = (
             &theme.colors,
@@ -577,9 +549,6 @@ mod tests {
             .collect()
     }
 
-    /// What the tokens leave unset in the other palettes is taken from each palette's own
-    /// colours the way Night arcade's tokens relate: asked of Night arcade's colours, the
-    /// rules give its tokens back.
     #[test]
     fn the_rules_for_the_other_palettes_give_night_arcade_its_own_tokens() {
         let mut derived = base();
@@ -594,9 +563,6 @@ mod tests {
         assert_token(&tokens, "--load-bg", &css_hex(derived.colors.load_bg));
     }
 
-    /// The other palettes show none of Night arcade's navy, purple or yellow where the tokens
-    /// give them no value of their own: each is that palette's ink, text, button fill, input
-    /// fill or title colour.
     #[test]
     fn the_other_palettes_keep_none_of_night_arcades_colours() {
         let night: Vec<String> = followed(&theme(0))
@@ -626,8 +592,7 @@ mod tests {
             }
             assert_eq!(css_hex(theme.shadows.pop[0].color), css_hex(c.hair));
         }
-        // A custom palette's card has no navy bevel either: it is the user's surface sunk
-        // towards their window.
+        // A custom card's bevel is the user's surface sunk towards their window, not navy.
         let linen = CustomPalette::from_theme(&Theme::new(Look::Japandi, 0));
         let custom = custom(&linen);
         let bevel = &custom.shadows.card[1];
@@ -635,8 +600,6 @@ mod tests {
         assert_eq!(css_hex(bevel.color), "#f0eae0");
     }
 
-    /// Where the theme leaves tokens.json on purpose, for DESIGN.md §7 contrast. Each departure is
-    /// recorded against the token it replaces, so a change to either side shows up here.
     #[test]
     fn deliberate_departures_from_tokens() {
         let game_boy = entry().palette(1);
@@ -645,7 +608,6 @@ mod tests {
         let c = theme(1).colors;
         assert_eq!(css_hex(c.muted), "#c0dc3f");
         assert_eq!(css_hex(c.surface_sel), css_hex(c.surface_2));
-        // The other palettes keep their tokens.
         let amber = entry().palette(2);
         assert_token(&amber, "--muted", &css_hex(theme(2).colors.muted));
         assert_token(
@@ -654,23 +616,18 @@ mod tests {
             &css_hex(theme(2).colors.surface_sel),
         );
         assert_token(&entry().base(), "--muted", &css_hex(theme(0).colors.muted));
-        // `extra_css` writes Night arcade's yellow into the window controls for every palette.
-        // The others' squares are their own title colour, as Night arcade's are.
+        // `extra_css` writes Night arcade's yellow into every palette's window controls.
         let base = entry().base();
         assert!(base.contains(".titlebar .win span{color:#ffd23f}"));
         assert_token(&base, "--title-text", "#ffd23f");
         assert_eq!(css_hex(theme(1).colors.controls), "#9bbc0f");
         assert_eq!(css_hex(theme(2).colors.controls), "#ff9f1c");
-        // The tokens' 11px primary buttons read a size larger than the body face's labels
-        // beside them, so the theme sets them where the two faces' x-heights match.
         assert!(entry().base().contains(
             ".btn.primary,.toggle.on,.tab.on{font-family:var(--display);font-size:11px}"
         ));
         let scale = theme(0).type_scale;
         assert_eq!(scale.primary_button.size, px(10.));
         assert_eq!(scale.primary_button_sm.size, px(8.));
-        // The tokens' smallest sizes can't be read in VT323: the tool's letter keeps its 8px in
-        // the display face, and a button's sub and the bulk bar's counts take the chip's size.
         assert!(entry().base().contains(".tool .k{font-size:8px}"));
         assert_eq!(scale.tool_key.family, crate::theme::Family::Display);
         assert_eq!(scale.tool_key.size, px(8.));

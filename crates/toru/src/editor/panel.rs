@@ -1,14 +1,9 @@
-//! The left context panel (DESIGN.md §5): the active tool's options in labelled groups. A
-//! tool shows the groups its kind of mark needs; Select shows the selected mark's, and changing
-//! one changes the mark; Crop shows its rectangle's size with the buttons that apply or cancel
-//! it.
-
 use gpui::{
     AnyElement, Context, Div, ElementId, Hsla, Pixels, SharedString, div, img, prelude::*, px,
 };
 use gpui_kit::component::scroll::ScrollableElement;
 
-use super::{Editor, act, chrome, on, sticker::Sticker, sticker_tray::TRAY_ICON, tools::*};
+use super::{Editor, act, chrome, on, sticker::Sticker, sticker_tray::TRAY_ICON_SIZE, tools::*};
 use crate::theme::{ActiveTheme, Family, Theme, ThemedText};
 use crate::ui::{Button, Choices, MIN_TARGET, Pressable, Readable, Slider};
 
@@ -32,14 +27,9 @@ const OPTION_GAP: f32 = 6.;
 const SWATCH_HIT: f32 = (MIN_TARGET - SWATCH) / 2.;
 const OPTION_HIT: f32 = (MIN_TARGET - OPTION_HEIGHT) / 2.;
 const WIDTH_BAR: f32 = 14.;
-/// A sticker's tile in the tray: §7's target, with the sticker drawn `TRAY_ICON` big in it.
 const STICKER_TILE: f32 = MIN_TARGET;
-/// The font options, in the panel's order.
 const FAMILIES: [Family; 2] = [Family::Display, Family::Body];
 
-/// The panel for the active tool, or nothing for a tool with no options yet. It is as tall as
-/// its groups need, up to the room above the zoom corner, and scrolls past that; a control that
-/// takes keyboard focus below the fold is scrolled to.
 pub fn panel(editor: &Editor, cx: &Context<Editor>) -> Option<AnyElement> {
     let theme = cx.theme();
     let groups: Vec<Div> = if editor.tool == Tool::Crop {
@@ -87,14 +77,11 @@ pub fn panel(editor: &Editor, cx: &Context<Editor>) -> Option<AnyElement> {
     )
 }
 
-/// The tallest the panel may be on a canvas `canvas_height` tall: from its top down to the gap
-/// above the zoom corner, and never less than `MIN_HEIGHT`.
 fn max_height(canvas_height: Pixels) -> Pixels {
-    let room = canvas_height - px(TOP + chrome::EDGE * 2. + chrome::CORNER_HEIGHT);
+    let room = canvas_height - px(TOP + chrome::CHROME_INSET * 2. + chrome::CORNER_HEIGHT);
     room.max(px(MIN_HEIGHT))
 }
 
-/// One of the panel's groups, showing `options` and changing them through the editor.
 fn stroke_group(
     which: Group,
     options: StrokeOptions,
@@ -187,10 +174,9 @@ fn stroke_group(
             this.set_option(cx, |o| o.style = LineStyle::ALL[i])
         }))
         .into_any_element(),
-        // Each face is named in itself, so the choice shows what it does. The display face is
-        // set at the label size, as the panel's labels are: it is wide, and the panel is
-        // narrow. The body face is set at the options' own size, so the two chips read as one
-        // size where the look's faces differ as much as Pixel art's do.
+        // The display face is set at the label size, as it is wide and the panel narrow; the
+        // body face at the options' size, so the two chips read as one size where the look's
+        // faces differ as much as Pixel art's do.
         Group::Font => Choices::new(
             "font",
             "Font",
@@ -242,7 +228,7 @@ fn stroke_group(
                         .px(px(0.));
                     match &images[i] {
                         Some(image) => {
-                            tile.child(img(image.clone()).size(px(TRAY_ICON)).flex_none())
+                            tile.child(img(image.clone()).size(px(TRAY_ICON_SIZE)).flex_none())
                         }
                         None => tile,
                     }
@@ -255,7 +241,6 @@ fn stroke_group(
             }))
             .into_any_element()
         }
-        // A drag of the slider is one undo step on a selected mark, however many moves it has.
         Group::Opacity => Slider::new("opacity", "Opacity", options.opacity)
             .on_change(act(cx, |this, value, cx| {
                 this.set_option_live(cx, |o| o.opacity = value)
@@ -266,8 +251,6 @@ fn stroke_group(
     group(theme, which.label(), control)
 }
 
-/// The Crop tool's group: the size the picture will be, and the buttons that crop it or go
-/// back to Select. Enter and Esc do the same.
 fn crop_group(editor: &Editor, theme: &Theme, cx: &Context<Editor>) -> Div {
     let size = match editor.crop_rect() {
         Some(rect) => format!("{} × {}", rect.width(), rect.height()),
@@ -305,7 +288,6 @@ fn crop_group(editor: &Editor, theme: &Theme, cx: &Context<Editor>) -> Div {
     group(theme, "Crop", content)
 }
 
-/// `.group`: a label over its control.
 fn group(theme: &Theme, label: &str, content: impl IntoElement) -> Div {
     let style = theme.type_scale.label;
     div()
@@ -321,7 +303,6 @@ fn group(theme: &Theme, label: &str, content: impl IntoElement) -> Div {
         .child(content)
 }
 
-/// `.sw`: a colour square; chosen, it has an outline in the look's swatch colour.
 fn swatch(theme: &Theme, index: usize, on: bool) -> Pressable {
     let swatch = theme.colors.stroke_swatches()[index];
     let border = theme.borders.input;
@@ -354,7 +335,6 @@ fn swatch(theme: &Theme, index: usize, on: bool) -> Pressable {
         })
 }
 
-/// `.opt`: a small bordered option; chosen, it takes the accent.
 fn option(
     theme: &Theme,
     id: impl Into<ElementId>,
@@ -397,7 +377,7 @@ mod tests {
     #[test]
     fn the_panel_stops_above_the_zoom_corner_and_keeps_a_usable_minimum() {
         // The mockups' canvas: room from 84 down to 16 + 40 + 16 above the bottom.
-        let corner = chrome::EDGE * 2. + chrome::CORNER_HEIGHT;
+        let corner = chrome::CHROME_INSET * 2. + chrome::CORNER_HEIGHT;
         assert_eq!(max_height(px(800.)), px(800. - TOP - corner));
         // A canvas at the window's minimum height still leaves a panel worth scrolling.
         assert_eq!(max_height(px(150.)), px(MIN_HEIGHT));

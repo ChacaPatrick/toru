@@ -1,12 +1,4 @@
-//! Delayed capture: a countdown on the toolbar's Delayed button, then the capture it was started
-//! for. Toru minimizes for the countdown so the user can arrange their screen, and the time left
-//! follows in the window title, which is what the taskbar shows; started by a shortcut while Toru
-//! is hidden in the tray, it stays hidden (DESIGN.md §3). Bringing Toru back shows the
-//! button counting, and pressing it cancels. Toru isn't brought back afterwards, which would take
-//! the foreground from what was just arranged: the capture lands in the gallery as any capture
-//! taken while minimized does (DESIGN.md §3), and if it fails, the message waits for Toru's return.
-//! The one exception is "Open editor after capture", which brings the window back to show the
-//! editor (`captures.rs`).
+//! Delayed capture (DESIGN.md §3).
 
 use std::time::Duration;
 
@@ -18,7 +10,6 @@ use crate::platform;
 
 const TICK: Duration = Duration::from_secs(1);
 
-/// How far a delayed capture has got.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Countdown {
     seconds_left: u32,
@@ -26,7 +17,6 @@ struct Countdown {
 }
 
 impl Countdown {
-    /// One second on, or `None` if that was the last.
     fn tick(self) -> Option<Countdown> {
         (self.seconds_left > 1).then(|| Countdown {
             seconds_left: self.seconds_left - 1,
@@ -43,15 +33,14 @@ impl Countdown {
     }
 }
 
-/// A countdown under way. The view owns it, so a second one replaces the first, and closing the
-/// window drops it before it can fire.
+/// The view owns it, so a second one replaces the first, and closing the window drops it before
+/// it can fire.
 pub(super) struct RunningCountdown {
     countdown: Countdown,
     _ticks: Task<()>,
 }
 
 impl MainWindow {
-    /// Starts the countdown the Delayed menu describes.
     pub(super) fn start_countdown(&mut self, cx: &mut Context<Self>) {
         let countdown = Countdown {
             seconds_left: self.settings.delay_seconds,
@@ -69,6 +58,7 @@ impl MainWindow {
                 }
             }),
         });
+        // Minimized so the user can arrange their screen; the taskbar shows the title.
         self.on_window(cx, move |window| {
             window.set_window_title(&countdown.window_title());
             // Minimizing a hidden window would put it in the taskbar.
@@ -79,14 +69,14 @@ impl MainWindow {
         cx.notify();
     }
 
-    /// One second on: shows the time left or, when it has run out, takes the capture. Returns
-    /// whether it is still counting.
+    /// Returns whether it is still counting.
     fn tick_countdown(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(running) = &mut self.countdown else {
             return false;
         };
         let Some(next) = running.countdown.tick() else {
             let mode = running.countdown.mode;
+            // Toru isn't brought back: that would take the foreground from what was just arranged.
             self.capture(mode, cx);
             return false;
         };
@@ -105,7 +95,6 @@ impl MainWindow {
         }
     }
 
-    /// The time left for the Delayed button, while a countdown runs.
     pub(super) fn countdown_sub(&self) -> Option<String> {
         self.countdown
             .as_ref()

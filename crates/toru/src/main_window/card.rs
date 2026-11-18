@@ -1,22 +1,4 @@
-//! A gallery card (DESIGN.md §2): the thumbnail with its caption tag, the name field, the status
-//! chip, Copy with Save or Open folder, and the `⋯` menu. The file size is in a tooltip on the
-//! thumbnail and at the top of the menu. The gallery's list needs every row's height before it
-//! is laid out, and DESIGN.md §2 asks that every card be the same height whatever its status,
-//! so `layout` works both out from the theme: the chip and the actions share one row, and when
-//! a saved card's row has no room for Open folder's label at the gallery's card width, every
-//! saved card shows it as a folder icon instead, named and with a tooltip.
-//!
-//! The card is focusable itself, for the gallery's arrow keys, and shows the §7 ring when it has
-//! keyboard focus. Only the gallery's current card and its controls are tab stops; a press
-//! anywhere on a card makes it the current one.
-//!
-//! In select mode (DESIGN.md §4) a checkbox sits at the card's top-left corner, a selected card
-//! takes the accent outline and the `surface_sel` fill, and the lower row shows the chip with
-//! the path hint instead of the actions. Nothing changes the card's shape. A click anywhere on
-//! the card outside its controls, the checkbox included, is the gallery's `press_card`, and so
-//! is a Ctrl-click outside select mode, which is how the mode is entered from a card. A press
-//! that starts on the name field, the buttons or the menu is theirs alone, wherever the mouse is
-//! let go, so dragging out of a name field never toggles the card.
+//! A gallery card (DESIGN.md §2; select mode §4).
 
 use std::rc::Rc;
 
@@ -42,15 +24,13 @@ const PADDING: f32 = 10.;
 const GAP: f32 = 8.;
 pub const THUMB_HEIGHT: f32 = 140.;
 const NAME_HEIGHT: f32 = 34.;
-/// Between the chip and the actions.
-const ROW_GAP: f32 = 10.;
+const CHIP_GAP: f32 = 10.;
 const ACTION_GAP: f32 = 6.;
 const TAG_LEFT: f32 = 8.;
 const TAG_BOTTOM: f32 = 6.;
-/// `.check{left:18px;top:18px}`: where the checkbox's box sits inside the card.
+/// `.check{left:18px;top:18px}`.
 const CHECK_INSET: f32 = 18.;
 
-/// What every card in the gallery shares at one card width.
 #[derive(Clone, Copy)]
 pub struct Layout {
     pub height: Pixels,
@@ -58,13 +38,13 @@ pub struct Layout {
     pub open_folder_icon: bool,
 }
 
-/// The cards' layout at `card_width`, from the theme. The lower row is one button tall, since
-/// nothing in it wraps.
+/// Worked out from the theme, as the gallery's list needs every row's height before it is laid
+/// out, and every card is the same height whatever its status (DESIGN.md §2).
 pub fn layout(card_width: Pixels, theme: &Theme, window: &Window) -> Layout {
     let border = theme.borders.card.width;
     let inner = card_width - px(PADDING * 2.) - border * 2.;
     let saved_row = Chip::new("status", SAVED).saved(true).width(theme, window)
-        + px(ROW_GAP)
+        + px(CHIP_GAP)
         + copy_button(false).width(theme, window)
         + open_folder_button(false).width(theme, window)
         + px(BUTTON_SMALL_HEIGHT + ACTION_GAP * 2.);
@@ -81,8 +61,7 @@ fn copy_button(copied: bool) -> Button {
     Button::new("copy", "Copy").small().check_mark(copied)
 }
 
-/// Open folder, as its label or, with no room for it, as an icon. It shares its id with Save,
-/// so keyboard focus stays on the button when a save finishes.
+/// It shares its id with Save, so keyboard focus stays on the button when a save finishes.
 fn open_folder_button(icon: bool) -> Button {
     const NAME: &str = "Open folder";
     if icon {
@@ -100,22 +79,19 @@ fn keep_press(_: &MouseDownEvent, _: &mut Window, cx: &mut App) {
     cx.stop_propagation();
 }
 
-/// What assistive technology calls a card: its name, its caption (or why its name was refused,
-/// which the caption tag shows instead), and whether it is saved and selected, so the status is
-/// never only the colour (DESIGN.md §7).
+/// Says saved and selected so the status is never only the colour (DESIGN.md §7).
 fn card_label(name: &str, caption: &str, saved: bool, selected: bool) -> String {
     let status = if saved { "Saved" } else { "Unsaved" };
     let selected = if selected { ", selected" } else { "" };
     format!("{name}, {}, {status}{selected}", spoken(caption))
 }
 
-/// Whether a click on the card is a press on it. GPUI also turns Space and Enter's key-up on a
-/// focused card into a click, but the gallery's `key_down` has already handled those keys.
+/// GPUI also turns Space and Enter's key-up on a focused card into a click, but the gallery's
+/// `key_down` has already handled those keys.
 fn counts_as_press(event: &ClickEvent) -> bool {
     !event.is_keyboard()
 }
 
-/// "1.4 MB" or "412 KB".
 pub fn file_size(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = KB * KB;
@@ -129,21 +105,19 @@ pub fn file_size(bytes: u64) -> String {
     }
 }
 
-/// What varies between two cards of one capture: `earlier` marks a group whose session has
-/// ended, `copied` shows the check mark, `active` makes the card and its controls the grid's
-/// tab stops, `select_mode` shows the checkbox and the path hint, and `selected` the outline.
-/// `open_folder_icon` is the gallery's `Layout`'s.
 #[derive(Clone, Copy)]
 pub struct State {
+    /// The card's group is from a session that has ended.
     pub earlier: bool,
     pub copied: bool,
+    /// Makes the card and its controls the grid's tab stops; only the current card is.
     pub active: bool,
     pub select_mode: bool,
     pub selected: bool,
     pub open_folder_icon: bool,
 }
 
-/// `position` is the card's place in its group, which chooses among the look's thumbnail fills.
+/// `position`, the card's place in its group, chooses among the look's thumbnail fills.
 pub fn render(
     card: &Card,
     position: usize,
@@ -168,7 +142,7 @@ pub fn render(
     let radius = theme.radii.lg;
     let saved = card.capture.is_saved();
     let size = file_size(card.bytes);
-    // `.card .row .hint`: the saved path, or "no path yet", elided from the left.
+    // `.card .row .hint`, elided from the left.
     let path = card
         .capture
         .saved_path
@@ -248,7 +222,7 @@ pub fn render(
         .flex()
         .items_center()
         .justify_between()
-        .gap(px(ROW_GAP))
+        .gap(px(CHIP_GAP))
         .child(chip);
     let status = if select_mode {
         status.child(
@@ -317,9 +291,7 @@ pub fn render(
         .border_color(border.color)
         .rounded(radius)
         .child(
-            // A double-click on the thumbnail opens the editor (DESIGN.md §5), outside select
-            // mode, where every click is a press (§4) and Enter opens (§7). Any other click
-            // goes on to the card.
+            // DESIGN.md §5, but not in select mode, where every click is a press (§4).
             thumbnail(card, position, today, size, thumbnails, theme, cx).on_click(
                 move |event, window, cx| {
                     if event.click_count() == 2 && !select_mode {
@@ -351,8 +323,8 @@ pub fn render(
         .into_any_element()
 }
 
-/// Fills a column a short row leaves empty. It has a card's padding and border, so the cards
-/// beside it stay the width of a full row's: a flex item can't be narrower than those.
+/// It has a card's padding and border, so the cards beside it stay the width of a full row's:
+/// a flex item can't be narrower than those.
 pub fn empty_slot(theme: &Theme) -> impl IntoElement {
     div()
         .flex_1()
@@ -361,8 +333,7 @@ pub fn empty_slot(theme: &Theme) -> impl IntoElement {
         .border(theme.borders.card.width)
 }
 
-/// The theme's fill with the capture's thumbnail over it, under the caption tag. A thumbnail not
-/// loaded yet, or whose file has gone, leaves the fill showing.
+/// A thumbnail not loaded yet, or whose file has gone, leaves the theme's fill showing.
 fn thumbnail(
     card: &Card,
     position: usize,

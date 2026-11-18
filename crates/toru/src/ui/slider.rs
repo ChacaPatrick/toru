@@ -1,8 +1,4 @@
-//! `.track`: the editor panel's opacity slider. A 4px track filled in the accent up to the knob.
-//! A press on the row sets the value from the pointer and starts a drag that follows the pointer
-//! wherever it goes until the button comes up; the arrow keys step the value. `on_change` is
-//! called with each value and `on_commit` once the drag ends, or after each key, so a user of
-//! the slider can make a whole drag one change.
+//! `.track`: the editor panel's opacity slider.
 
 use std::rc::Rc;
 
@@ -18,14 +14,12 @@ use crate::theme::ActiveTheme;
 const TRACK_HEIGHT: f32 = 4.;
 const KNOB: f32 = 14.;
 const KNOB_BORDER: f32 = 2.;
-/// The mockups' `margin: 8px 6px`: the row the track sits in. It is only 20px tall, so the
-/// pressable row grows to §7's `MIN_TARGET`, the extra taken from its margins so the track stays
-/// where the mockup puts it.
+/// The mockups' `margin: 8px 6px`. That row is only 20px tall, so it grows to §7's `MIN_TARGET`,
+/// the extra taken from its margins so the track stays where the mockup puts it.
 const MARGIN_Y: f32 = 8.;
 const MARGIN_X: f32 = 6.;
 const ROW_HEIGHT: f32 = TRACK_HEIGHT + MARGIN_Y * 2.;
-/// One arrow key's step.
-const STEP: f32 = 0.05;
+const ARROW_KEY_STEP: f32 = 0.05;
 
 type ChangeHandler = Rc<dyn Fn(f32, &mut Window, &mut App)>;
 type CommitHandler = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -56,14 +50,14 @@ impl Slider {
         self
     }
 
-    /// Called when a drag ends, however it ends, and after each arrow key.
+    /// Called when a drag ends, however it ends, and after each arrow key, so a whole drag can be
+    /// one change.
     pub fn on_commit(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Slider {
         self.on_commit = Some(Rc::new(handler));
         self
     }
 }
 
-/// The value at `x` on a track spanning `track`, clamped to its ends.
 pub fn value_at(x: Pixels, track: Bounds<Pixels>) -> f32 {
     let width = f32::from(track.size.width);
     if width <= 0. {
@@ -72,11 +66,10 @@ pub fn value_at(x: Pixels, track: Bounds<Pixels>) -> f32 {
     (f32::from(x - track.origin.x) / width).clamp(0., 1.)
 }
 
-/// Where an arrow key takes `value`: a step either way, or an end. `None` for other keys.
 pub fn key_target(key: &str, value: f32) -> Option<f32> {
     Some(match key {
-        "left" | "down" => (value - STEP).max(0.),
-        "right" | "up" => (value + STEP).min(1.),
+        "left" | "down" => (value - ARROW_KEY_STEP).max(0.),
+        "right" | "up" => (value + ARROW_KEY_STEP).min(1.),
         "home" => 0.,
         "end" => 1.,
         _ => return None,
@@ -87,13 +80,11 @@ impl RenderOnce for Slider {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let focus = keyed_focus(window, cx, &self.id);
         let id = std::sync::Arc::new(self.id.clone());
-        // The track's bounds as last laid out, for turning a press into a value.
         let track_bounds = window.use_keyed_state(
             ElementId::NamedChild(id.clone(), "track".into()),
             cx,
             |_, _| Bounds::<Pixels>::default(),
         );
-        // Whether a press that began on the row is still held.
         let dragging =
             window.use_keyed_state(ElementId::NamedChild(id, "dragging".into()), cx, |_, _| {
                 false

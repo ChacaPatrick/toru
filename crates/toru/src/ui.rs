@@ -1,16 +1,4 @@
-//! The shared controls, each drawn from the active `Theme` (`design/build-mockups.py` has the CSS
-//! they follow) and each a tab stop with a role and a label for assistive technology.
-//!
-//! Keyboard focus shows the ring from `DESIGN.md` §7: 3px of `focus` 3px outside the control, with
-//! `focus_halo` filling the gap. It is drawn as absolute children, so showing it never moves layout.
-//! Like CSS `:focus-visible`, a key press turns the ring on and a mouse press turns it off; moving
-//! the mouse changes nothing. (GPUI's own `last_input_was_keyboard` drops on a mouse move.) Focus
-//! that assistive technology asks for turns it on as a key press does (`RingFocus`). A
-//! focused control also notes where its ring is, shown or not, so a scrolling container can bring
-//! it into view (`FocusInView`) when a key or assistive technology moved the focus; a mouse press
-//! already has the control under the pointer, and scrolling then would move it away before the
-//! release. `init` binds the keys the controls handle as actions and starts watching for key
-//! presses.
+//! The shared controls, following the CSS in `design/build-mockups.py`.
 
 mod a11y;
 mod button;
@@ -70,22 +58,19 @@ pub use {
     tooltip::Tooltip,
 };
 
-/// What a control does when pressed.
-pub type Handler = Rc<dyn Fn(&mut Window, &mut App)>;
+pub type PressHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 
-/// The smallest a click target may be (DESIGN.md §7). A control drawn smaller, such as a radio
-/// mark, sits in a row this tall that takes the press.
+/// DESIGN.md §7. A control drawn smaller, such as a radio mark, sits in a row this tall that
+/// takes the press.
 pub const MIN_TARGET: f32 = 32.;
 
-/// Binds the controls' keys. Call once, after `gpui_kit::init`, so these bindings are checked first.
+/// Call once, after `gpui_kit::init`, so these bindings are checked first.
 pub fn init(cx: &mut App) {
     cx.intercept_keystrokes(|_, window, cx| set_keyboard_focus(true, window, cx))
         .detach();
     cx.bind_keys([
-        // Inside an open menu, Tab steps through the items instead of leaving it.
         KeyBinding::new("tab", menu::NextItem, Some(menu::KEY_CONTEXT)),
         KeyBinding::new("shift-tab", menu::PreviousItem, Some(menu::KEY_CONTEXT)),
-        // Inside an open dialog, Tab stays among its actions.
         KeyBinding::new("tab", dialog::NextAction, Some(dialog::KEY_CONTEXT)),
         KeyBinding::new(
             "shift-tab",
@@ -95,8 +80,7 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
-/// A focus handle that lives as long as the control with `id` keeps being rendered, so callers
-/// don't have to own one per control.
+/// Lives as long as the control with `id` keeps being rendered, so callers needn't own one.
 fn keyed_focus(window: &mut Window, cx: &mut App, id: &ElementId) -> FocusHandle {
     let key = ElementId::NamedChild(Arc::new(id.clone()), "focus".into());
     window
@@ -105,10 +89,9 @@ fn keyed_focus(window: &mut Window, cx: &mut App, id: &ElementId) -> FocusHandle
         .clone()
 }
 
-/// Gives `element` a theme shadow list. GPUI 0.3.11 measures inset shadows from the border box and
-/// paints the border over them, so a band no wider than the border is hidden on any bordered
-/// element. The drop shadows go on the element and the inset ones on an unfilled overlay child,
-/// which sits inside the border, as a CSS inset shadow does. Call it before adding the content.
+/// GPUI 0.3.11 measures inset shadows from the border box and paints the border over them, hiding
+/// a band no wider than the border, so inset shadows go on an overlay child inside the border.
+/// Call it before adding the content.
 pub fn shadowed<E: Styled + ParentElement>(element: E, shadows: &[BoxShadow], radius: Pixels) -> E {
     let (inset, drop): (Vec<BoxShadow>, Vec<BoxShadow>) =
         shadows.iter().cloned().partition(|shadow| shadow.inset);
@@ -119,8 +102,6 @@ pub fn shadowed<E: Styled + ParentElement>(element: E, shadows: &[BoxShadow], ra
     element
 }
 
-/// Where an arrow key moves a one-of-many choice such as a radio group: the neighbour, wrapping
-/// at either end, or the first or last option. `None` for any other key.
 fn arrow_target(key: &str, selected: usize, count: usize) -> Option<usize> {
     Some(match key {
         "left" | "up" => (selected + count - 1) % count,
@@ -131,7 +112,6 @@ fn arrow_target(key: &str, selected: usize, count: usize) -> Option<usize> {
     })
 }
 
-/// Applies the sizing a caller set on a control through `Styled`.
 fn refined<E: Styled>(mut element: E, style: &StyleRefinement) -> E {
     element.style().refine(style);
     element

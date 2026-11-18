@@ -1,12 +1,8 @@
-//! Paints a theme `Fill` over its whole parent. Flat and gradient fills are a background; the
-//! checker and grid patterns are drawn cell by cell. A thumbnail shows one until it has an image.
-
 use gpui::{AnyElement, Bounds, Hsla, Pixels, Window, canvas, div, fill as quad, prelude::*, px};
 
 use crate::theme::Fill;
 
-/// `radius` rounds a flat or gradient fill to match its parent's corners. The patterns belong to
-/// looks with square corners and are left as they are.
+/// `radius` only rounds flat and gradient fills: the patterns belong to looks with square corners.
 pub fn fill(fill: &Fill, radius: Pixels) -> AnyElement {
     match fill.clone() {
         Fill::Checker { a, b, cell } => pattern(b, move |bounds, window| {
@@ -51,7 +47,6 @@ pub fn fill(fill: &Fill, radius: Pixels) -> AnyElement {
     }
 }
 
-/// `base` under the cells `paint` draws.
 fn pattern(base: Hsla, paint: impl Fn(Bounds<Pixels>, &mut Window) + 'static) -> AnyElement {
     canvas(
         |_, _, _| (),

@@ -14,26 +14,23 @@ use super::{Drag, Editor, skia, text_input};
 use crate::theme::ActiveTheme;
 use crate::ui::fill;
 
-/// `.handle`: a selected mark's handle, its border, and how far from its centre a press takes it.
-pub const HANDLE: f32 = 10.;
+/// The mockup's `.handle`.
+pub const HANDLE_SIZE: f32 = 10.;
 pub const HANDLE_BORDER: f32 = 2.;
 
-/// `.anno.text` while it is typed: the mockup's dashed frame, this far out from the text on
-/// each side and this wide, with a caret this wide after the last character.
+/// The mockup's dashed `.anno.text` frame while the text is typed, and its caret.
 const TEXT_FRAME_PAD: (f32, f32) = (10., 6.);
 const TEXT_FRAME_BORDER: f32 = 2.;
 pub(super) const CARET: f32 = 2.;
 
 impl Editor {
-    /// Whether any of `mark` lies over the shown picture.
     pub(super) fn shows(&self, mark: &Annotation) -> bool {
         mark.paint_rect()
             .is_some_and(|rect| rect.intersect(&self.shown()).is_some())
     }
 
-    /// The picture under the overlay: the shown part of the document, without the mark Select
-    /// is moving or resizing or the text being typed. The overlay puts that mark where the
-    /// pointer or the typing has it, at its own depth.
+    /// Without the mark being moved or resized or the text being typed: the overlay puts that
+    /// mark where the pointer or the typing has it, at its own depth.
     pub(super) fn render_document(&self) -> Pixmap {
         let hidden = match &self.drag {
             Some(Drag::Edit { index, .. }) => Some(*index),
@@ -45,8 +42,7 @@ impl Editor {
             .1
     }
 
-    /// The mark the overlay shows: the mark being drawn, on top, the mark being moved or resized,
-    /// at its index, or the text being typed.
+    /// With its index in the document; `None` puts it on top.
     fn preview(&self) -> Option<(Option<usize>, &Annotation)> {
         match (&self.drag, &self.typing) {
             (Some(Drag::Draw(annotation)), _) => Some((None, annotation)),
@@ -56,8 +52,6 @@ impl Editor {
         }
     }
 
-    /// The overlay for this frame: the region the drag's mark may paint, rendered as the
-    /// document would render it there.
     pub(super) fn render_overlay(&self) -> Option<(IntRect, Arc<RenderImage>)> {
         let (index, preview) = self.preview()?;
         let region = preview.paint_rect()?.intersect(&self.shown())?;
@@ -65,8 +59,6 @@ impl Editor {
         Some((region, skia::render_image(&pixmap)))
     }
 
-    /// The mark whose handles the canvas shows: the selected one, as it is under a drag, or the
-    /// Crop tool's rectangle. Text being typed shows its frame instead.
     fn shown_selection(&self) -> Option<&Annotation> {
         if self.typing.is_some() {
             return None;
@@ -79,11 +71,6 @@ impl Editor {
         }
     }
 
-    /// The canvas: the look's fill, then the picture at the viewport, drawn directly so its
-    /// placement is exact, then, while cropping, the picture outside the rectangle dimmed as the
-    /// capture overlay dims it, then the selected mark's or the rectangle's handles. Its hitbox
-    /// takes the tools' drags and keeps the pointer while one lasts, so crossing the pill or a
-    /// corner doesn't end it.
     pub(super) fn canvas_layer(&self, cx: &Context<Self>) -> impl IntoElement {
         let editor = cx.entity();
         let theme = cx.theme();
@@ -97,6 +84,7 @@ impl Editor {
         let frame_line = theme.colors.anno;
         let dim = theme.overlay.dim;
         let cursor = self.cursor();
+        // Painted directly, so the picture's placement is exact.
         let picture = canvas(
             move |bounds, window, cx| {
                 editor.update(cx, |this, _| this.canvas_laid_out(bounds, window));
@@ -116,6 +104,7 @@ impl Editor {
                         if phase.bubble() && hitbox.is_hovered(window) {
                             let started = editor.update(cx, |this, cx| this.mouse_down(event, cx));
                             if started {
+                                // So crossing the pill or a corner doesn't end the drag.
                                 window.capture_pointer(hitbox.id);
                             }
                         }
@@ -157,8 +146,7 @@ impl Editor {
                 window.paint_drop_shadows(picture, corners, &shadows);
                 let _ = window.paint_image(picture, picture, corners, image, 0, false);
                 if let Some((region, overlay)) = this.overlay.clone() {
-                    // The region at the picture's scale, rounded where it shares a corner with
-                    // the picture.
+                    // Rounded where it shares a corner with the picture.
                     let shown = this.shown();
                     let sx = f32::from(picture.size.width) / shown.width() as f32;
                     let sy = f32::from(picture.size.height) / shown.height() as f32;
@@ -202,7 +190,6 @@ impl Editor {
                     caret_height,
                 }) = this.typing_frame()
                 {
-                    // `.anno.text`'s dashed frame around the text being typed, and its caret.
                     let (pad_x, pad_y) = (px(TEXT_FRAME_PAD.0), px(TEXT_FRAME_PAD.1));
                     let (tl, br) = (on_window(b.origin), on_window(b.bottom_right()));
                     window.paint_quad(quad(
@@ -229,8 +216,6 @@ impl Editor {
                 };
                 let cropping = this.tool == Tool::Crop;
                 if cropping {
-                    // What the crop leaves out is dimmed: the picture above, below, left and
-                    // right of the rectangle.
                     let b = selected.bounds();
                     let (tl, br) = (on_window(b.origin), on_window(b.bottom_right()));
                     let p = picture;
@@ -260,13 +245,13 @@ impl Editor {
                         BorderStyle::Solid,
                     ));
                 }
-                let half = px(HANDLE / 2.);
+                let half = px(HANDLE_SIZE / 2.);
                 for handle in selected.handles() {
                     let centre = on_window(handle);
                     window.paint_quad(quad(
                         Bounds::new(
                             point(centre.x - half, centre.y - half),
-                            size(px(HANDLE), px(HANDLE)),
+                            size(px(HANDLE_SIZE), px(HANDLE_SIZE)),
                         ),
                         Corners::all(handle_radius),
                         handle_fill,
@@ -295,7 +280,6 @@ impl Editor {
     }
 }
 
-/// A solid quad with no border.
 fn fill_quad(bounds: Bounds<Pixels>, color: Hsla) -> gpui::PaintQuad {
     quad(
         bounds,

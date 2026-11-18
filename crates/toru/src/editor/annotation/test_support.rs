@@ -77,7 +77,6 @@ pub(super) fn sticker(kind: Sticker, at: (f32, f32), side: f32) -> Annotation {
     )
 }
 
-/// A picture big enough for everything the tests draw.
 pub(super) const PICTURE: Bounds<f32> = Bounds {
     origin: Point { x: 0., y: 0. },
     size: Size {

@@ -1,7 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// The theme carries the values for the cards, gallery and editor, and the controls include the
-// card, settings and bottom bar ones; the sections that use them follow (Phases 4 and 8).
+// Some theme values and shared controls have no user yet.
 mod editor;
 mod main_window;
 mod overlay;
@@ -37,15 +36,14 @@ const WINDOW_SIZE: (f32, f32) = (1280., 940.);
 /// bar each on one row (`main_window::gallery`'s tests hold the columns to this).
 const MIN_WINDOW_SIZE: (f32, f32) = (900., 480.);
 
-/// The argument Windows starts Toru with when the user signs in (`platform::set_starts_with_windows`
-/// and the installer): the app starts in the tray, with its window hidden until asked for.
+/// What Windows starts Toru with at sign-in (`platform::set_starts_with_windows` and the
+/// installer): the window stays hidden until asked for.
 const TRAY_ARG: &str = "--tray";
 
 /// `toru [japandi|pixel_art|neo_brutalism] [palette|custom] [editor [demo]]` opens the window in
-/// that look and palette, and straight in the editor if asked, with the sample marks of the
-/// Editor mockup on the picture if `demo` is given too, so each can be checked against the mockups
-/// without clicking through. It only changes what is shown, so the saved settings keep their own
-/// look until a look or palette is picked in settings, which saves what is shown.
+/// that look and palette, and straight in the editor if asked (`demo` adds the Editor mockup's
+/// sample marks), so each can be checked against the mockups without clicking through. The saved
+/// settings keep their own look until a look or palette is picked in settings.
 fn appearance_from_args(settings: &Settings) -> (Settings, Option<EditorStart>) {
     let mut appearance = settings.clone();
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -92,7 +90,6 @@ fn main() {
     };
     let store = match Store::open(&data_dir) {
         Ok(store) => Arc::new(store),
-        // Another Toru has this folder: ask it to show its window instead.
         Err(StoreError::AlreadyOpen) => {
             platform::signal_running_instance(&data_dir);
             return;
@@ -112,9 +109,8 @@ fn main() {
     let app = application().with_quit_mode(QuitMode::Explicit);
     app.run(move |cx: &mut App| {
         gpui_kit::init(cx);
-        // GPUI's animations and the kit's scrollbar fade and overscroll bounce all stand still
-        // while this is set (DESIGN.md §7); the main window reads it again whenever it comes to
-        // the front, in case the setting changed meanwhile.
+        // Also stills the kit's scrollbar fade and overscroll bounce (DESIGN.md §7). The main
+        // window reads it again whenever it comes to the front.
         cx.set_reduce_motion(platform::reduce_motion());
         ui::init(cx);
         install_fonts(cx);
@@ -123,8 +119,7 @@ fn main() {
         set_theme(Theme::from_settings(&appearance), cx);
         let bounds = Bounds::centered(None, size(px(WINDOW_SIZE.0), px(WINDOW_SIZE.1)), cx);
         // One channel carries the tray's requests, a second launch and the global shortcuts'
-        // presses to the main thread (`run_in_tray`). The shortcut registry opens its hidden
-        // window here, on that thread, like the tray.
+        // presses to the main thread (`run_in_tray`).
         let (sender, receiver) = mpsc::channel();
         let hotkeys = Hotkeys::new(sender.clone(), Request::Hotkey);
         let main = gpui_kit::open_window(
@@ -162,11 +157,10 @@ fn main() {
     });
 }
 
-/// Puts the icon in the tray and acts on it, and on a second launch, for the life of the app
-/// (`docs/spikes.md` §1.1). The tray's handlers run inside a window procedure and the launch
-/// watcher on its own thread, so both only send into a channel, and a task on the main thread
-/// does the work. At quit, Toru's own or Windows shutting down, the window applies the On close
-/// setting (`main_window::closing`) and dropping the icon takes it out of the tray at once.
+/// The tray's handlers run inside a window procedure and the second-launch watcher on its own
+/// thread, so both only send into a channel and a task on the main thread does the work
+/// (`docs/spikes.md` §1.1). At quit, Toru's own or Windows shutting down, the window applies the
+/// On close setting (`main_window::closing`) and dropping the icon takes it out of the tray.
 fn run_in_tray(
     main: Entity<MainWindow>,
     data_dir: &Path,
@@ -174,8 +168,6 @@ fn run_in_tray(
     mut receiver: mpsc::Receiver<Request>,
     cx: &mut App,
 ) {
-    // The tray owns a hidden window, so it is created here, on GPUI's main thread, whose message
-    // loop then serves it.
     let mut tray = match Tray::new(sender.clone()) {
         Ok(tray) => Some(tray),
         // Rare. The window says so and closing it quits, since there is no icon to come back from.

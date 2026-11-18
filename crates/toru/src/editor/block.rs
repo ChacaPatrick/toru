@@ -1,11 +1,3 @@
-//! The Block tool's effects (DESIGN.md §5): Blur, Pixelate and Solid hide part of the picture.
-//! Blur and Pixelate are computed from the picture with the blocks under them applied, never
-//! from the strokes drawn over it, so a region rendered on its own comes out the same as the
-//! whole, a mark under a block is hidden with the picture, and a block over another shows only
-//! what the first left: adding a block never reveals more. Both begin by averaging the picture
-//! into cells, so only those averages reach the saved file: text under a block can't be read
-//! back out of it. Solid paints the chosen colour.
-
 use tiny_skia::{Color, IntRect, IntSize, Pixmap};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -32,16 +24,16 @@ impl BlockKind {
 /// glyph, which no eye can read. There is no upper limit: one would let large text through.
 const CELL_MIN: u32 = 8;
 const CELL_FRACTION: u32 = 4;
-/// Blur smooths the cell grid this many times with a 3×3 box before scaling it back up.
 const BLUR_PASSES: usize = 2;
 
-/// The cell size a block `rect` big is averaged into.
 pub fn cell_size(rect: IntRect) -> u32 {
     (rect.width().min(rect.height()) / CELL_FRACTION).max(CELL_MIN)
 }
 
-/// The block over `rect` of `base`, the picture with the blocks under this one applied: the
-/// part of `rect` within the base, and its pixels. `None` if it misses the base.
+/// `base` is the picture with the blocks under this one applied, never the strokes over it, so
+/// a region rendered on its own comes out the same as the whole, a mark under a block is hidden
+/// with the picture, and adding a block never reveals more. Blur and Pixelate start by averaging
+/// into cells, so text under a block can't be read back out of the saved file.
 pub fn render(
     kind: BlockKind,
     base: &Pixmap,
@@ -79,8 +71,8 @@ pub fn render(
     Some((rect, pixmap))
 }
 
-/// The block's rectangle averaged into a grid of cells, anchored at its top-left corner; a
-/// cell at the right or bottom edge may be cut short and averages what it covers.
+/// Anchored at the block's top-left corner; a cell at the right or bottom edge may be cut short
+/// and averages what it covers.
 struct Cells {
     size: u32,
     columns: u32,
@@ -125,12 +117,11 @@ impl Cells {
         self.colors[(row * self.columns + column) as usize]
     }
 
-    /// The cell's colour as bytes.
     fn at(&self, column: u32, row: u32) -> [u8; 3] {
         self.color(column, row).map(|v| v.round() as u8)
     }
 
-    /// Every cell averaged with its neighbours, the grid's edges counting their own cells again.
+    /// The grid's edges count their own cells again.
     fn smoothed(&self) -> Cells {
         let mut colors = Vec::with_capacity(self.colors.len());
         for row in 0..self.rows as i64 {
@@ -152,8 +143,7 @@ impl Cells {
         Cells { colors, ..*self }
     }
 
-    /// The colour at pixel `(x, y)` of the block, blended between the four nearest cell
-    /// centres, so the grid scales back up without steps.
+    /// Blended between the four nearest cell centres, so the grid scales back up without steps.
     fn sample(&self, x: u32, y: u32) -> [u8; 3] {
         let position = |v: u32, count: u32| {
             let at = ((v as f32 + 0.5) / self.size as f32 - 0.5).clamp(0., (count - 1) as f32);
@@ -194,7 +184,6 @@ pub mod tests {
         text_like_scaled(width, height, 1)
     }
 
-    /// `text_like` with every glyph `scale` times as big: a headline rather than body text.
     pub fn text_like_scaled(width: u32, height: u32, scale: u32) -> Pixmap {
         let s = scale as f32;
         let mut picture = Pixmap::new(width, height).unwrap();
@@ -224,7 +213,6 @@ pub mod tests {
         picture
     }
 
-    /// How much neighbouring pixels differ, summed over the picture: the detail left in it.
     pub fn high_frequency(picture: &Pixmap) -> f64 {
         let (w, h) = (picture.width(), picture.height());
         let luma = |x: u32, y: u32| {
@@ -308,7 +296,6 @@ pub mod tests {
         };
         assert!(before > 0.);
         let (_, pixelated) = render(BlockKind::Pixelate, &base, block, Color::WHITE).unwrap();
-        // Every pixel of a cell is the same: nothing finer than a cell survives.
         let size = cell_size(block);
         for y in 0..pixelated.height() {
             for x in 0..pixelated.width() {
@@ -320,7 +307,6 @@ pub mod tests {
         assert!(high_frequency(&pixelated) < before * 0.1);
         let (_, blurred) = render(BlockKind::Blur, &base, block, Color::WHITE).unwrap();
         assert!(high_frequency(&blurred) < before * 0.05);
-        // No step between neighbours is more than a cell's slope could make.
         let steps = (0..blurred.height())
             .flat_map(|y| (1..blurred.width()).map(move |x| (x, y)))
             .map(|(x, y)| {

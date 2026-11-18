@@ -15,8 +15,7 @@ impl Editor {
             .1
     }
 
-    /// What the panel shows: a tool's options and its kind's groups, or the selected mark's, or
-    /// those of the text being typed. `None` leaves the panel out.
+    /// `None` leaves the panel out.
     pub(super) fn panel_options(&self, theme: &Theme) -> Option<(StrokeOptions, &'static [Group])> {
         let typed = self.typing.as_ref().map(|typing| &typing.text);
         if let Some(kind) = self.tool.kind()
@@ -37,7 +36,6 @@ impl Editor {
         ))
     }
 
-    /// A panel change: to the drawing tool's options, or to the selected mark as one undo step.
     pub(super) fn set_option(
         &mut self,
         cx: &mut Context<Self>,
@@ -47,8 +45,7 @@ impl Editor {
         self.change_option(false, cx, change);
     }
 
-    /// A slider's change while it is dragged: the first is an undo step, the rest amend it,
-    /// until `end_live_edit`.
+    /// The first change is an undo step and the rest amend it, until `end_live_edit`.
     pub(super) fn set_option_live(
         &mut self,
         cx: &mut Context<Self>,
@@ -62,11 +59,8 @@ impl Editor {
         self.live_edit = false;
     }
 
-    /// Changes the tool's options, the text being typed, or the selected mark: as a new undo
-    /// step, or amending the last if `amend`. Text being typed or a mark takes only the one
-    /// change, keeping the rest of its own style. Returns whether the mark changed under an
-    /// undo step. Nothing changes while the canvas is being dragged, so the drag's mark stays
-    /// where it was found.
+    /// Returns whether the mark changed under an undo step. Nothing changes during a drag, so the
+    /// drag's mark stays where it was found.
     fn change_option(
         &mut self,
         amend: bool,
@@ -106,8 +100,6 @@ impl Editor {
     }
 }
 
-/// The panel's choices as a mark of `kind` is drawn with: the swatch resolved to its colour. A
-/// sticker takes the look's sticker colours instead, and a badge's digits the look's.
 pub(super) fn style_of(options: StrokeOptions, theme: &Theme, kind: Kind) -> Style {
     let swatches = theme.colors.stroke_swatches();
     let swatch = swatches.get(options.stroke).unwrap_or(&swatches[0]);
@@ -125,9 +117,8 @@ pub(super) fn style_of(options: StrokeOptions, theme: &Theme, kind: Kind) -> Sty
     }
 }
 
-/// A mark's style back as the panel's choices, for showing and editing a selected mark. A
-/// colour no swatch has, from another look, shows as the first; text in a face the look doesn't
-/// have shows as its body face, and at the preset nearest its size.
+/// A colour no swatch has, from another look, shows as the first; a face the look doesn't have
+/// shows as its body face.
 fn options_of(annotation: &Annotation, theme: &Theme) -> StrokeOptions {
     let style = annotation.style;
     let mut options = StrokeOptions {
@@ -159,10 +150,8 @@ fn options_of(annotation: &Annotation, theme: &Theme) -> StrokeOptions {
     options
 }
 
-/// `annotation` with `change` made to its panel choices, and only that: its colour, an arrow's
-/// head, text's face and size, a sticker's kind, a block's kind, its width, line or opacity.
-/// What the change leaves alone stays as the mark has it, even where no choice matches it, such
-/// as a colour or face from another look or a text size set by hand.
+/// What `change` leaves alone stays as the mark has it, even where no choice matches it, such as
+/// a colour or face from another look or a text size set by hand.
 fn restyled(
     annotation: &Annotation,
     theme: &Theme,
@@ -315,7 +304,6 @@ pub(super) mod tests {
         assert_eq!(larger.text().unwrap().size, 48.);
         assert_eq!(larger.text().unwrap().font.family, theme.fonts.display);
         assert_eq!(options_of(&larger, &theme).font, Family::Display);
-        // A sticker's options are its kind, and it is drawn in the sticker colours.
         let sticker = Annotation::placed(
             Shape::Sticker(Sticker::Cross),
             point(0., 0.),

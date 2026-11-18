@@ -5,8 +5,8 @@ use std::sync::atomic::Ordering;
 use super::{Result, Store};
 
 impl Store {
-    /// A new empty folder for one Copy all's files. It lasts until a later set replaces it, even
-    /// across restarts, since a paste needs its files long after the copy.
+    /// It lasts until a later set replaces it, even across restarts, since a paste needs its files
+    /// long after the copy.
     pub fn new_copy_folder(&self) -> Result<PathBuf> {
         let number = self.next_copy.fetch_add(1, Ordering::Relaxed);
         let folder = self.copies_dir.join(number.to_string());
@@ -14,14 +14,13 @@ impl Store {
         Ok(folder)
     }
 
-    /// Removes every Copy all folder but `keep`, once `keep`'s set has replaced them on the
-    /// clipboard. Anything that can't be removed goes with the next set.
+    /// Call once `keep`'s set has replaced the others on the clipboard. Anything that can't be
+    /// removed goes with the next set.
     pub fn remove_other_copy_folders(&self, keep: &Path) {
         remove_copy_folders_except(&self.copies_dir, keep);
     }
 }
 
-/// The highest number among the Copy all folders, which is the set made last.
 pub(super) fn latest_copy_folder(copies_dir: &Path) -> Option<u64> {
     fs::read_dir(copies_dir)
         .ok()?

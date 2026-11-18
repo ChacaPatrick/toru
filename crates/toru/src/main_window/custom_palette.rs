@@ -1,9 +1,4 @@
-//! The custom palette editor (DESIGN.md §8 with CLAUDE.md's fourth slot): a modal panel over the
-//! main window with the six colours as hex fields beside live swatches, the background photo
-//! with its picker, and the contrast warning from `theme::contrast` run on the colours as typed.
-//! Apply saves the colours and photo for the look and shows them; Cancel puts back what was
-//! shown. While it is open the window wears one of the look's built-in palettes, so the editor
-//! can be read whatever the custom colours are, and a bad palette can always be fixed from it.
+//! The custom palette editor (DESIGN.md §8 with CLAUDE.md's fourth slot).
 
 use std::path::{Path, PathBuf};
 
@@ -27,59 +22,51 @@ use crate::ui::{Button, FocusInView, Readable, TextField, close_menus, dialog, m
 
 const WIDTH: f32 = 480.;
 const PADDING: f32 = 22.;
-/// Between the title, the fields, the photo, the warning and the actions.
-const GAP: f32 = 14.;
+const SECTION_GAP: f32 = 14.;
 const ROW_GAP: f32 = 8.;
 const ACTION_GAP: f32 = 8.;
 const FIELD_WIDTH: f32 = 112.;
 const FIELD_HEIGHT: f32 = 32.;
-/// The swatch beside a field: as tall as the field, wider than it is tall.
 const SWATCH_WIDTH: f32 = 44.;
 /// `.hint`'s `line-height: 1.45`.
 const LEADING: f32 = 1.45;
-/// How many failing pairs the warning names before counting the rest.
 const NAMED_FAILURES: usize = 3;
 
-/// How many buttons the panel has besides the fields: Change, Remove, Cancel, Apply.
+/// Change, Remove, Cancel, Apply.
 const BUTTONS: usize = 4;
 
 pub struct CustomEditor {
-    /// Which opening of the editor this is, so a picker's result reaches the editor that asked
-    /// for it and not one opened since, perhaps on another look.
-    session: u32,
+    /// So a picker's result reaches the editor that asked for it and not one opened since,
+    /// perhaps on another look.
+    opening: u32,
     look: Look,
-    /// What the window showed when the editor opened, put back on Cancel.
-    was: PaletteChoice,
-    /// One hex field per entry of `FIELDS`.
+    choice_before: PaletteChoice,
+    /// One per entry of `FIELDS`.
     fields: Vec<Entity<InputState>>,
-    /// The colours as last parsed; a field that doesn't parse leaves its colour as it was.
+    /// As last parsed; a field that doesn't parse leaves its colour as it was.
     palette: CustomPalette,
     invalid: [bool; FIELDS.len()],
     background: Option<PathBuf>,
-    /// Focus for the buttons, in `BUTTONS` order, so Tab can step through the panel.
+    /// In `BUTTONS` order.
     buttons: [FocusHandle; BUTTONS],
-    /// The content above Cancel and Apply, which scrolls when the window is too short for it.
     scroll: ScrollHandle,
-    /// Scrolls that content to whichever of its controls takes keyboard focus.
     focus: FocusInView,
 }
 
-/// The window's file picker for a background photo, while one is open: which editor session
-/// asked for it. One window has one picker at a time, whatever happens to the editor meanwhile.
+/// One window has one picker at a time, whatever happens to the editor meanwhile.
 #[derive(Default)]
 pub struct BackgroundPicker {
     open_for: Option<u32>,
-    /// How many editors have been opened, which numbers the next one.
-    sessions: u32,
+    openings: u32,
 }
 
 impl MainWindow {
-    /// Opens the editor on the look shown, starting from its stored custom colours or, when
-    /// none are stored yet, from the palette on screen.
+    /// Starts from the look's stored custom colours or, when none are stored yet, from the
+    /// palette on screen.
     pub(super) fn open_custom_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let theme = cx.theme();
         let look = theme.look;
-        let was = if theme.is_custom() {
+        let choice_before = if theme.is_custom() {
             PaletteChoice::Custom
         } else {
             PaletteChoice::BuiltIn(theme.palette)
@@ -109,11 +96,11 @@ impl MainWindow {
             .collect();
         self.note_opener(window.focused(cx));
         fields[0].update(cx, |state, cx| state.focus(window, cx));
-        self.background_picker.sessions += 1;
+        self.background_picker.openings += 1;
         self.custom_editor = Some(CustomEditor {
-            session: self.background_picker.sessions,
+            opening: self.background_picker.openings,
             look,
-            was,
+            choice_before,
             fields,
             palette,
             invalid: [false; FIELDS.len()],
@@ -122,16 +109,17 @@ impl MainWindow {
             scroll: ScrollHandle::new(),
             focus: FocusInView::new(cx),
         });
-        // The window wears a palette known to read while the custom one is edited.
-        let safe = match was {
+        // The window wears a palette known to read while the custom one is edited, so a bad
+        // palette can always be fixed from here.
+        let safe = match choice_before {
             PaletteChoice::BuiltIn(index) => index,
             PaletteChoice::Custom => 0,
         };
         set_theme(Theme::new(look, safe), cx);
     }
 
-    /// Where focus goes when the control holding it goes and nothing in the panel is left to
-    /// take it, as when a dialog over the panel closes: the first colour field.
+    /// For when the control holding focus goes and nothing in the panel is left to take it, as
+    /// when a dialog over the panel closes.
     pub(super) fn custom_editor_focus(&self, cx: &gpui::App) -> Option<FocusHandle> {
         let editor = self.custom_editor.as_ref()?;
         Some(editor.fields[0].focus_handle(cx))
@@ -152,17 +140,18 @@ impl MainWindow {
         cx.notify();
     }
 
-    /// Cancel or Esc: back to what the window showed before.
     fn cancel_custom_editor(&mut self, cx: &mut Context<Self>) {
         let Some(editor) = self.custom_editor.take() else {
             return;
         };
         let appearance = self.settings.appearance(editor.look);
-        set_theme(Theme::for_choice(editor.look, editor.was, appearance), cx);
+        set_theme(
+            Theme::for_choice(editor.look, editor.choice_before, appearance),
+            cx,
+        );
         cx.notify();
     }
 
-    /// Apply: the colours and photo are saved for the look and the custom palette is chosen.
     fn apply_custom_palette(&mut self, cx: &mut Context<Self>) {
         let Some(editor) = self.custom_editor.take() else {
             return;
@@ -177,12 +166,9 @@ impl MainWindow {
         });
     }
 
-    /// Change: the system file picker, for a picture, owned by Toru's window so it stays in front
-    /// of it. The picker runs on its own thread and is awaited from a task, so the app is free to
-    /// run frames and other tasks while it is open; a blocking picker on this call stack would
-    /// run them inside the click handler, where anything borrowing the app panics. While it is
-    /// open a second Change… does nothing, and its result goes only to the editor session that
-    /// asked: the editor may have been closed, and another opened, meanwhile.
+    /// Owned by Toru's window so it stays in front of it. The picker is awaited from a task: a
+    /// blocking picker on this call stack would run frames and tasks inside the click handler,
+    /// where anything borrowing the app panics.
     fn pick_background(&mut self, window: &Window, cx: &mut Context<Self>) {
         let Some(editor) = &self.custom_editor else {
             return;
@@ -190,8 +176,8 @@ impl MainWindow {
         if self.background_picker.open_for.is_some() {
             return;
         }
-        let session = editor.session;
-        self.background_picker.open_for = Some(session);
+        let opening = editor.opening;
+        self.background_picker.open_for = Some(opening);
         let dialog = rfd::AsyncFileDialog::new()
             .set_title("Background photo")
             .add_filter("Pictures", &["png", "jpg", "jpeg", "webp", "bmp", "gif"])
@@ -203,7 +189,7 @@ impl MainWindow {
                 let Some(file) = picked else {
                     return;
                 };
-                if let Some(editor) = this.custom_editor.as_mut().filter(|e| e.session == session) {
+                if let Some(editor) = this.custom_editor.as_mut().filter(|e| e.opening == opening) {
                     editor.background = Some(file.path().to_path_buf());
                     cx.notify();
                 }
@@ -213,8 +199,8 @@ impl MainWindow {
         .detach();
     }
 
-    /// Remove: the photo goes, and with it its button, so the focus moves to Change…, which
-    /// stays; focus left on the vanished button would fall out of the panel, past Esc and Tab.
+    /// Focus moves to Change…, as focus left on the vanished Remove would fall out of the panel,
+    /// past Esc and Tab.
     fn remove_background(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = &mut self.custom_editor {
             editor.background = None;
@@ -224,14 +210,12 @@ impl MainWindow {
         }
     }
 
-    /// The editor laid over the window, when it is open.
     pub(super) fn custom_editor_view(
         &mut self,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let editor = self.custom_editor.as_mut()?;
-        // The scrolling part follows the keyboard focus, as the settings column does.
         let by = editor.focus.scroll_by(editor.scroll.bounds(), window, cx);
         if by != px(0.) {
             editor
@@ -376,10 +360,9 @@ impl MainWindow {
             .aria_description(about.clone())
             .modal_dialog()
             .key_context(dialog::KEY_CONTEXT)
-            // Only Esc is stopped. A stopped key-down gets no WM_CHAR on Windows, so stopping
-            // every key would leave the hex fields deaf to typing. The panel is a sibling of the
-            // window frame, so other keys pressed in it never reach the frame's shortcuts, and
-            // the frame ignores keys while the panel is open, should focus be left behind it.
+            // Only Esc is stopped: a stopped key-down gets no WM_CHAR on Windows, so the hex
+            // fields would be deaf to typing. The panel is a sibling of the window frame, so
+            // other keys never reach the frame's shortcuts.
             .on_key_down(move |event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" {
                     cx.stop_propagation();
@@ -390,7 +373,7 @@ impl MainWindow {
             .on_action(move |_: &dialog::PreviousAction, window, cx| previous(window, cx))
             .flex()
             .flex_col()
-            .gap(px(GAP))
+            .gap(px(SECTION_GAP))
             .w(px(WIDTH))
             .max_w_full()
             // In a short window the content scrolls and Cancel and Apply stay in view.
@@ -418,7 +401,7 @@ impl MainWindow {
                             .track_scroll(&editor.scroll)
                             .flex()
                             .flex_col()
-                            .gap(px(GAP))
+                            .gap(px(SECTION_GAP))
                             .child(
                                 div()
                                     .type_style(theme, theme.type_scale.section)
@@ -473,17 +456,14 @@ impl MainWindow {
     }
 }
 
-/// What the editor says about the colours as typed.
 pub struct Warnings {
     /// Never empty.
     pub lines: Vec<String>,
-    /// Whether every field is a colour and every pair passes, so the lines only inform.
+    /// Every field is a colour and every pair passes, so the lines only inform.
     pub all_clear: bool,
 }
 
-/// What the editor says about the colours as typed: each field that isn't a colour, then the
-/// pairs that fall below DESIGN.md §7, or that none do. With a photo the pairs include text on
-/// the window over a dark and over a light picture, and the line about the photo says so.
+/// Pairs are judged by DESIGN.md §7.
 pub fn warnings(
     look: Look,
     palette: &CustomPalette,
@@ -541,7 +521,6 @@ fn label(theme: &Theme, text: &'static str) -> impl IntoElement {
         .child(style.case.apply(text))
 }
 
-/// The photo's file name in a field, or "None".
 fn photo_field(theme: &Theme, path: Option<&Path>) -> impl IntoElement {
     let border = theme.borders.input;
     let name = path.and_then(|path| path.file_name()).map_or_else(
@@ -599,8 +578,7 @@ mod tests {
         assert!(!all_clear);
     }
 
-    /// One failing pair is one line, as the all-clear is, and still a warning. In Japandi's
-    /// linen only the bulk bar's faded count fails with this text colour.
+    /// In Japandi's linen only the bulk bar's faded count fails with this text colour.
     #[test]
     fn a_single_failing_pair_is_not_the_all_clear() {
         let mut palette = linen();
@@ -625,7 +603,6 @@ mod tests {
         assert!(!all_clear);
     }
 
-    /// With a photo, text on the window is judged over a dark and a light picture as well.
     #[test]
     fn a_photo_counts_against_text_on_the_window() {
         let mut palette = linen();

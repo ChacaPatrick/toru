@@ -11,13 +11,13 @@ use crate::theme::{ActiveTheme, Theme};
 
 pub(super) enum Row {
     Header(usize),
-    /// Up to a row of a group's cards, by index in the group: those the search lets through.
+    /// Up to a row of a group's cards, by index in the group.
     Cards {
         group: usize,
         cards: Vec<usize>,
     },
-    /// Under the session header while a search leaves the session empty. `elsewhere`: whether
-    /// another listed group has a match, collapsed or not.
+    /// Under the session header while a search leaves the session empty. `elsewhere`: another
+    /// listed group has a match, collapsed or not.
     NoMatch {
         elsewhere: bool,
     },
@@ -35,8 +35,8 @@ pub(super) enum Anchor {
 }
 
 impl Gallery {
-    /// Takes the width the main window gives the gallery. A width that changes how many columns
-    /// fit lays the cards out again, keeping what was at the top of the view there.
+    /// A width that changes how many columns fit lays the cards out again, keeping what was at
+    /// the top of the view there.
     pub fn set_width(&mut self, width: Pixels, scale: f32, cx: &gpui::App) {
         self.width = width;
         self.scale = scale;
@@ -44,8 +44,7 @@ impl Gallery {
         if columns == self.columns {
             return;
         }
-        // The row at the top of the view and how much of it is above the view. A list at its
-        // start stays there.
+        // A list at its start stays there.
         let theme = cx.theme();
         let at_top = row_at(self.row_heights(theme), self.scrolled(theme))
             .filter(|&at| at != (0, px(0.)))
@@ -73,7 +72,6 @@ impl Gallery {
         self.rows.iter().map(|row| self.row_height(row, theme))
     }
 
-    /// What `row` shows first, to find it again once the rows are rebuilt.
     fn anchor_of(&self, row: &Row) -> Option<Anchor> {
         match row {
             Row::Header(group) => Some(Anchor::Header(*group)),
@@ -94,12 +92,10 @@ impl Gallery {
         }
     }
 
-    /// The list's rows: each listed group's header, then its matching cards a row at a time
-    /// unless it is collapsed, the row for the next day while there is one, then the bottom
-    /// padding. Only the session group is listed unless `show_previous`, and a search drops
-    /// every other group it leaves empty.
+    /// `gpui-kit`'s virtual list needs every row's height up front (`docs/spikes.md` §1.3), so
+    /// this runs whenever anything changes the rows. Only the session group is listed unless
+    /// `show_previous`, and a search drops every other group it leaves empty.
     pub(super) fn rebuild_rows(&mut self, cx: &gpui::App) {
-        // Each group's matching cards, by index in the group; an unlisted group has none.
         let matching: Vec<Vec<usize>> = self
             .groups
             .iter()
@@ -140,7 +136,7 @@ impl Gallery {
         // Only the session header is listed. While earlier days are on and the store hasn't run
         // out of them, a day may still arrive and the row for it shows, so the empty state waits.
         let more_to_come = self.show_previous && self.next != Next::End;
-        self.empty = rows.len() == 1 && self.query.is_empty() && !more_to_come;
+        self.show_empty_state = rows.len() == 1 && self.query.is_empty() && !more_to_come;
         if self.show_previous {
             match self.next {
                 Next::Day(day) => rows.push(Row::NextDay(Some(day))),
@@ -150,10 +146,12 @@ impl Gallery {
         }
         rows.push(Row::Footer);
         self.rows = rows;
+        // A card filtered out, collapsed or hidden leaves the selection, so the bulk bar's counts
+        // match the checkboxes on view.
         self.selection.retain_listed(&self.listed_ids());
     }
 
-    /// The listed cards in reading order, each with its row.
+    /// `(row, card id)` in reading order.
     pub(super) fn shown(&self) -> Vec<(usize, usize)> {
         let mut shown = Vec::new();
         for (row, item) in self.rows.iter().enumerate() {
@@ -189,10 +187,9 @@ impl Gallery {
         }
     }
 
-    /// How far the list is scrolled, as the next frame will show it. The virtual list clamps
-    /// the offset only when it lays out, after this render, so an offset left over from a
-    /// longer list is clamped here too; otherwise the return pill could stay up after turning
-    /// Show previous off or collapsing groups has brought the session back into view.
+    /// The virtual list clamps the offset only when it lays out, after this render, so an offset
+    /// left over from a longer list is clamped here too; otherwise the return pill could stay up
+    /// after turning Show previous off or collapsing groups has brought the session back.
     pub(super) fn scrolled(&self, theme: &Theme) -> Pixels {
         let content = self
             .row_heights(theme)
@@ -201,7 +198,6 @@ impl Gallery {
         (-self.scroll.offset().y).min(furthest)
     }
 
-    /// How far down the content the session group ends, after which the return pill shows.
     pub(super) fn session_bottom(&self, theme: &Theme) -> Pixels {
         self.rows
             .iter()
@@ -215,13 +211,12 @@ impl Gallery {
     }
 }
 
-/// What select mode's hint line adds to the session header: its gap and one line of hint.
 fn select_hint_height(theme: &Theme) -> Pixels {
     px(SELECT_HINT_GAP) + theme.type_scale.hint.size * HINT_LEADING
 }
 
-/// The row at the top of the view of a list of rows this tall scrolled down by `scrolled`, and
-/// how much of that row is above the view. `None` once the list is scrolled past its last row.
+/// Also how much of that row is above the view. `None` once the list is scrolled past its last
+/// row.
 fn row_at(heights: impl Iterator<Item = Pixels>, scrolled: Pixels) -> Option<(usize, Pixels)> {
     let mut top = px(0.);
     for (row, height) in heights.enumerate() {
@@ -233,23 +228,19 @@ fn row_at(heights: impl Iterator<Item = Pixels>, scrolled: Pixels) -> Option<(us
     None
 }
 
-/// How far down to scroll a list of rows this tall, in a view `viewport` tall, to put `row` at
-/// the top of the view with `into` of it above the view, or as near to that as the list's end
-/// allows.
+/// Puts `row` at the top of the view with `into` of it above the view, or as near to that as the
+/// list's end allows.
 fn scroll_showing(heights: &[Pixels], row: usize, into: Pixels, viewport: Pixels) -> Pixels {
     let sum = |heights: &[Pixels]| heights.iter().fold(px(0.), |sum, &height| sum + height);
     let furthest = (sum(heights) - viewport).max(px(0.));
     (sum(&heights[..row]) + into.min(heights[row])).min(furthest)
 }
 
-/// How many cards go across a gallery `width` wide: as many as stay `MIN_CARD_WIDTH` or wider,
-/// and at least one.
 fn columns_for(width: Pixels) -> usize {
     let room = f32::from(width) - PADDING_X * 2. + GAP;
     ((room / (MIN_CARD_WIDTH + GAP)).floor() as usize).max(1)
 }
 
-/// The width of each of `columns` cards across a gallery `width` wide.
 fn card_width_at(width: Pixels, columns: usize) -> Pixels {
     (width - px(PADDING_X * 2. + GAP * (columns - 1) as f32)) / columns as f32
 }
@@ -260,7 +251,6 @@ mod tests {
     use crate::main_window::gallery::thumbnails::thumbnail_width_for;
     use crate::main_window::gallery::{GAP, MAX_CARD_WIDTH, MIN_CARD_WIDTH, PADDING_X};
 
-    /// The gallery's width beside the open settings column at the smallest window.
     fn narrowest_gallery() -> f32 {
         crate::MIN_WINDOW_SIZE.0 - crate::main_window::settings::WIDTH
     }
@@ -280,7 +270,6 @@ mod tests {
         let four = PADDING_X * 2. + MIN_CARD_WIDTH * 4. + GAP * 3.;
         assert_eq!(columns_for(px(four - 1.)), 3);
         assert_eq!(columns_for(px(four)), 4);
-        // Never none, however narrow.
         assert_eq!(columns_for(px(100.)), 1);
         assert_eq!(columns_for(px(0.)), 1);
     }

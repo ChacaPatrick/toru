@@ -10,11 +10,11 @@ use super::tools::StrokeOptions;
 use super::{Editor, skia, sticker};
 use crate::theme::Theme;
 
-/// A sticker in the panel's tray, in logical pixels.
-pub const TRAY_ICON: f32 = 28.;
+/// In logical pixels.
+pub const TRAY_ICON_SIZE: f32 = 28.;
 
-/// What the sticker tray was drawn for: the colours, since the custom palette can change them
-/// without changing which palette is shown, and the scale.
+/// Keyed on the colours, as the custom palette can change them without changing which palette
+/// is shown.
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct TrayKey {
     sticker: Hsla,
@@ -23,8 +23,6 @@ pub(super) struct TrayKey {
 }
 
 impl Editor {
-    /// The sticker tray's pictures, drawn again when the sticker colours or the scale have
-    /// changed since. The old ones leave the GPU at the next frame.
     pub(super) fn refresh_tray(&mut self, theme: &Theme, scale: f32) {
         let key = TrayKey {
             sticker: theme.colors.sticker,
@@ -42,16 +40,13 @@ impl Editor {
             .collect();
     }
 
-    /// The tray's picture of sticker `index`, if drawn.
     pub fn tray_image(&self, index: usize) -> Option<Arc<RenderImage>> {
         self.tray.get(index).cloned()
     }
 }
 
-/// `sticker` drawn for the panel's tray at `TRAY_ICON` logical pixels, `scale` device pixels
-/// each, in the look's colours, with a little room for its outline.
 fn tray_image(sticker: Sticker, theme: &Theme, scale: f32) -> Option<Arc<RenderImage>> {
-    let side = (TRAY_ICON * scale).round();
+    let side = (TRAY_ICON_SIZE * scale).round();
     let mut pixmap = Pixmap::new(side as u32, side as u32)?;
     let margin = sticker::OUTLINE / sticker::UNITS * side;
     let options = StrokeOptions::for_kind(Kind::Sticker, theme);

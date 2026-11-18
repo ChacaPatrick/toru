@@ -9,46 +9,41 @@ use crate::main_window::{HINT_LEADING, MainWindow, act};
 use crate::theme::{ActiveTheme, Theme, ThemedText};
 use crate::ui::{Dialog, Readable};
 
-/// The notes scroll past this height.
 const NOTES_MAX_HEIGHT: f32 = 360.;
 
 const NOTE_GAP: f32 = 6.;
 
-/// More air between the notes' parts than between a part's lines.
 const PART_GAP: f32 = 10.;
 
 const BULLET_SIZE: f32 = 5.;
 
 const BULLET_GAP: f32 = 10.;
 
-/// Keeps the notes' text clear of the scrollbar.
 const SCROLLBAR_ROOM: f32 = 12.;
 
-/// How far an arrow key scrolls the notes.
 const LINE_SCROLL: f32 = 40.;
 
 impl MainWindow {
     pub(super) fn open_whats_new(&mut self, cx: &mut Context<Self>) {
-        self.updates.whats_new = true;
+        self.updates.whats_new_open = true;
         self.updates.notes_scroll.set_offset(point(px(0.), px(0.)));
         self.focus_dialog(cx);
         cx.notify();
     }
 
     fn close_whats_new(&mut self, cx: &mut Context<Self>) {
-        self.updates.whats_new = false;
+        self.updates.whats_new_open = false;
         cx.notify();
     }
 
-    /// The What's new dialog: the version, its notes, and Update, which holds focus, or Later.
-    /// Esc only closes it. The arrow and page keys scroll the notes wherever focus is, since
-    /// the buttons have no use for them.
+    /// Esc only closes it. The arrow and page keys scroll the notes wherever focus is, since the
+    /// buttons have no use for them.
     pub(in crate::main_window) fn whats_new_dialog(&self, cx: &Context<Self>) -> Option<Dialog> {
         let update = self
             .updates
             .ready
             .as_ref()
-            .filter(|_| self.updates.whats_new)?;
+            .filter(|_| self.updates.whats_new_open)?;
         let lines = note_lines(&update.notes);
         let dialog = Dialog::new(
             "whats-new",
@@ -87,8 +82,7 @@ impl MainWindow {
     }
 }
 
-/// Where a key scrolls the notes to: the new offset, zero at the top and `-max` at the bottom,
-/// for a view `page` tall. `None` for a key that doesn't scroll.
+/// Offsets run from zero at the top to `-max` at the bottom.
 fn scroll_target(key: &str, offset: f32, max: f32, page: f32) -> Option<f32> {
     let by = match key {
         "up" => LINE_SCROLL,
@@ -102,7 +96,6 @@ fn scroll_target(key: &str, offset: f32, max: f32, page: f32) -> Option<f32> {
     Some((offset + by).clamp(-max.max(0.), 0.))
 }
 
-/// The patch notes: each heading as a settings group's label, each bullet behind the look's dot.
 fn notes(theme: &Theme, lines: &[NoteLine], scroll: &ScrollHandle) -> impl IntoElement {
     let c = &theme.colors;
     let body = theme.type_scale.body;
