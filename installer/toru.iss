@@ -13,9 +13,9 @@
 #define RunKey "Software\Microsoft\Windows\CurrentVersion\Run"
 ; Where Windows' Startup apps page marks the Run value disabled without removing it.
 #define ApprovedKey "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
-; The app writes and reads the same value under both (crates/toru/src/platform.rs, RUN_VALUE).
+; The app writes and reads the same value under both (crates/toru/src/platform/windows/start_at_sign_in.rs, RUN_VALUE).
 #define RunValue "Toru"
-; Toru holds this mutex while it runs (crates/toru/src/platform.rs, mark_running).
+; Toru holds this mutex while it runs (crates/toru/src/platform/windows/running_instance.rs, mark_running).
 #define AppMutexName "Toru.Running"
 
 [Setup]

@@ -6,82 +6,17 @@
 //! and undoing it, moves nothing. A picture edited before opens flattened, with the capture as
 //! it was taken held beside it for Reset edits.
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
-use gpui::{Hsla, Point, RenderImage, Rgba, Size, point, size};
-use tiny_skia::{
-    BlendMode, Color, FilterQuality, IntRect, IntSize, Pixmap, PixmapPaint, Transform,
-};
-use xcap::image::{Frame, RgbaImage};
-
+use gpui::{Point, Size, point, size};
+use tiny_skia::{BlendMode, FilterQuality, IntRect, Pixmap, PixmapPaint, Transform};
 use toru_core::store::Redaction;
 
+use super::history::History;
 use super::{
     annotation::{self, Annotation, Shape},
     text,
 };
-
-/// Undo and redo over a value: every edit keeps the value before it.
-pub struct History<T> {
-    present: T,
-    past: Vec<T>,
-    future: Vec<T>,
-}
-
-impl<T: Clone> History<T> {
-    pub fn new(present: T) -> History<T> {
-        History {
-            present,
-            past: Vec::new(),
-            future: Vec::new(),
-        }
-    }
-
-    pub fn get(&self) -> &T {
-        &self.present
-    }
-
-    /// Changes the value as one undoable step. Anything redoable is forgotten, as in any editor.
-    pub fn edit(&mut self, change: impl FnOnce(&mut T)) {
-        self.past.push(self.present.clone());
-        self.future.clear();
-        change(&mut self.present);
-    }
-
-    /// Changes the value as part of the last step, so undo takes both back together: a slider
-    /// drag changes the value on every move but is one step.
-    pub fn amend(&mut self, change: impl FnOnce(&mut T)) {
-        change(&mut self.present);
-    }
-
-    pub fn can_undo(&self) -> bool {
-        !self.past.is_empty()
-    }
-
-    pub fn can_redo(&self) -> bool {
-        !self.future.is_empty()
-    }
-
-    /// Steps back; `false` when there is nothing to undo.
-    pub fn undo(&mut self) -> bool {
-        let Some(previous) = self.past.pop() else {
-            return false;
-        };
-        let current = std::mem::replace(&mut self.present, previous);
-        self.future.push(current);
-        true
-    }
-
-    /// Steps forward again; `false` when there is nothing to redo.
-    pub fn redo(&mut self) -> bool {
-        let Some(next) = self.future.pop() else {
-            return false;
-        };
-        let current = std::mem::replace(&mut self.present, next);
-        self.past.push(current);
-        true
-    }
-}
 
 /// The undoable state: the picture under the marks, the marks, bottom to top, and the crop, if
 /// any, as a rectangle of the whole picture. Reset edits changes the picture, so undo can bring
@@ -512,79 +447,13 @@ impl Document {
     }
 }
 
-/// A `tiny-skia` bitmap as GPUI draws it. `tiny-skia` holds premultiplied RGBA and GPUI wants
-/// BGRA, so the channels are swapped on the way; the picture is opaque, so premultiplying
-/// changed nothing.
-pub fn render_image(pixmap: &Pixmap) -> Arc<RenderImage> {
-    let mut data = pixmap.data().to_vec();
-    for pixel in data.as_chunks_mut::<4>().0 {
-        pixel.swap(0, 2);
-    }
-    let buffer = RgbaImage::from_raw(pixmap.width(), pixmap.height(), data)
-        .expect("a pixmap's data is width × height × 4 bytes");
-    Arc::new(RenderImage::new([Frame::new(buffer)]))
-}
-
-/// A `tiny-skia` bitmap as an image to encode or copy. The picture is opaque, so premultiplying
-/// changed nothing.
-pub fn to_rgba(pixmap: &Pixmap) -> RgbaImage {
-    RgbaImage::from_raw(pixmap.width(), pixmap.height(), pixmap.data().to_vec())
-        .expect("a pixmap's data is width × height × 4 bytes")
-}
-
-/// A theme colour as `tiny-skia` takes it.
-pub fn skia_color(color: Hsla) -> Color {
-    let Rgba { r, g, b, a } = color.into();
-    Color::from_rgba(r, g, b, a).expect("GPUI colours are within 0..=1")
-}
-
-/// A capture's file as the document's base, or `None` if it can't be read. Screenshots are
-/// opaque, so the pixels are already what `tiny-skia`'s premultiplied form expects.
-pub fn load_picture(path: &Path) -> Option<Pixmap> {
-    pixmap_from_rgba(xcap::image::open(path).ok()?.to_rgba8())
-}
-
-fn pixmap_from_rgba(image: RgbaImage) -> Option<Pixmap> {
-    let size = IntSize::from_wh(image.width(), image.height())?;
-    let mut data = image.into_raw();
-    for pixel in data.as_chunks_mut::<4>().0 {
-        pixel[3] = 255;
-    }
-    Pixmap::from_vec(data, size)
-}
-
 #[cfg(test)]
 mod tests {
+    use tiny_skia::Color;
+    use xcap::image::RgbaImage;
+
     use super::*;
-
-    #[test]
-    fn edits_undo_and_redo_in_order() {
-        let mut history = History::new(vec![1]);
-        history.edit(|v| v.push(2));
-        history.edit(|v| v.push(3));
-        assert_eq!(history.get(), &[1, 2, 3]);
-        assert!(history.undo());
-        assert_eq!(history.get(), &[1, 2]);
-        assert!(history.undo());
-        assert_eq!(history.get(), &[1]);
-        assert!(!history.undo());
-        assert!(history.redo());
-        assert!(history.redo());
-        assert_eq!(history.get(), &[1, 2, 3]);
-        assert!(!history.redo());
-    }
-
-    #[test]
-    fn an_edit_after_undo_drops_the_redo_branch() {
-        let mut history = History::new(0);
-        history.edit(|v| *v = 1);
-        history.edit(|v| *v = 2);
-        assert!(history.undo());
-        history.edit(|v| *v = 9);
-        assert!(!history.can_redo());
-        assert!(history.undo());
-        assert_eq!(*history.get(), 1);
-    }
+    use crate::editor::skia::{pixmap_from_rgba, to_rgba};
 
     #[test]
     fn a_fresh_document_is_unedited_with_nothing_to_undo() {
@@ -1204,35 +1073,5 @@ mod tests {
                 assert!(is_blue(rendered.pixel(x, y).unwrap()), "({x}, {y})");
             }
         }
-    }
-
-    #[test]
-    fn the_render_image_is_bgra() {
-        let mut base = Pixmap::new(1, 1).unwrap();
-        base.fill(Color::from_rgba8(10, 20, 30, 255));
-        let image = render_image(&base);
-        assert_eq!(image.size(0), gpui::size(1.into(), 1.into()));
-        // The frame's bytes are BGRA: blue first.
-        let mut swapped = base.data().to_vec();
-        swapped.swap(0, 2);
-        assert_eq!(swapped, [30, 20, 10, 255]);
-    }
-
-    #[test]
-    fn theme_colours_convert_channel_for_channel() {
-        let color = skia_color(gpui::rgb(0x2b2a26).into());
-        let rgba: Rgba = gpui::Hsla::from(gpui::rgb(0x2b2a26)).into();
-        assert!((color.red() - rgba.r).abs() < 1e-6);
-        assert!((color.blue() - rgba.b).abs() < 1e-6);
-        assert_eq!(color.alpha(), 1.);
-    }
-
-    #[test]
-    fn a_capture_frame_becomes_an_opaque_pixmap() {
-        let image = RgbaImage::from_fn(2, 1, |x, _| xcap::image::Rgba([x as u8, 20, 30, 0]));
-        let pixmap = pixmap_from_rgba(image).unwrap();
-        assert_eq!((pixmap.width(), pixmap.height()), (2, 1));
-        assert_eq!(pixmap.data(), [0, 20, 30, 255, 1, 20, 30, 255]);
-        assert!(pixmap_from_rgba(RgbaImage::new(0, 0)).is_none());
     }
 }

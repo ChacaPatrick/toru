@@ -241,7 +241,7 @@ pub fn parts(theme: &Theme) -> Vec<Pair> {
         ("selected card outline".to_string(), c.accent, c.bg, RING),
         // A field that isn't valid: its border against the field inside it.
         ("warning border".to_string(), c.warning, c.input_bg, RING),
-        // Under the kit's selection tint (`kit::sync_kit_theme`).
+        // Under the kit's selection tint (`gpui_kit_theme::sync_kit_theme`).
         (
             "selected text in a field".to_string(),
             c.text,

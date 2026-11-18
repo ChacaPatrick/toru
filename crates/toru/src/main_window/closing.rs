@@ -28,7 +28,8 @@ use toru_core::{
 };
 
 use super::{MainWindow, act};
-use crate::editor::document::{Flattened, to_rgba};
+use crate::editor::document::Flattened;
+use crate::editor::skia::to_rgba;
 use crate::platform;
 use crate::ui::{Dialog, Toast};
 
