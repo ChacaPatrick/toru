@@ -14,7 +14,6 @@ What is still open after sections 10.1, 10.3 and 10.5 (PRs #22–#39).
 - After the editor is opened and closed, private bytes stay 12–48 MB higher, allocated outside Toru (most likely the graphics driver); gpui has no call to release it (10.1).
 
 ## Installer
-- No app icon yet: shortcuts show Windows' default icon.
 - Unsigned, so Windows shows a SmartScreen warning on first run.
 
 ## Design notes

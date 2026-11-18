@@ -14,6 +14,10 @@ powershell -ExecutionPolicy Bypass -File installer\build.ps1
 [cargo-about](https://github.com/EmbarkStudios/cargo-about) (`about.toml` and `about.hbs` at the repo root), then
 compiles `toru.iss` with the version from `Cargo.toml`. The installer lands in `installer\output\` (git-ignored).
 
+Setup's own icon is `assets\toru.ico`. The shortcuts and the Settings → Apps entry take theirs from `toru.exe`, which
+has the same file compiled in (`crates\toru\build.rs`). `assets\make_ico.py` writes the `.ico` from the SVG drawings
+beside it; run it by hand after changing one and commit the result.
+
 The notices file is generated on every build rather than committed, so it always matches `Cargo.lock`. If a dependency
 update brings in a licence that isn't in `about.toml`'s `accepted` list, cargo-about fails. If it changes a licence
 file that `about.toml` pins by checksum, cargo-about only warns, still exits 0 and leaves that notice out, so

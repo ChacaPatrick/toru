@@ -77,6 +77,7 @@ Drawn with `tiny-skia`, so the screen matches the saved file exactly.
 - [x] 11.1 MIT licence; the repo is public at `ChacaPatrick/toru` (the private original is `toru-archive`)
 - [x] 11.2 Release workflow: GitHub Actions builds the installer and publishes a release with patch notes, on demand
 - [x] 11.3 In-app updates: check, download, "Update" and "What's new", silent install and restart [Fable]
+- [x] 11.4 App icon in the exe, the window, the tray and the installer [Fable]
 
 ## Approved libraries
 | Job | Library |
@@ -92,6 +93,7 @@ Drawn with `tiny-skia`, so the screen matches the saved file exactly.
 | Editor text outlines | `ttf-parser` 0.25 (already used by GPUI) |
 | History | `rusqlite` 0.41.1 |
 | Folder picker | `rfd` 0.18 |
+| Icon and version details in the exe | `winresource` 0.1.34 (build script only) |
 
 ## Test setup
 Two monitors, same resolution, different refresh rates. Mixed display scaling is not covered by the owner's setup.

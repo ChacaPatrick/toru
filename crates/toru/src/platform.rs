@@ -8,8 +8,9 @@
 //! pick, hiding the main window in the tray and showing it again, telling a running Toru
 //! that a second one was launched, saying why Windows' shutdown waits, starting Toru when the
 //! user signs in, whether the user has animations turned off, handing back memory while
-//! hidden, and, for updates, fetching a URL and starting the installer. Windows is done here;
-//! the other platforms get the fallbacks at the bottom until they are.
+//! hidden, the tray's icon out of the exe, and, for updates, fetching a URL and starting the
+//! installer. Windows is done here; the other platforms get the fallbacks at the bottom until
+//! they are.
 
 use std::{path::PathBuf, time::Duration};
 
@@ -38,6 +39,7 @@ mod windows {
     use global_hotkey::hotkey::Code;
     use gpui::{App, PlatformDisplay, Window};
     use toru_core::time::{LocalDate, LocalDateTime};
+    use tray_icon::{BadIcon, Icon};
 
     use super::HeldModifiers;
     use crate::editor::text::Cjk;
@@ -154,6 +156,7 @@ mod windows {
     #[link(name = "user32")]
     unsafe extern "system" {
         fn SystemParametersInfoW(action: u32, param: u32, value: *mut i32, update: u32) -> i32;
+        fn GetSystemMetrics(index: i32) -> i32;
         fn GetKeyState(key: i32) -> i16;
         fn EnumThreadWindows(
             thread: u32,
@@ -849,6 +852,20 @@ mod windows {
         unsafe { MessageBoxW(0, text.as_ptr(), caption.as_ptr(), MB_ICONERROR) };
     }
 
+    /// `build.rs` embeds `assets/toru.ico` under this id, the one GPUI loads the window's icon from.
+    const APP_ICON_RESOURCE: u16 = 1;
+    const SM_CXSMICON: i32 = 49;
+    const SM_CYSMICON: i32 = 50;
+
+    pub fn tray_icon() -> Result<Icon, BadIcon> {
+        // SAFETY: both only read a system setting.
+        let (width, height) =
+            unsafe { (GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON)) };
+        // Asked for no size, Windows loads the 32 px frame and the tray shrinks it, which loses the
+        // drawings made for 16 to 24 px.
+        Icon::from_resource(APP_ICON_RESOURCE, Some((width as u32, height as u32)))
+    }
+
     /// Where Windows looks for what to start when the user signs in.
     const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
     /// Where Windows' Startup apps page (Settings and Task Manager) marks a `RUN_KEY` value of
@@ -1260,8 +1277,8 @@ pub use windows::{
     main_window_hidden, map_file, mark_running, pressed_key, recycle_file, reduce_motion,
     repoint_start_with_windows, request_close, restore_window, reveal_file,
     set_starts_with_windows, show_main_window, show_startup_error, signal_running_instance,
-    start_installer, starts_with_windows, trim_working_set, user_languages, watch_for_show,
-    while_holding_up_shutdown,
+    start_installer, starts_with_windows, tray_icon, trim_working_set, user_languages,
+    watch_for_show, while_holding_up_shutdown,
 };
 
 /// The modifiers held along with a key (`held_modifiers`).
@@ -1380,6 +1397,13 @@ pub fn start_installer(_setup: &std::path::Path) -> std::io::Result<()> {
 }
 
 #[cfg(not(windows))]
+pub fn tray_icon() -> Result<tray_icon::Icon, tray_icon::BadIcon> {
+    Err(tray_icon::BadIcon::OsError(
+        std::io::ErrorKind::Unsupported.into(),
+    ))
+}
+
+#[cfg(not(windows))]
 pub fn hide_main_window() {}
 
 #[cfg(not(windows))]
@@ -1466,6 +1490,11 @@ mod tests {
 
     fn unique_dir(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("toru-platform-{}-{name}", std::process::id()))
+    }
+
+    #[test]
+    fn the_exe_carries_the_icon_the_tray_loads() {
+        assert!(tray_icon().is_ok());
     }
 
     #[test]

@@ -34,6 +34,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ; for it to be quit first; quitting from the tray applies the On close setting.
 ; An update (/UPDATE=1) waits for it first instead (InitializeSetup below).
 AppMutex={#AppMutexName}
+SetupIconFile=..\assets\toru.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
 OutputDir=output
